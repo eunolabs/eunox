@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>euno — Policy Proxy for AI Agents</title>
-    <meta name="description" content="Open-source MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. No code changes. Apache-2.0.">
-    <meta property="og:title" content="euno — Policy Proxy for AI Agents">
+    <title>eunox — Policy Proxy for AI Agents</title>
+    <meta name="description" content="Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. Go 1.25+. BSL-1.1 / Apache-2.0.">
+    <meta property="og:title" content="eunox — Policy Proxy for AI Agents">
     <meta property="og:description" content="One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://github.com/edgeobs/euno">
+    <meta property="og:url" content="https://github.com/edgeobs/eunox">
     <meta property="og:image" content="./assets/eunolabs.png">
     <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" href="./assets/eunolabs.png">
@@ -20,8 +20,8 @@
     <header class="site-header">
         <div class="header-left">
             <a class="logo" href="./index.html">
-                <img src="./assets/eunolabs.png" alt="euno">
-                <span class="wordmark">euno</span>
+                <img src="./assets/eunolabs.png" alt="eunox">
+                <span class="wordmark">eunox</span>
             </a>
             <span class="stage-badge">GA</span>
         </div>
@@ -31,7 +31,7 @@
             <a href="./how-it-works.html" class="nav-link">How it works</a>
             <a href="./policies.html" class="nav-link">Policies</a>
             <a href="./docs.html" class="nav-link">Docs</a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
                 GitHub
             </a>
@@ -42,7 +42,7 @@
     <section class="hero">
         <div class="hero-eyebrow">
             <span class="dot"></span>
-            Open Source · Apache-2.0 · eunolabs/euno
+            Open Source · BSL-1.1 / Apache-2.0 · edgeobs/eunox
         </div>
         <h1>Policy proxy for<br><em>MCP AI agents</em></h1>
         <p class="hero-sub">One YAML file enforces what every agent is allowed to do — <strong>before</strong> the tool call reaches your backend. Drop-in. No infrastructure. No code changes to your agent or your server.</p>
@@ -50,7 +50,7 @@
             <a href="./quickstart.html" class="btn-primary">
                 Get started in 60 seconds →
             </a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-ghost">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-ghost">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
                 Star on GitHub
             </a>
@@ -58,7 +58,7 @@
         <div aria-live="polite" aria-atomic="true" id="copy-announce" class="sr-only"></div>
         <button class="install-snippet" aria-label="Copy install command">
             <span class="prompt" aria-hidden="true">$</span>
-            <span class="cmd">npx -y @euno/mcp proxy --policy ./euno.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data</span>
+            <span class="cmd">eunox-mcp proxy --policy ./eunox.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data</span>
             <span class="copy-btn" aria-hidden="true">copy</span>
         </button>
     </section>
@@ -77,17 +77,17 @@
                         <div class="terminal-dot red"></div>
                         <div class="terminal-dot amber"></div>
                         <div class="terminal-dot green"></div>
-                        <span class="terminal-title">euno-mcp proxy</span>
+                        <span class="terminal-title">eunox-mcp proxy</span>
                     </div>
                     <div class="terminal-body" id="term-body"></div>
                 </div>
                 <div class="policy-panel">
                     <div class="policy-bar">
                         <span class="policy-icon">📄</span>
-                        <span class="policy-filename">euno.policy.yaml</span>
+                        <span class="policy-filename">eunox.policy.yaml</span>
                     </div>
-                    <div class="policy-body"><pre><span class="y-comment"># euno.policy.yaml — AgentCapabilityManifest</span>
-<span class="y-comment"># Validate: npx @euno/mcp validate ./euno.policy.yaml</span>
+                    <div class="policy-body"><pre><span class="y-comment"># eunox.policy.yaml — AgentCapabilityManifest</span>
+<span class="y-comment"># Validate: eunox-mcp validate ./eunox.policy.yaml</span>
 
 <span class="y-key">agentId</span>: <span class="y-str">filesystem-agent</span>
 <span class="y-key">name</span>:    <span class="y-str">Filesystem Agent</span>
@@ -125,7 +125,7 @@
         <div class="features-header">
             <div class="section-label">What you get</div>
             <h2 class="section-title">Everything you need to ship agents safely</h2>
-            <p class="section-desc">euno ships the full <code>CapabilityCondition</code> matrix, hosted enforcement, capability issuance, partner federation, SCIM provisioning, and signed SOC 2 audit export — all on top of the same policy schema.</p>
+            <p class="section-desc">eunox ships the full <code>CapabilityCondition</code> matrix, hosted enforcement, capability issuance, partner federation, SCIM provisioning, and signed SOC 2 audit export — all on top of the same policy schema.</p>
         </div>
         <div class="pillars">
             <div class="pillar">
@@ -136,22 +136,22 @@
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">📋</div>
                 <h3>OCSF audit log</h3>
-                <p>Every tool call — allowed or denied — is recorded as a cryptographically signed OCSF API Activity event at <code>~/.euno/audit.jsonl</code>. Verify, rotate, summarise with <code>euno-mcp stats</code>.</p>
+                <p>Every tool call — allowed or denied — is recorded as a cryptographically signed OCSF API Activity event at <code>~/.eunox/audit.jsonl</code>. Verify, rotate, summarise with <code>eunox-mcp stats</code>.</p>
             </div>
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">🔌</div>
                 <h3>Drop-in for every host</h3>
-                <p>Wraps Claude Desktop, Cursor, Windsurf, and any stdio MCP client with a one-line config change. HTTP transport for LangChain.js and other in-process agents.</p>
+                <p>Wraps Claude Desktop, Cursor, Windsurf, and any stdio MCP client with a one-line config change. HTTP transport for Go agents and other in-process runtimes.</p>
             </div>
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">🪢</div>
-                <h3>LangChain.js companion</h3>
-                <p><code>@euno/langchain</code> places the same enforcement engine inside the LangChain tool wrapper — no proxy process, no transport hop. Same YAML policy.</p>
+                <h3>Go agent runtime</h3>
+                <p>The Go Agent Runtime and adapter layer bring the same enforcement model to in-process Go tools and langchaingo-style agents — no JavaScript package required.</p>
             </div>
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">📦</div>
                 <h3>Reference policies</h3>
-                <p>Ship-ready YAML for filesystem, Postgres, GitHub, Slack, and fetch — including a lexical SSRF guard. Drop one in your repo and run <code>euno-mcp validate</code>.</p>
+                <p>Ship-ready YAML for filesystem, Postgres, GitHub, Slack, and fetch — including a lexical SSRF guard. Drop one in your repo and run <code>eunox-mcp validate</code>.</p>
             </div>
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">🧩</div>
@@ -161,7 +161,7 @@
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">🔒</div>
                 <h3>Zero infra. Zero cloud.</h3>
-                <p>Runs entirely on your machine. No sign-up, no API key, no telemetry. <code>npx</code> away.</p>
+                <p>Runs entirely on your machine. No sign-up, no API key, no telemetry. One Go binary away.</p>
             </div>
             <div class="pillar">
                 <div class="pillar-icon" aria-hidden="true">🪪</div>
@@ -183,12 +183,12 @@
                 <div class="step">
                     <div class="step-dot">📝</div>
                     <h4>Write policy</h4>
-                    <p>Define allowed tools and argument constraints in a single <code>euno.policy.yaml</code>.</p>
+                    <p>Define allowed tools and argument constraints in a single <code>eunox.policy.yaml</code>.</p>
                 </div>
                 <div class="step">
                     <div class="step-dot">🔀</div>
                     <h4>Wrap your server</h4>
-                    <p>Pass <code>npx @euno/mcp proxy</code> as the command in your MCP host config. No agent or server changes.</p>
+                    <p>Pass <code>eunox-mcp proxy</code> as the command in your MCP host config. No agent or server changes.</p>
                 </div>
                 <div class="step">
                     <div class="step-dot">✅</div>
@@ -198,7 +198,7 @@
                 <div class="step">
                     <div class="step-dot">🔍</div>
                     <h4>Inspect the log</h4>
-                    <p>Stream a live audit feed and aggregate denials with <code>euno-mcp stats</code>.</p>
+                    <p>Stream a live audit feed and aggregate denials with <code>eunox-mcp stats</code>.</p>
                 </div>
             </div>
         </div>
@@ -214,7 +214,7 @@
             <div class="code-block">
                 <div class="code-label">1 — run the proxy</div>
                 <div>
-                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">npx -y @euno/mcp proxy </span><span class="code-line-flag">--policy</span><span class="code-line-cmd"> ./euno.policy.yaml </span><span class="code-line-comment">\</span>
+                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">eunox-mcp proxy </span><span class="code-line-flag">--policy</span><span class="code-line-cmd"> ./eunox.policy.yaml </span><span class="code-line-comment">\</span>
                 </div>
                 <div style="padding-left:1.8em">
                     <span class="code-line-comment">--&nbsp;</span><span class="code-line-cmd">npx -y @modelcontextprotocol/server-filesystem /data</span>
@@ -224,10 +224,10 @@
             <div class="code-block">
                 <div class="code-label">2 — tail the audit log</div>
                 <div>
-                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">tail -F ~/.euno/audit.jsonl | jq</span>
+                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">tail -F ~/.eunox/audit.jsonl | jq</span>
                 </div>
                 <div>
-                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">npx -y @euno/mcp stats</span>
+                    <span class="code-line-prompt">$&nbsp;</span><span class="code-line-cmd">eunox-mcp stats</span>
                     <span class="code-line-comment">&nbsp; # ASCII histogram of denials</span>
                 </div>
             </div>
@@ -235,15 +235,15 @@
             <div class="code-block">
                 <div class="code-label">Claude Desktop · mcpServers in claude_desktop_config.json</div>
                 <div><span style="color:#93c5fd">"my-server"</span><span style="color:#e2e8f0">: {</span></div>
-                <div style="padding-left:1.4em"><span style="color:#93c5fd">"command"</span><span style="color:#e2e8f0">: </span><span style="color:#fca5a5">"npx"</span><span style="color:#e2e8f0">,</span></div>
-                <div style="padding-left:1.4em"><span style="color:#93c5fd">"args"</span><span style="color:#e2e8f0">: [</span><span style="color:#fca5a5">"-y"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"@euno/mcp"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"proxy"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"--policy"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"./euno.policy.yaml"</span><span style="color:#e2e8f0">,</span></div>
+                <div style="padding-left:1.4em"><span style="color:#93c5fd">"command"</span><span style="color:#e2e8f0">: </span><span style="color:#fca5a5">"eunox-mcp"</span><span style="color:#e2e8f0">,</span></div>
+                <div style="padding-left:1.4em"><span style="color:#93c5fd">"args"</span><span style="color:#e2e8f0">: [</span><span style="color:#fca5a5">"proxy"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"--policy"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"./eunox.policy.yaml"</span><span style="color:#e2e8f0">,</span></div>
                 <div style="padding-left:2.8em"><span style="color:#fca5a5">"--"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"npx"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"-y"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"@modelcontextprotocol/server-filesystem"</span><span style="color:#e2e8f0">, </span><span style="color:#fca5a5">"/data"</span><span style="color:#e2e8f0">]</span></div>
                 <div><span style="color:#e2e8f0">}</span></div>
             </div>
 
             <div class="cta-buttons">
                 <a href="./quickstart.html" class="btn-primary">Read the full quick start →</a>
-                <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-ghost">View the source</a>
+                <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-ghost">View the source</a>
             </div>
         </div>
     </section>
@@ -252,13 +252,13 @@
     <footer class="site-footer">
         <div class="footer-grid">
             <div class="footer-col footer-brand">
-                <a class="logo" href="./index.html">
-                    <img src="./assets/eunolabs.png" alt="euno" style="height:30px">
-                    <span class="wordmark">euno</span>
-                </a>
-                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
-                <span class="footer-license">Apache-2.0</span>
-            </div>
+    <a class="logo" href="./index.html">
+        <img src="./assets/eunolabs.png" alt="eunox" style="height:30px">
+        <span class="wordmark">eunox</span>
+    </a>
+    <p>Capability-native zero-trust governance for AI agents. Dual license: BSL-1.1 for server-side services, Apache-2.0 for <code>eunox-mcp</code>.</p>
+    <span class="footer-license">BSL-1.1 / Apache-2.0</span>
+</div>
             <div class="footer-col">
                 <h5>Product</h5>
                 <ul>
@@ -269,26 +269,26 @@
                 </ul>
             </div>
             <div class="footer-col">
-                <h5>Resources</h5>
-                <ul>
-                    <li><a href="./docs.html">Documentation</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
-                </ul>
-            </div>
+    <h5>Resources</h5>
+    <ul>
+        <li><a href="./docs.html">Documentation</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/README.md" target="_blank" rel="noopener noreferrer">eunox README</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">Go agent runtime</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">Architecture</a></li>
+    </ul>
+</div>
             <div class="footer-col">
-                <h5>Project</h5>
-                <ul>
-                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
-                    <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
-                </ul>
-            </div>
+    <h5>Project</h5>
+    <ul>
+        <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
+    </ul>
+</div>
         </div>
         <div class="footer-bottom">
-            <span>&copy; 2026 euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
+            <span>&copy; 2026 eunox · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
             <span>Built for the Model Context Protocol</span>
         </div>
     </footer>

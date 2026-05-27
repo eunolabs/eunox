@@ -7,7 +7,7 @@ interface Props {
   activePage?: ActivePage;
 }
 
-const { title, description = 'Open-source MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. No code changes. Apache-2.0.', activePage = '' } = Astro.props;
+const { title, description = 'Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. BSL-1.1 · Apache-2.0 OSS tier.', activePage = '' } = Astro.props;
 const baseUrl = import.meta.env.BASE_URL;
 const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 
@@ -28,8 +28,8 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
     <header class="site-header">
         <div class="header-left">
             <a class="logo" href={withBase('/')}>
-                <img src={withBase('/eunolabs.png')} alt="euno">
-                <span class="wordmark">euno</span>
+                <img src={withBase('/eunolabs.png')} alt="eunox">
+                <span class="wordmark">eunox</span>
             </a>
             <span class="stage-badge">GA</span>
         </div>
@@ -40,7 +40,7 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
             <a href={withBase('/policies')} class:list={["nav-link", { active: activePage === 'policies' }]}>Policies</a>
             <a href={withBase('/docs')} class:list={["nav-link", { active: activePage === 'docs' }]}>Docs</a>
             <a href={withBase('/blog')} class:list={["nav-link", { active: activePage === 'blog' }]}>Blog</a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
                 <Fragment set:html={githubSvg} />
                 GitHub
             </a>
@@ -53,11 +53,11 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
         <div class="footer-grid">
             <div class="footer-col footer-brand">
                 <a class="logo" href={withBase('/')}>
-                    <img src={withBase('/eunolabs.png')} alt="euno" style="height:30px">
-                    <span class="wordmark">euno</span>
+                    <img src={withBase('/eunolabs.png')} alt="eunox" style="height:30px">
+                    <span class="wordmark">eunox</span>
                 </a>
-                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
-                <span class="footer-license">Apache-2.0</span>
+                <p>Capability-native zero-trust governance for AI agents. BSL-1.1 · Apache-2.0 OSS tier.</p>
+                <span class="footer-license">BSL-1.1 / Apache-2.0</span>
             </div>
             <div class="footer-col">
                 <h5>Product</h5>
@@ -66,29 +66,30 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
                     <li><a href={withBase('/features')}>Features</a></li>
                     <li><a href={withBase('/how-it-works')}>How it works</a></li>
                     <li><a href={withBase('/policies')}>Reference policies</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/pricing.md" target="_blank" rel="noopener noreferrer">Pricing</a></li>
                 </ul>
             </div>
             <div class="footer-col">
                 <h5>Resources</h5>
                 <ul>
                     <li><a href={withBase('/docs')}>Documentation</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">eunox README</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">Go SDK docs</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
                 </ul>
             </div>
             <div class="footer-col">
                 <h5>Project</h5>
                 <ul>
-                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
                     <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
                 </ul>
             </div>
         </div>
         <div class="footer-bottom">
-            <span>&copy; 2026 euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
+            <span>&copy; 2026 eunox · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
             <span>Built for the Model Context Protocol</span>
         </div>
     </footer>

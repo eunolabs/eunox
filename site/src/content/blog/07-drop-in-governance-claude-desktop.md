@@ -1,10 +1,11 @@
 ---
-title: "Drop-in governance: adding `@euno/mcp` to Claude Desktop in 5 minutes"
+title: "Drop-in governance: adding `eunox-mcp` to Claude Desktop in 5 minutes"
 description: "individual developers who want agent security without a DevOps project"
 pubDate: "2026-05-26"
 ---
+# Drop-in governance: adding `eunox-mcp` to Claude Desktop in 5 minutes
 
-*Audience: individual developers who want agent security without a DevOps project*
+_Audience: individual developers who want agent security without a DevOps project_
 
 ---
 
@@ -14,7 +15,7 @@ Then you have a thought that most people have around the three-week mark: "wait,
 
 The typical next step is to just... not think about it, and carry on. The typical alternative is to start reading about capability tokens and cryptographic policy enforcement and suddenly it looks like a three-week infrastructure project and you close the tabs.
 
-This post is the middle path. I'm going to walk you through adding real, substantive governance to your Claude Desktop MCP setup in the time it takes to write a short YAML file and edit one JSON config. The governance layer we're adding is `@euno/mcp` — a policy proxy that sits between Claude and your MCP servers, checks every tool call against a policy you define, and blocks anything that doesn't match.
+This post is the middle path. I'm going to walk you through adding real, substantive governance to your Claude Desktop MCP setup in the time it takes to write a short YAML file and edit one JSON config. The governance layer we're adding is `eunox-mcp` — a policy proxy that sits between Claude and your MCP servers, checks every tool call against a policy you define, and blocks anything that doesn't match.
 
 If you want to understand the theory behind why this architecture works, [the policy proxy design post](./06-mcp-policy-proxy.md) covers that in depth. This post is the hands-on tutorial.
 
@@ -24,7 +25,7 @@ If you want to understand the theory behind why this architecture works, [the po
 
 By the end of this, you'll have:
 
-- Claude Desktop routing all tool calls through `@euno/mcp` before they reach your MCP servers
+- Claude Desktop routing all tool calls through `eunox-mcp` before they reach your MCP servers
 - A policy YAML file that defines exactly what Claude is allowed to do with each tool
 - Denied calls getting logged with the reason, so you can see if anything interesting is being blocked
 - A local audit trail of every approved call, with the arguments, for review or debugging
@@ -36,7 +37,7 @@ The whole thing runs in-process — no Docker, no Redis, no separate service to 
 ## Prerequisites
 
 - Claude Desktop installed (or Cursor, Windsurf — anything that reads an MCP config JSON)
-- Node.js 18+ installed (check with `node --version`)
+- Go 1.25+ installed (check with `go version`) so you can install `eunox-mcp` via `go install github.com/edgeobs/eunox/cmd/eunox-mcp@latest` or use a downloaded release binary
 - An existing MCP server you're using — I'll use the filesystem server as the example throughout
 
 If you're not sure what MCP servers you have configured, open your Claude Desktop config file. On macOS it's at `~/Library/Application Support/Claude/claude_desktop_config.json`. On Windows it's `%APPDATA%\Claude\claude_desktop_config.json`. Take a look at what's in there.
@@ -64,7 +65,7 @@ Here's what a typical Claude Desktop config looks like with the filesystem serve
 
 Simple enough. Claude spawns the filesystem server as a subprocess, communicates over stdio, and has direct access to everything in `/Users/you/Documents`. No policy evaluation, no audit log, no rate limiting.
 
-What we're going to do is insert `@euno/mcp` between Claude and the filesystem server. Claude talks to the proxy; the proxy evaluates policy and, if approved, forwards the call to the real server. Claude doesn't know the difference — it still sees all the same tools. The only change from Claude's perspective is that some calls might come back denied.
+What we're going to do is insert `eunox-mcp` between Claude and the filesystem server. Claude talks to the proxy; the proxy evaluates policy and, if approved, forwards the call to the real server. Claude doesn't know the difference — it still sees all the same tools. The only change from Claude's perspective is that some calls might come back denied.
 
 ---
 
@@ -86,7 +87,8 @@ requiredCapabilities:
     actions: [call]
     conditions:
       - type: allowedExtensions
-        extensions: [".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".go"]
+        extensions:
+          [".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".go"]
       - type: maxCalls
         count: 200
         windowSeconds: 3600
@@ -116,14 +118,14 @@ Let me walk through the decisions in here.
 If you're using multiple MCP servers, you add more capabilities here. For a Postgres server, it might look like:
 
 ```yaml
-  - resource: "execute_sql"
-    actions: [call]
-    conditions:
-      - type: allowedOperations
-        operations: ["SELECT"]
-      - type: maxCalls
-        count: 50
-        windowSeconds: 3600
+- resource: "execute_sql"
+  actions: [call]
+  conditions:
+    - type: allowedOperations
+      operations: ["SELECT"]
+    - type: maxCalls
+      count: 50
+      windowSeconds: 3600
 ```
 
 That `allowedOperations: ["SELECT"]` is the condition that blocks the `DROP TABLE` attack from [the prompt injection post](./01-prompt-injection-policy-layer.md). It checks the first keyword of any SQL query and rejects anything that isn't `SELECT`. One condition, one line in YAML, enormous blast radius reduction.
@@ -138,14 +140,15 @@ Now we wire up the proxy. Here's the updated config:
 {
   "mcpServers": {
     "filesystem": {
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y",
-        "@euno/mcp",
         "proxy",
-        "--policy", "/Users/you/.euno/euno.policy.yaml",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
         "/Users/you/Documents"
       ]
     }
@@ -153,9 +156,10 @@ Now we wire up the proxy. Here's the updated config:
 }
 ```
 
-The key change: instead of calling the filesystem server directly, we're calling `@euno/mcp proxy` with the path to our policy file, and then passing the original server command as arguments after the `--` separator.
+The key change: instead of calling the filesystem server directly, we're calling `eunox-mcp proxy` with the path to our policy file, and then passing the original server command as arguments after the `--` separator.
 
 The proxy will:
+
 1. Start the filesystem server as a subprocess
 2. Register itself as an MCP server to Claude (advertising the same tools the filesystem server exposes)
 3. Intercept every tool call from Claude
@@ -169,20 +173,30 @@ If you have multiple MCP servers, you wrap each one the same way — separate co
 {
   "mcpServers": {
     "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/Users/you/.euno/euno.policy.yaml",
-               "--",
-               "npx", "-y", "@modelcontextprotocol/server-filesystem",
-               "/Users/you/Documents"]
+      "command": "eunox-mcp",
+      "args": [
+        "proxy",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/you/Documents"
+      ]
     },
     "database": {
-      "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/Users/you/.euno/euno.policy.yaml",
-               "--",
-               "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
+      "command": "eunox-mcp",
+      "args": [
+        "proxy",
+        "--policy",
+        "/Users/you/.euno/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics"
+      ]
     }
   }
 }
@@ -252,6 +266,6 @@ The principle of "start with the policy in a YAML file, enforce at the tool call
 
 ---
 
-*Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md)*
+_Previous in this series: [Building a policy proxy for MCP: design choices and trade-offs](./06-mcp-policy-proxy.md)_
 
-*Next: [From local YAML to hosted policy store: euno's migration story](./08-local-yaml-to-hosted-gateway.md)*
+_Next: [From local YAML to hosted policy store: eunox's migration story](./08-local-yaml-to-hosted-gateway.md)_

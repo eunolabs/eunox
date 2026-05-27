@@ -1,7 +1,10 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+const baseUrl = import.meta.env.BASE_URL;
+const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 ---
-<BaseLayout title="Reference policies · euno" description="Drop-in YAML policies for the most popular MCP servers — filesystem, Postgres, GitHub, Slack, fetch." activePage="policies">
+<BaseLayout title="Reference policies · eunox" description="Drop-in YAML policies for the most popular MCP servers — filesystem, Postgres, GitHub, Slack, fetch." activePage="policies">
 
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>Reference policies</div>
@@ -10,40 +13,40 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </section>
 
     <nav class="breadcrumbs" aria-label="Breadcrumb">
-        <a href="/">Home</a> &nbsp;›&nbsp; Reference policies
+        <a href={withBase('/')}>Home</a> &nbsp;›&nbsp; Reference policies
     </nav>
 
     <main class="content-section">
 
-        <p>All five policies live in <a href="https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies" target="_blank" rel="noopener noreferrer"><code>public/packages/mcp/policies/</code></a> in the repo. Pick the upstream that matches yours, save the file, and run:</p>
-<pre><code>npx -y @euno/mcp validate ./euno.policy.yaml
-npx -y @euno/mcp proxy --policy ./euno.policy.yaml -- &lt;upstream&gt;</code></pre>
+        <p>Use the examples below as starting points, adapt them to your repo, and validate them with the Go-based CLI:</p>
+<pre><code>eunox-mcp validate ./eunox.policy.yaml
+eunox-mcp proxy --policy ./eunox.policy.yaml -- &lt;upstream&gt;</code></pre>
 
         <table>
             <thead><tr><th>Policy</th><th>Upstream</th><th>What it enforces</th></tr></thead>
             <tbody>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml" target="_blank" rel="noopener noreferrer"><code>filesystem.policy.yaml</code></a></td>
+                    <td><a href="#filesystem"><code>filesystem.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-filesystem</code></td>
                     <td>Writes &amp; deletes confined to <code>/data/</code>; executable file types blocked.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml" target="_blank" rel="noopener noreferrer"><code>postgres.policy.yaml</code></a></td>
+                    <td><a href="#postgres"><code>postgres.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-postgres</code></td>
                     <td>Non-<code>SELECT</code> SQL blocked; credential and audit tables blocked.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml" target="_blank" rel="noopener noreferrer"><code>github.policy.yaml</code></a></td>
+                    <td><a href="#github"><code>github.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-github</code></td>
                     <td>Write tools rate-limited to prevent runaway automation.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml" target="_blank" rel="noopener noreferrer"><code>slack.policy.yaml</code></a></td>
+                    <td><a href="#slack"><code>slack.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-slack</code></td>
                     <td>Direct messages restricted to your domain via <code>recipientDomain</code>.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml" target="_blank" rel="noopener noreferrer"><code>fetch.policy.yaml</code></a></td>
+                    <td><a href="#fetch"><code>fetch.policy.yaml</code></a></td>
                     <td><code>mcp-server-fetch</code></td>
                     <td>HTTP blocked; userinfo authority blocked; private RFC-1918 and metadata endpoints blocked (lexical SSRF guard).</td>
                 </tr>
@@ -167,7 +170,7 @@ requiredCapabilities:
           type: string
           # https only; reject userinfo (user@host), loopback,
           # RFC-1918 ranges, and the 169.254/16 metadata endpoint.
-          pattern: "https://(?!(?:[^/]*@|localhost|127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)).*"
+          pattern: "https://(?!(?:[^/]*@|localhost|127\.|10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|169\.254\.)).*"
         method:
           type: string
           enum: [GET, HEAD, OPTIONS]
@@ -177,10 +180,10 @@ requiredCapabilities:
         windowSeconds: 60</code></pre>
 
         <div class="callout warn">
-            <strong>Reminder.</strong> <code>@euno/mcp</code> allows tool calls that match no constraint in the manifest — policies <em>restrict</em> only the tools they list. To make denial the default, enumerate every tool the upstream exposes. For tools you can't enumerate, rely on additional controls (network ACLs, the upstream's own auth).
+            <strong>Reminder.</strong> <code>eunox-mcp</code> allows tool calls that match no constraint in the manifest — policies <em>restrict</em> only the tools they list. To make denial the default, enumerate every tool the upstream exposes. For tools you can't enumerate, rely on additional controls (network ACLs, the upstream's own auth).
         </div>
 
-        <p style="margin-top:32px"><a href="/quickstart" class="btn-primary" style="text-decoration:none">Try one in 60 seconds →</a> &nbsp; <a href="https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="text-decoration:none;color:#6d28d9;border-color:#a78bfa">Browse on GitHub</a></p>
+        <p style="margin-top:32px"><a href={withBase('/quickstart')} class="btn-primary" style="text-decoration:none">Try one in 60 seconds →</a> &nbsp; <a href="https://github.com/edgeobs/eunox/blob/main/docs/CAPABILITY_MANIFEST_GUIDE.md" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="text-decoration:none;color:#6d28d9;border-color:#a78bfa">Manifest guide</a></p>
     </main>
 
 </BaseLayout>

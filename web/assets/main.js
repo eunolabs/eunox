@@ -1,4 +1,4 @@
-/* Shared JS for the euno static site
+/* Shared JS for the eunox static site
    - terminal animation (#term)
    - install snippet copy buttons
    - smooth scroll to in-page anchors with sticky-header offset
@@ -9,10 +9,10 @@
 
   // ── Terminal animation ────────────────────────────────────────────
   const TERM_LINES = [
-    { cls: 't-info',   text: '  euno-mcp v0.2 · policy proxy for MCP' },
+    { cls: 't-info',   text: '  eunox-mcp v0.2 · policy proxy for MCP' },
     { cls: 't-dim',    text: '' },
     { cls: 't-info',   text: '  upstream  npx @modelcontextprotocol/server-filesystem /data' },
-    { cls: 't-info',   text: '  policy    ./euno.policy.yaml  (3 capabilities, 12 conditions)' },
+    { cls: 't-info',   text: '  policy    ./eunox.policy.yaml  (3 capabilities, 12 conditions)' },
     { cls: 't-ok',     text: '  ✓ proxy listening on stdio' },
     { cls: 't-dim',    text: '' },
     { cls: 't-purple', text: '  → tools/call  read_file  { path: "/data/report.csv" }' },
@@ -20,7 +20,7 @@
     { cls: 't-dim',    text: '' },
     { cls: 't-purple', text: '  → tools/call  read_file  { path: "/data/keys.pem" }' },
     { cls: 't-err',    text: '  ✗ denied   extension .pem not in allowedExtensions' },
-    { cls: 't-info',   text: '    ↳ upstream never contacted · audited to ~/.euno/audit.jsonl' },
+    { cls: 't-info',   text: '    ↳ upstream never contacted · audited to ~/.eunox/audit.jsonl' },
     { cls: 't-dim',    text: '' },
     { cls: 't-purple', text: '  → tools/call  query  { sql: "DROP TABLE users" }' },
     { cls: 't-err',    text: '  ✗ denied   operation DROP not in allowedOperations' },

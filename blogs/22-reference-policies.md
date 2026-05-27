@@ -6,7 +6,7 @@ _Fourth and final post in the "User experience and developer ergonomics" series.
 
 One of the things I spent a lot of time on before shipping euno was the set of reference policies that ship with the package. Not because they're technically complex — the YAML isn't complicated. Because getting the constraints _right_ requires thinking carefully about what each MCP server can do, what can go wrong, and what reasonable defaults look like for an operator who hasn't thought deeply about AI agent security for their specific tool.
 
-The five policies that ship with `@euno/mcp` under `public/packages/mcp/policies/` cover the MCP servers we see deployed most often: filesystem, Postgres, GitHub, Slack, and fetch. This post walks through each one with detailed commentary on why specific constraints were chosen, what they protect against, and where the gaps are.
+The five policies that ship with `eunox-mcp` cover the MCP servers we see deployed most often: filesystem, Postgres, GitHub, Slack, and fetch. This post walks through each one with detailed commentary on why specific constraints were chosen, what they protect against, and where the gaps are.
 
 I want to be honest about the gaps. A reference policy is a starting point, not a final answer. The right policy for your deployment depends on your specific threat model, your trust model for the LLM, and the business logic of the agent. Copy the reference policy, then think about what to change.
 

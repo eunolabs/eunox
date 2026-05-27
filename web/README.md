@@ -1,6 +1,6 @@
-# euno website
+# eunox website
 
-The public-facing website for euno. Plain static HTML/CSS/JS — no build step,
+The public-facing website for eunox. Plain static HTML/CSS/JS — no build step,
 no framework, no JS dependencies. It is meant to be servable from any static
 host (GitHub Pages, S3, Cloudflare Pages, Netlify) or opened directly from
 disk.
@@ -11,7 +11,7 @@ disk.
 web/
 ├── index.html           Landing page — hero, demo, features, how it works, CTA
 ├── quickstart.html      Step-by-step quick-start guide
-├── features.html        Full @euno/mcp condition matrix with worked demos
+├── features.html        Full eunox-mcp condition matrix with worked demos
 ├── how-it-works.html    Architecture, request flow, audit log internals
 ├── policies.html        Reference policies for popular MCP servers
 ├── docs.html            Documentation hub — links to repo docs and READMEs
@@ -46,12 +46,12 @@ authoritative source changes, the website should be updated:
 
 | Page               | Source of truth                                        |
 |--------------------|--------------------------------------------------------|
-| Quick start        | `public/packages/mcp/README.md`                        |
-| Features           | `public/packages/mcp/README.md` (condition matrix)     |
+| Quick start        | `README.md`, `docs/upgrade-to-hosted.md`               |
+| Features           | `docs/CAPABILITY_MANIFEST_GUIDE.md`, `docs/agent-sdk.md` |
 | How it works       | `docs/ARCHITECTURE.md`, `docs/enforcement.md`          |
-| Reference policies | `public/packages/mcp/policies/`                        |
-| Roadmap / stages   | `docs/mvp.md`                                          |
+| Reference policies | `blogs/22-reference-policies.md`                       |
+| Docs hub / links   | `docs/README.md`                                       |
 
 ## License
 
-The website content is Apache-2.0, same as the rest of `public/`.
+The website should reflect the dual-license split: BSL-1.1 for server-side services and Apache-2.0 for the `eunox-mcp` OSS tier.

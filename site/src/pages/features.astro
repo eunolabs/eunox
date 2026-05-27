@@ -1,7 +1,10 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+const baseUrl = import.meta.env.BASE_URL;
+const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 ---
-<BaseLayout title="Features · euno" description="Every guardrail you can attach to a capability — with a worked tool call, the policy that catches it, and the structured outcome the agent receives." activePage="features">
+<BaseLayout title="Features · eunox" description="Every guardrail you can attach to a capability — with a worked tool call, the policy that catches it, and the structured outcome the agent receives." activePage="features">
 
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>Features</div>
@@ -10,7 +13,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </section>
 
     <nav class="breadcrumbs" aria-label="Breadcrumb">
-        <a href="/">Home</a> &nbsp;›&nbsp; Features
+        <a href={withBase('/')}>Home</a> &nbsp;›&nbsp; Features
     </nav>
 
     <main class="content-section">
@@ -30,7 +33,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <li><a href="#policy">policy (external backends)</a></li>
                 <li><a href="#custom">custom (handler hooks)</a></li>
                 <li><a href="#audit">OCSF audit log</a></li>
-                <li><a href="#langchain">@euno/langchain — in-process</a></li>
+                <li><a href="#go-packages">Go packages — in-process</a></li>
             </ul>
         </div>
 
@@ -274,7 +277,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </div>
 
         <h2 id="policy">policy — delegate to an external engine</h2>
-        <p>Plug in OPA, Cedar, an authorization service, or anything callable from Node.js. Modules are loaded with the repeatable <code>--policy-backend</code> flag and registered by name.</p>
+        <p>Plug in OPA, Cedar, an authorization service, or any sidecar or remote policy engine. Modules are loaded with the repeatable <code>--policy-backend</code> flag and registered by name.</p>
         <div class="feature-demo">
             <div class="feature-demo-head">
                 <h3>OPA-backed authorization</h3>
@@ -300,7 +303,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 </div>
                 <div>
 <span class="label">Policy + invocation</span>
-<pre><span class="y-comment"># in euno.policy.yaml</span>
+<pre><span class="y-comment"># in eunox.policy.yaml</span>
 <span class="y-key">conditions</span>:
   - <span class="y-key">type</span>: <span class="y-str">policy</span>
     <span class="y-key">backend</span>: <span class="y-str">opa</span>
@@ -308,10 +311,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <span class="y-key">path</span>: <span class="y-str">data.tools.allow</span>
 
 <span class="y-comment"># run with</span>
-$ npx -y @euno/mcp proxy \
-  --policy ./euno.policy.yaml \
+$ eunox-mcp proxy \
+  --policy ./eunox.policy.yaml \
   --policy-backend ./opa-backend.js \
-  -- node ./upstream.js</pre>
+  -- ./upstream</pre>
                 </div>
             </div>
             <div class="feature-demo-foot"><strong>Outcome:</strong> the proxy delegates the decision; <code>--policy-backend</code> is repeatable and module errors fail-fast at startup.</div>
@@ -355,7 +358,7 @@ $ npx -y @euno/mcp proxy \
         </div>
 
         <h2 id="audit">OCSF audit log</h2>
-        <p>Every decision is recorded as an OCSF API Activity event (class_uid <code>6003</code>), HMAC-SHA256-signed with a key under <code>~/.euno/key</code> (mode <code>0600</code>). The log lives at <code>~/.euno/audit.jsonl</code> and rotates at 100 MiB; rotated files are named <code>audit.jsonl.&lt;ISO-timestamp&gt;</code>.</p>
+        <p>Every decision is recorded as an OCSF API Activity event (class_uid <code>6003</code>), HMAC-SHA256-signed with a key under <code>~/.eunox/key</code> (mode <code>0600</code>). The log lives at <code>~/.eunox/audit.jsonl</code> and rotates at 100 MiB; rotated files are named <code>audit.jsonl.&lt;ISO-timestamp&gt;</code>.</p>
         <div class="feature-demo">
             <div class="feature-demo-head">
                 <h3>Inspect & verify</h3>
@@ -364,9 +367,9 @@ $ npx -y @euno/mcp proxy \
             <div class="feature-demo-body">
                 <div>
 <span class="label">Tail and aggregate</span>
-<pre>$ tail -F ~/.euno/audit.jsonl | jq
+<pre>$ tail -F ~/.eunox/audit.jsonl | jq
 
-$ npx -y @euno/mcp stats
+$ eunox-mcp stats
 denial histogram (since rotation):
   allowedExtensions       12 ███████
   allowedOperations        7 ████
@@ -394,26 +397,20 @@ denial histogram (since rotation):
             <div class="feature-demo-foot"><strong>Verify:</strong> <code>verifyAuditEvent()</code> recomputes <code>HMAC(key, SHA-256(canonical-json))</code> for round-trip integrity checks.</div>
         </div>
 
-        <h2 id="langchain">@euno/langchain — same enforcement, in-process</h2>
-        <p>For LangChain.js agents that run tools in the same process, <code>@euno/langchain</code> places the same condition engine inside the tool wrapper — no proxy process, no transport hop, same YAML policy.</p>
-<pre><code>import {"{ createLocalRuntime, wrapAsLangChainTool }"} from '@euno/langchain';
-
-const runtime = await createLocalRuntime({"{ policyFile: './euno.policy.yaml' }"});
-
-const queryTool = wrapAsLangChainTool(runtime, {`{`}
-  name: 'query_db',
-  description: 'Run a read-only SQL query',
-  schema: {"{ type: 'object', required: ['sql'],"}
-            properties: {"{ sql: { type: 'string' } }"} {`}`},
-  handler: async ({"{ sql }"}) =&gt; db.query(String(sql)),
-{`}`});</code></pre>
-        <p>If the model produces <code>{"{ sql: 'DROP TABLE users' }"}</code>, the wrapper throws <code>CapabilityDenialError</code> with <code>OPERATION_NOT_ALLOWED</code> before <code>db.query</code> is ever called.</p>
+        <h2 id="go-packages">Go packages — same enforcement, in-process</h2>
+        <p>The Go reimplementation exposes the same policy model directly through the repository packages, so services can evaluate manifests without shelling out to a separate proxy process.</p>
+        <ul>
+            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg/capability" target="_blank" rel="noopener noreferrer"><code>pkg/capability</code></a> — manifest and condition types.</li>
+            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg/enforcement" target="_blank" rel="noopener noreferrer"><code>pkg/enforcement</code></a> — enforcement engine and decision flow.</li>
+            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — guidance for embedding the runtime in Go agents and services.</li>
+        </ul>
+        <p>If a service evaluates a manifest that only allows <code>SELECT</code>, the same <code>OPERATION_NOT_ALLOWED</code> decision is raised before any database call is made.</p>
 
         <div class="callout">
-            <strong>Schema parity.</strong> The policy file is a literal subset of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code>. <code>@euno/mcp</code> imports condition types directly — there is exactly one shape and zero drift between the proxy and the rest of the system.
+            <strong>Schema parity.</strong> The policy file is shared across <code>eunox-mcp</code>, <code>pkg/capability</code>, and <code>pkg/enforcement</code> — there is exactly one shape and zero drift between the proxy and the rest of the system.
         </div>
 
-        <p style="margin-top:32px"><a href="/quickstart" class="btn-primary" style="text-decoration:none">Try it in 60 seconds →</a></p>
+        <p style="margin-top:32px"><a href={withBase('/quickstart')} class="btn-primary" style="text-decoration:none">Try it in 60 seconds →</a></p>
     </main>
 
 </BaseLayout>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reference policies · euno</title>
+    <title>Reference policies · eunox</title>
     <meta name="description" content="Drop-in YAML policies for the most popular MCP servers — filesystem, Postgres, GitHub, Slack, fetch.">
     <link rel="icon" href="./assets/eunolabs.png">
     <link rel="stylesheet" href="./assets/styles.css">
@@ -13,8 +13,8 @@
     <header class="site-header">
         <div class="header-left">
             <a class="logo" href="./index.html">
-                <img src="./assets/eunolabs.png" alt="euno">
-                <span class="wordmark">euno</span>
+                <img src="./assets/eunolabs.png" alt="eunox">
+                <span class="wordmark">eunox</span>
             </a>
             <span class="stage-badge">GA</span>
         </div>
@@ -24,7 +24,7 @@
             <a href="./how-it-works.html" class="nav-link">How it works</a>
             <a href="./policies.html" class="nav-link active">Policies</a>
             <a href="./docs.html" class="nav-link">Docs</a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
                 GitHub
             </a>
@@ -43,35 +43,35 @@
 
     <main class="content-section">
 
-        <p>All five policies live in <a href="https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies" target="_blank" rel="noopener noreferrer"><code>public/packages/mcp/policies/</code></a> in the repo. Pick the upstream that matches yours, save the file, and run:</p>
-<pre><code>npx -y @euno/mcp validate ./euno.policy.yaml
-npx -y @euno/mcp proxy --policy ./euno.policy.yaml -- &lt;upstream&gt;</code></pre>
+        <p>The worked examples on this page mirror the reference material in the repo. Pick the upstream that matches yours, save the file, and run:</p>
+<pre><code>eunox-mcp validate ./eunox.policy.yaml
+eunox-mcp proxy --policy ./eunox.policy.yaml -- &lt;upstream&gt;</code></pre>
 
         <table>
             <thead><tr><th>Policy</th><th>Upstream</th><th>What it enforces</th></tr></thead>
             <tbody>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/filesystem.policy.yaml" target="_blank" rel="noopener noreferrer"><code>filesystem.policy.yaml</code></a></td>
+                    <td><a href="#filesystem"><code>filesystem.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-filesystem</code></td>
                     <td>Writes &amp; deletes confined to <code>/data/</code>; executable file types blocked.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/postgres.policy.yaml" target="_blank" rel="noopener noreferrer"><code>postgres.policy.yaml</code></a></td>
+                    <td><a href="#postgres"><code>postgres.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-postgres</code></td>
                     <td>Non-<code>SELECT</code> SQL blocked; credential and audit tables blocked.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/github.policy.yaml" target="_blank" rel="noopener noreferrer"><code>github.policy.yaml</code></a></td>
+                    <td><a href="#github"><code>github.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-github</code></td>
                     <td>Write tools rate-limited to prevent runaway automation.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/slack.policy.yaml" target="_blank" rel="noopener noreferrer"><code>slack.policy.yaml</code></a></td>
+                    <td><a href="#slack"><code>slack.policy.yaml</code></a></td>
                     <td><code>@modelcontextprotocol/server-slack</code></td>
                     <td>Direct messages restricted to your domain via <code>recipientDomain</code>.</td>
                 </tr>
                 <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/policies/fetch.policy.yaml" target="_blank" rel="noopener noreferrer"><code>fetch.policy.yaml</code></a></td>
+                    <td><a href="#fetch"><code>fetch.policy.yaml</code></a></td>
                     <td><code>mcp-server-fetch</code></td>
                     <td>HTTP blocked; userinfo authority blocked; private RFC-1918 and metadata endpoints blocked (lexical SSRF guard).</td>
                 </tr>
@@ -205,22 +205,22 @@ requiredCapabilities:
         windowSeconds: 60</code></pre>
 
         <div class="callout warn">
-            <strong>Reminder.</strong> <code>@euno/mcp</code> allows tool calls that match no constraint in the manifest — policies <em>restrict</em> only the tools they list. To make denial the default, enumerate every tool the upstream exposes. For tools you can't enumerate, rely on additional controls (network ACLs, the upstream's own auth).
+            <strong>Reminder.</strong> <code>eunox-mcp</code> allows tool calls that match no constraint in the manifest — policies <em>restrict</em> only the tools they list. To make denial the default, enumerate every tool the upstream exposes. For tools you can't enumerate, rely on additional controls (network ACLs, the upstream's own auth).
         </div>
 
-        <p style="margin-top:32px"><a href="./quickstart.html" class="btn-primary" style="text-decoration:none">Try one in 60 seconds →</a> &nbsp; <a href="https://github.com/edgeobs/euno/tree/main/public/packages/mcp/policies" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="text-decoration:none;color:#6d28d9;border-color:#a78bfa">Browse on GitHub</a></p>
+        <p style="margin-top:32px"><a href="./quickstart.html" class="btn-primary" style="text-decoration:none">Try one in 60 seconds →</a> &nbsp; <a href="https://github.com/edgeobs/eunox/blob/main/blogs/22-reference-policies.md" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="text-decoration:none;color:#6d28d9;border-color:#a78bfa">Browse the reference notes</a></p>
     </main>
 
     <footer class="site-footer">
         <div class="footer-grid">
             <div class="footer-col footer-brand">
-                <a class="logo" href="./index.html">
-                    <img src="./assets/eunolabs.png" alt="euno" style="height:30px">
-                    <span class="wordmark">euno</span>
-                </a>
-                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
-                <span class="footer-license">Apache-2.0</span>
-            </div>
+    <a class="logo" href="./index.html">
+        <img src="./assets/eunolabs.png" alt="eunox" style="height:30px">
+        <span class="wordmark">eunox</span>
+    </a>
+    <p>Capability-native zero-trust governance for AI agents. Dual license: BSL-1.1 for server-side services, Apache-2.0 for <code>eunox-mcp</code>.</p>
+    <span class="footer-license">BSL-1.1 / Apache-2.0</span>
+</div>
             <div class="footer-col">
                 <h5>Product</h5>
                 <ul>
@@ -231,26 +231,26 @@ requiredCapabilities:
                 </ul>
             </div>
             <div class="footer-col">
-                <h5>Resources</h5>
-                <ul>
-                    <li><a href="./docs.html">Documentation</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
-                </ul>
-            </div>
+    <h5>Resources</h5>
+    <ul>
+        <li><a href="./docs.html">Documentation</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/README.md" target="_blank" rel="noopener noreferrer">eunox README</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">Go agent runtime</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">Architecture</a></li>
+    </ul>
+</div>
             <div class="footer-col">
-                <h5>Project</h5>
-                <ul>
-                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
-                    <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
-                </ul>
-            </div>
+    <h5>Project</h5>
+    <ul>
+        <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
+    </ul>
+</div>
         </div>
         <div class="footer-bottom">
-            <span>&copy; 2026 euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
+            <span>&copy; 2026 eunox · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
             <span>Built for the Model Context Protocol</span>
         </div>
     </footer>
