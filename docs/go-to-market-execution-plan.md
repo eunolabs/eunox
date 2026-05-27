@@ -11,7 +11,7 @@
 
 1. **The urgency mismatch diagnosis is accurate.** Enterprise security teams move slowly; developers building agents haven't been burned yet. The "selling a seatbelt to people who haven't crashed" framing is the correct articulation of the primary GTM challenge.
 
-2. **Deployment complexity is the real barrier.** The evaluation correctly identifies that requiring Gateway + Issuer + Minter + Redis for a first look is a non-starter for evaluation. However, this has been *partially* addressed already — the Go reimplementation supports single-binary dev mode with `NODE_ENV=development` and the gateway can run standalone. The evaluation appears to have been written against the older multi-service TypeScript platform, not the current Go monorepo.
+2. **Deployment complexity is the real barrier.** The evaluation correctly identifies that requiring Gateway + Issuer + Minter + Redis for a first look is a non-starter for evaluation. However, this has been *partially* addressed already — the Go reimplementation supports single-binary dev mode with `GATEWAY_NODE_ENV=development` and the gateway can run standalone. The evaluation appears to have been written against the older multi-service TypeScript platform, not the current Go monorepo.
 
 3. **The framework integration strategy is sound.** Owning one framework deeply before expanding is the correct sequencing. The evaluation's recommendation to pick LangChain/LangGraph is defensible given ecosystem size, though the MCP protocol itself may be a better integration point since it's framework-agnostic.
 
@@ -21,7 +21,7 @@
 
 ### What the evaluation gets wrong or oversimplifies
 
-1. **The BUSL characterization is outdated.** The evaluation claims "BUSL with no clear free tier" — but the pricing model already has a clear Apache-2.0 OSS tier (unlimited agents, unlimited local enforcement, file-only audit) *and* a free Cloud tier (5 agents, 50k events/month). The BUSL applies only to the Self-Host tier which is also free. This is already closer to "Option B" than the evaluation acknowledges. The licensing decision has been made; relitigating it is a distraction.
+1. **The BSL 1.1 characterization is outdated.** The evaluation claims "BSL 1.1 with no clear free tier" — but the pricing model already has a clear Apache-2.0 OSS tier (unlimited agents, unlimited local enforcement, file-only audit) *and* a free Cloud tier (5 agents, 50k events/month). The BSL 1.1 applies only to the Self-Host tier which is also free. This is already closer to "Option B" than the evaluation acknowledges. The licensing decision has been made; relitigating it is a distraction.
 
 2. **"Kill the Multi-Service First Impression" overstates the current problem.** The Go reimplementation already provides a simplified deployment path. The gateway binary starts with minimal config (see `docs/deployment.md` Quick Start). The evaluation conflates the TypeScript platform's complexity with the current Go implementation. What's actually needed is better *documentation and marketing* of the already-simple path, not necessarily more engineering.
 
