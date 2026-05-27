@@ -5,8 +5,6 @@ package identity
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -592,14 +590,9 @@ func TestHTTPJWKSClient_InvalidJSON(t *testing.T) {
 func TestOIDCProvider_EdDSAToken(t *testing.T) {
 	t.Parallel()
 
-	// Generate Ed25519 key.
-	privKeyRaw, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	_ = privKeyRaw
-
-	// For Ed25519 - the OIDC server currently only serves one JWK,
-	// and the existing helpers use RSA. We test that RSA works with OIDC.
-	// EdDSA is tested elsewhere (admin JWT). Here we confirm multiple alg support.
+	// The OIDC server helpers use RSA. We test that the verify path works with
+	// RSA keys to confirm multi-algorithm selection logic. EdDSA-specific signing
+	// is tested in admin JWT extended tests (internal/gateway).
 	privateKey, publicJWK := mustRSAJWK(t, "eddsa-fallback-rsa")
 	server, issuerURL, _ := newOIDCServer(t, "", &publicJWK)
 	defer server.Close()
