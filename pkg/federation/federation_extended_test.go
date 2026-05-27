@@ -31,9 +31,10 @@ func TestPartnerDIDRegistry_ConcurrentRegisterApproveRevoke(t *testing.T) {
 
 	for i := range goroutines {
 		didURI := "did:web:concurrent-" + itoa(i) + ".com"
+		orgName := "Org-" + itoa(i)
 		go func() {
 			defer wg.Done()
-			_ = reg.Register(didURI, "Org-"+itoa(i), "desc")
+			_ = reg.Register(didURI, orgName, "desc")
 		}()
 		go func() {
 			defer wg.Done()

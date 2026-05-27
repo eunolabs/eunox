@@ -284,7 +284,7 @@ func TestOIDCProvider_ContextCancellation(t *testing.T) {
 		}, nil)
 
 	_, err = provider.VerifyToken(ctx, token)
-	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestOIDCProvider_EmptyToken(t *testing.T) {
@@ -587,7 +587,7 @@ func TestHTTPJWKSClient_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "decode JWKS")
 }
 
-func TestOIDCProvider_EdDSAToken(t *testing.T) {
+func TestOIDCProvider_RSAMultiAlgVerification(t *testing.T) {
 	t.Parallel()
 
 	// The OIDC server helpers use RSA. We test that the verify path works with

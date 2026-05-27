@@ -64,7 +64,7 @@ func TestInMemory_ConcurrentKillAndRevive(t *testing.T) {
 	}
 	wg.Wait()
 
-	// No panics or races — final state is deterministic (all revived, since revives run after).
+	// No panics or races — final state may vary (kill/revive run concurrently).
 	// Just verify no error.
 	_, err := m.Status(ctx)
 	assert.NoError(t, err)
