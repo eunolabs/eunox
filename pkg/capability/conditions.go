@@ -164,6 +164,18 @@ func marshalCondition(condition Condition) ([]byte, error) {
 			conditionEnvelope
 			*alias
 		}{conditionEnvelope{Type: typed.ConditionType()}, (*alias)(typed)})
+	case AllowedValuesCondition:
+		type alias AllowedValuesCondition
+		return json.Marshal(struct {
+			conditionEnvelope
+			alias
+		}{conditionEnvelope{Type: typed.ConditionType()}, alias(typed)})
+	case *AllowedValuesCondition:
+		type alias AllowedValuesCondition
+		return json.Marshal(struct {
+			conditionEnvelope
+			*alias
+		}{conditionEnvelope{Type: typed.ConditionType()}, (*alias)(typed)})
 	default:
 		return nil, fmt.Errorf("unsupported condition payload: %T", condition)
 	}
@@ -209,6 +221,8 @@ func newCondition(conditionType string) Condition {
 		return &PolicyCondition{}
 	case ConditionTypeCustom:
 		return &CustomCondition{}
+	case ConditionTypeAllowedValues:
+		return &AllowedValuesCondition{}
 	default:
 		return nil
 	}

@@ -87,6 +87,20 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: go build ./...
 
+  types-sync:
+    name: Types Sync (upstream wire.ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: go.sum
+
+      - name: Verify Go condition types match upstream TypeScript
+        run: go test ./pkg/capability/ -run 'TestConditionTypesInSyncWithUpstreamTypeScript|TestConditionTypeConstantsValid' -v -count=1
+
   migration-validation:
     name: Migration & Integration Validation
     runs-on: ubuntu-latest

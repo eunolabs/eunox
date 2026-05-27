@@ -209,6 +209,18 @@ func TestConditionRoundTripByType(t *testing.T) {
 				assert.Equal(t, "trusted", typed.Config.(map[string]interface{})["label"])
 			},
 		},
+		{
+			name:      "allowed values",
+			condition: AllowedValuesCondition{Argument: "format", Values: []interface{}{"json", "csv", true, nil}},
+			wantType:  ConditionTypeAllowedValues,
+			assertFunc: func(t *testing.T, condition Condition) {
+				typed := condition.(*AllowedValuesCondition)
+				assert.Equal(t, "format", typed.Argument)
+				require.Len(t, typed.Values, 4)
+				assert.Equal(t, "json", typed.Values[0])
+				assert.Equal(t, "csv", typed.Values[1])
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -378,8 +390,35 @@ func TestOptionalFieldsOmitted(t *testing.T) {
 	assert.NotContains(t, jsonText, "argumentSchema")
 }
 
-func TestUnknownConditionTypeReturnsError(t *testing.T) {
-	data := []byte(`{"resource":"tool:test","actions":["read"],"conditions":[{"type":"unknownKind","value":1}]}`)
+func TestIssuanceProofsRoundTrip(t *testing.T) {
+	proofs := IssuanceProofs{
+		Signatures: []IssuerSignature{
+			{IssuerDID: "did:example:123", Algorithm: "ES256", Signature: "abc123", IssuedAt: 1710000000},
+			{IssuerDID: "did:example:456", Algorithm: "EdDSA", Signature: "def456"},
+		},
+	}
+
+	data, err := json.Marshal(proofs)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"issuerDid":"did:example:123"`)
+	assert.Contains(t, string(data), `"algorithm":"ES256"`)
+	assert.Contains(t, string(data), `"signature":"abc123"`)
+
+	var decoded IssuanceProofs
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Len(t, decoded.Signatures, 2)
+	assert.Equal(t, proofs.Signatures[0].IssuerDID, decoded.Signatures[0].IssuerDID)
+	assert.Equal(t, proofs.Signatures[0].Algorithm, decoded.Signatures[0].Algorithm)
+	assert.Equal(t, proofs.Signatures[1].IssuerDID, decoded.Signatures[1].IssuerDID)
+
+	// Empty signatures omitted
+	empty := IssuanceProofs{}
+	emptyData, err := json.Marshal(empty)
+	require.NoError(t, err)
+	assert.NotContains(t, string(emptyData), "signatures")
+}
+
+func TestUnknownConditionTypeReturnsError(t *testing.T) {	data := []byte(`{"resource":"tool:test","actions":["read"],"conditions":[{"type":"unknownKind","value":1}]}`)
 
 	var constraint Constraint
 	err := json.Unmarshal(data, &constraint)

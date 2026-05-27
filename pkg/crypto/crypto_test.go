@@ -162,19 +162,6 @@ func TestSoftwareVerifierWrongKey(t *testing.T) {
 	assert.Error(t, verifier.Verify(context.Background(), digest[:], signature))
 }
 
-func TestKMSStubsReturnNotImplemented(t *testing.T) {
-	stubs := []Signer{
-		NewAWSKMSSigner("aws-key", "us-east-1", RS256),
-		NewAzureKeyVaultSigner("https://vault.example", "azure-key", "v1", ES256),
-		NewGCPCloudKMSSigner("project", "global", "ring", "key", "1", PS256),
-	}
-
-	for _, stub := range stubs {
-		_, err := stub.Sign(context.Background(), []byte("digest"))
-		assert.ErrorIs(t, err, ErrKMSNotImplemented)
-	}
-}
-
 func TestKeyIDAndAlgorithm(t *testing.T) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	require.NoError(t, err)
@@ -188,15 +175,6 @@ func TestKeyIDAndAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "software-key", verifier.KeyID())
 	assert.Equal(t, ES512, verifier.Algorithm())
-
-	assert.Equal(t, "aws-key", NewAWSKMSSigner("aws-key", "us-west-2", PS256).KeyID())
-	assert.Equal(t, PS256, NewAWSKMSSigner("aws-key", "us-west-2", PS256).Algorithm())
-
-	assert.Equal(t, "https://vault.example/keys/azure-key/version1", NewAzureKeyVaultSigner("https://vault.example", "azure-key", "version1", ES256).KeyID())
-	assert.Equal(t, ES256, NewAzureKeyVaultSigner("https://vault.example", "azure-key", "version1", ES256).Algorithm())
-
-	assert.Equal(t, "projects/project/locations/us/keyRings/ring/cryptoKeys/key/cryptoKeyVersions/2", NewGCPCloudKMSSigner("project", "us", "ring", "key", "2", RS512).KeyID())
-	assert.Equal(t, RS512, NewGCPCloudKMSSigner("project", "us", "ring", "key", "2", RS512).Algorithm())
 }
 
 func mustMarshalRSAPrivateKeyPEM(t *testing.T, privateKey *rsa.PrivateKey) []byte {

@@ -23,6 +23,7 @@ func (e *Engine) registerBuiltins() {
 	e.handlers[capability.ConditionTypeAllowedExtensions] = e.handleAllowedExtensions
 	e.handlers[capability.ConditionTypeAllowedTables] = e.handleAllowedTables
 	e.handlers[capability.ConditionTypeRecipientDomain] = e.handleRecipientDomain
+	e.handlers[capability.ConditionTypeAllowedValues] = e.handleAllowedValues
 	e.handlers[capability.ConditionTypePolicy] = e.handlePolicy
 	e.handlers[capability.ConditionTypeCustom] = e.handleCustom
 }
@@ -382,6 +383,50 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 	return nil
 }
 
+func (e *Engine) handleAllowedValues(_ context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	av, ok := asAllowedValues(cond)
+	if !ok {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedValues,
+			Message:       "invalid allowedValues condition type",
+		}
+	}
+
+	if av.Argument == "" {
+		return nil
+	}
+
+	argValue, present := req.Arguments[av.Argument]
+	if !present {
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeAllowedValues,
+			Message:       fmt.Sprintf("required argument %q is missing", av.Argument),
+			Details: map[string]interface{}{
+				"argument": av.Argument,
+			},
+		}
+	}
+
+	for _, allowed := range av.Values {
+		if fmt.Sprintf("%v", allowed) == fmt.Sprintf("%v", argValue) {
+			return nil
+		}
+	}
+
+	return &ConditionError{
+		Code:          capability.ErrCodeConditionFailed,
+		ConditionType: capability.ConditionTypeAllowedValues,
+		Message:       fmt.Sprintf("argument %q value is not in the allowed set", av.Argument),
+		Details: map[string]interface{}{
+			"argument":      av.Argument,
+			"value":         argValue,
+			"allowedValues": av.Values,
+		},
+	}
+}
+
 func (e *Engine) handlePolicy(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
 	_, ok := asPolicy(cond)
 	if !ok {
@@ -500,4 +545,14 @@ func asCustom(cond capability.Condition) (*capability.CustomCondition, bool) {
 		return &t, true
 	}
 	return nil, false
+}
+
+func asAllowedValues(cond capability.Condition) (*capability.AllowedValuesCondition, bool) {
+if t, ok := cond.(*capability.AllowedValuesCondition); ok {
+return t, true
+}
+if t, ok := cond.(capability.AllowedValuesCondition); ok {
+return &t, true
+}
+return nil, false
 }

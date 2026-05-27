@@ -51,7 +51,20 @@ type Confirmation struct {
 	JKT string `json:"jkt"`
 }
 
+// IssuerSignature records a single issuer's signature over the token payload.
+type IssuerSignature struct {
+	// IssuerDID is the decentralised identifier of the co-issuer.
+	IssuerDID string `json:"issuerDid"`
+	// Algorithm identifies the signature algorithm (e.g. "ES256", "EdDSA").
+	Algorithm string `json:"algorithm"`
+	// Signature is the base64url-encoded signature bytes.
+	Signature string `json:"signature"`
+	// IssuedAt is the Unix timestamp at which this co-issuer signed the token.
+	IssuedAt int64 `json:"issuedAt,omitempty"`
+}
+
 // IssuanceProofs carries optional multi-issuer proof material.
+// Each entry corresponds to a co-issuer that has independently signed the token payload.
 type IssuanceProofs struct {
-	// Placeholder for multi-issuer proofs (Stage 3+)
+	Signatures []IssuerSignature `json:"signatures,omitempty"`
 }

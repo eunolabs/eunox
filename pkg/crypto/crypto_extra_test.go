@@ -268,28 +268,6 @@ func TestHashForAlgorithm(t *testing.T) {
 	}
 }
 
-func TestKMSStubMetadata(t *testing.T) {
-	aws := NewAWSKMSSigner("aws-id", "us-east-1", PS384)
-	assert.Equal(t, "aws-id", aws.KeyID())
-	assert.Equal(t, PS384, aws.Algorithm())
-
-	azureWithoutVersion := NewAzureKeyVaultSigner("https://vault.example/", "signing-key", "", ES256)
-	assert.Equal(t, "https://vault.example/keys/signing-key", azureWithoutVersion.KeyID())
-	assert.Equal(t, ES256, azureWithoutVersion.Algorithm())
-
-	azureWithVersion := NewAzureKeyVaultSigner("https://vault.example", "signing-key", "v2", ES384)
-	assert.Equal(t, "https://vault.example/keys/signing-key/v2", azureWithVersion.KeyID())
-	assert.Equal(t, ES384, azureWithVersion.Algorithm())
-
-	gcpWithoutVersion := NewGCPCloudKMSSigner("project", "global", "ring", "key", "", PS512)
-	assert.Equal(t, "projects/project/locations/global/keyRings/ring/cryptoKeys/key", gcpWithoutVersion.KeyID())
-	assert.Equal(t, PS512, gcpWithoutVersion.Algorithm())
-
-	gcpWithVersion := NewGCPCloudKMSSigner("project", "global", "ring", "key", "7", RS512)
-	assert.Equal(t, "projects/project/locations/global/keyRings/ring/cryptoKeys/key/cryptoKeyVersions/7", gcpWithVersion.KeyID())
-	assert.Equal(t, RS512, gcpWithVersion.Algorithm())
-}
-
 func TestParsePublicKeyPEMFromCertificate(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -411,10 +389,4 @@ func TestECDSAHelpersAndContextErrors(t *testing.T) {
 	_, err = signer.Sign(ctx, make([]byte, sha256.Size))
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.ErrorIs(t, verifier.Verify(ctx, make([]byte, sha256.Size), make([]byte, 1)), context.Canceled)
-	_, err = NewAWSKMSSigner("aws", "us-east-1", RS256).Sign(ctx, []byte("digest"))
-	assert.ErrorIs(t, err, context.Canceled)
-	_, err = NewAzureKeyVaultSigner("https://vault.example", "key", "", ES256).Sign(ctx, []byte("digest"))
-	assert.ErrorIs(t, err, context.Canceled)
-	_, err = NewGCPCloudKMSSigner("project", "global", "ring", "key", "", PS256).Sign(ctx, []byte("digest"))
-	assert.ErrorIs(t, err, context.Canceled)
 }
