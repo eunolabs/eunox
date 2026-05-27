@@ -29,6 +29,9 @@ func NewInMemoryStore() *InMemoryStore {
 func (s *InMemoryStore) CreateKey(_ context.Context, key *APIKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.keys[key.KeyID]; exists {
+		return ErrKeyExists
+	}
 	s.keys[key.KeyID] = key
 	return nil
 }

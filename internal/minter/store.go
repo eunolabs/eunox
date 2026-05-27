@@ -19,6 +19,7 @@ import (
 // Errors returned by the minter package.
 var (
 	ErrKeyNotFound      = errors.New("minter: key not found")
+	ErrKeyExists        = errors.New("minter: key already exists")
 	ErrKeyRevoked       = errors.New("minter: key already revoked")
 	ErrKeyExpired       = errors.New("minter: key expired")
 	ErrPolicyNotFound   = errors.New("minter: policy not found")

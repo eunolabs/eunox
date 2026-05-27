@@ -300,6 +300,10 @@ func (app *App) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := app.deps.Store.CreateKey(r.Context(), apiKey); err != nil {
+		if errors.Is(err, ErrKeyExists) {
+			app.writeError(w, http.StatusConflict, "key_exists", "a key with this ID already exists")
+			return
+		}
 		app.writeError(w, http.StatusInternalServerError, "store_failed", "failed to store key")
 		return
 	}

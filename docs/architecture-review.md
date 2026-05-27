@@ -142,6 +142,11 @@ Extend `KeyStore.RevokeKey()` to return the revoked `*APIKey`, or record the met
 from the first `GetKey` lookup in `handlePing`/`handleCreateKey` where the key is
 already fetched.
 
+**Status: Implemented** — `KeyStore.RevokeKey()` now returns `(*APIKey, error)`.
+`handleRevokeKey` in `internal/minter/app.go` uses the returned snapshot for metric
+labeling, eliminating the secondary `GetKey` call and the TOCTOU window.
+Both `InMemoryStore` and `PostgresKeyStore` implement the updated signature.
+
 ---
 
 ## [~] Design Improvements
@@ -598,6 +603,13 @@ implementation in a private branch or planned milestone? The migration
 no `PostgresKeyStore` type appears in the repository. Operators deploying the minter
 in production would need to implement this themselves.
 
+**Status: Implemented** — `internal/minter/postgres_store.go` adds `PostgresKeyStore`
+backed by `*sql.DB`. `cmd/minter/main.go` wires it when `MINTER_API_KEY_DB_URL` is
+set and fails at startup if the variable is absent in production, ensuring the in-memory
+fallback can never be used in a production environment. Integration tests for all
+`KeyStore` methods are in `internal/minter/postgres_store_integration_test.go`
+(build tag: `integration`).
+
 ---
 
 ### OQ-2 — Telemetry sink target and data governance
@@ -606,6 +618,20 @@ in production would need to implement this themselves.
 but `TelemetryConfig.Sink` is set to `nil` in `cmd/gateway/main.go` (events are
 discarded). What is the intended telemetry target (Eunox SaaS, operator-configured
 webhook)? Are there GDPR implications for the `tenantId` field in telemetry events?
+
+**Answer:** The telemetry pipeline is intentionally stub-only in the self-hosted
+distribution. The `TelemetrySink` interface (`internal/gateway/telemetry.go`) is
+defined for future operator-configurable targets (webhook, OTLP endpoint, or Eunox
+SaaS — configurable via a future `GATEWAY_TELEMETRY_*` env group). Leaving `Sink`
+as `nil` is the correct production default until a target is configured; the
+`TelemetryCollector` safely no-ops when `Sink` is nil.
+
+On data governance: `tenantId` is a business identifier, not personal data under
+GDPR Article 4. The `agentId` and `userId` fields may constitute personal data if
+they resolve to natural persons. Operators MUST ensure they have a lawful basis for
+processing before enabling a live telemetry sink and must configure a compatible
+retention/deletion policy for downstream storage. This is documented in
+`docs/audit-retention-compliance.md`.
 
 ---
 
@@ -632,6 +658,15 @@ stored in `InMemoryPartnerDIDStore`. There is no `TRUSTED_PARTNER_DIDS` environm
 variable. Do the docs reflect a legacy design, or is the env-var-based allowlist
 intended for an upcoming stage?
 
+**Answer:** The `TRUSTED_PARTNER_DIDS` reference in `architecture.md` is a legacy
+artefact from the TypeScript prototype. The Go implementation uses the admin API
+(`POST /admin/v1/partner-dids`) as the authoritative source of truth for the partner
+DID allowlist. This provides runtime management without requiring a service restart
+and avoids the operability problems of a static env-var list (ordering, escaping,
+length limits). `architecture.md §5.3 DFD-2` will be updated in the follow-up
+docs-reconciliation pass to reference the admin API instead. There is no plan to
+reinstate the env-var approach.
+
 ---
 
 ### OQ-5 — `docs/architecture.md` references TypeScript implementation details
@@ -641,6 +676,12 @@ referenced TypeScript/Node.js constructs (`index.ts`, `CapabilityIssuerService.t
 `@eunox/common`, `helmet`). The repository is now a pure Go codebase. These
 documents have been updated to reflect the Go implementation (`internal/issuer/app.go`,
 `pkg/capability/`, `pkg/enforcement/`, etc.).
+
+**Status: In progress** — A dedicated documentation pass (PR #298) replaces stale
+TypeScript/Node.js references with Go equivalents across `docs/` and `blogs/`.
+`docs/architecture.md` sequence diagrams and component names are included in that
+sweep. Until merged, the TypeScript references are legacy artefacts and should not
+be treated as authoritative.
 
 ---
 
@@ -656,8 +697,8 @@ Ordered by impact and dependency:
 | 4        | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix                   | None            | Small   | ✅ Done                |
 | 5        | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production    | None            | Small   | ✅ Done                |
 | 6        | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set                         | CR-1 done first | Small   | ✅ Done (part of CR-1) |
-| 7        | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern                  | None            | Small   |                        |
-| 8        | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore`                    | None            | Small   |                        |
+| 7        | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern                  | None            | Small   | ✅ Done                |
+| 8        | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore`                    | None            | Small   | ✅ Done                |
 | 9        | **CR-3** Extend JWT admin auth requirement to staging                               | None            | Trivial | ✅ Done                |
 | 10       | **CI-2** Validate `X-Tool-Name` header before enforcement                           | None            | Small   | ✅ Done                |
 | 11       | **DI-4** Add pagination parameters to `handleListKeys`                              | OQ-1 context    | Small   | ✅ Done                |
@@ -671,6 +712,10 @@ Ordered by impact and dependency:
 | 19       | **CI-8** Anchor regex patterns unconditionally in config validation                 | None            | Small   | ✅ Done                |
 | 20       | **DI-6** Fix audit transport lifecycle context                                      | None            | Small   | ✅ Done                |
 | 21       | **OQ-3** Decide fate of `EUNOX_DEPLOYMENT_TIER` (integrate or remove)               | None            | Small   | ✅ Done                |
-| 22       | **OQ-5** Reconcile architecture docs with Go implementation                         | None            | Small   |                        |
-| 23       | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None            | Small   |                        |
+| 22       | **OQ-5** Reconcile architecture docs with Go implementation                         | None            | Small   | 🔄 In progress (PR #298) |
+| 23       | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None            | Small   | ✅ Done                |
 | 24       | **CI-11** Set `lock_timeout` on audit DB connection                                 | None            | Small   | ✅ Done                |
+| 25       | **OQ-1** Implement production PostgreSQL `KeyStore` for minter                      | None            | Medium  | ✅ Done                |
+| 26       | **CR-5** Fix TOCTOU double-read in `handleRevokeKey`                                | OQ-1 done first | Small   | ✅ Done                |
+| 27       | **OQ-2** Document telemetry sink intent and GDPR guidance                           | None            | Small   | ✅ Done                |
+| 28       | **OQ-4** Clarify partner DID allowlist vs. env-var design                           | None            | Small   | ✅ Done                |

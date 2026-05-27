@@ -76,12 +76,12 @@ func run() error {
 		Window: time.Duration(cfg.RateLimitWindowSecs) * time.Second,
 	})
 
-	// Build store (in-memory for development; PostgreSQL for production).
-	store := minter.NewInMemoryStore()
-
 	// Build metrics.
 	metrics := observability.NewMetricsRegistry("minter", "http")
 
+	// Build store: PostgreSQL when MINTER_API_KEY_DB_URL is set (production);
+	// in-memory fallback for development/testing only.
+	var store minter.KeyStore
 	var readinessChecks []func(context.Context) error
 	if cfg.APIKeyDBURL != "" {
 		db, err := database.OpenPool("postgres", cfg.APIKeyDBURL, &cfg.DBPool)
@@ -89,9 +89,17 @@ func run() error {
 			return fmt.Errorf("open API key database pool: %w", err)
 		}
 		defer func() { _ = db.Close() }()
+		store = minter.NewPostgresKeyStore(db)
 		readinessChecks = append(readinessChecks, func(ctx context.Context) error {
 			return db.PingContext(ctx)
 		})
+		logger.Info("using PostgreSQL key store")
+	} else {
+		if cfg.NodeEnv == config.EnvProduction {
+			return fmt.Errorf("MINTER_API_KEY_DB_URL is required in production")
+		}
+		store = minter.NewInMemoryStore()
+		logger.Warn("using in-memory key store (development only — data is not persisted)")
 	}
 
 	// Build app.
