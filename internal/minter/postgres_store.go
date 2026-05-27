@@ -35,8 +35,8 @@ func NewPostgresKeyStore(db *sql.DB) *PostgresKeyStore {
 	return &PostgresKeyStore{db: db}
 }
 
-// CreateKey inserts a new API key row.  It returns an error if a key with the
-// same key_id already exists.
+// CreateKey inserts a new API key row.  It returns [ErrKeyExists] if a key with
+// the same key_id already exists.
 func (s *PostgresKeyStore) CreateKey(ctx context.Context, key *APIKey) error {
 	meta, err := json.Marshal(key.Metadata)
 	if err != nil {
@@ -58,6 +58,9 @@ func (s *PostgresKeyStore) CreateKey(ctx context.Context, key *APIKey) error {
 		meta,
 	)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrKeyExists
+		}
 		return fmt.Errorf("postgres key store: create key: %w", err)
 	}
 	return nil
@@ -93,15 +96,16 @@ func (s *PostgresKeyStore) CountKeys(ctx context.Context, tenantID string) (int,
 }
 
 // ListKeys returns a page of keys for the given tenant ordered by created_at
-// descending (newest first) then key_id for tie-breaking.  Both limit and
-// offset are applied server-side.  limit ≤ 0 disables the limit (returns all
-// remaining rows from offset).
+// ascending (oldest first) then key_id for tie-breaking — matching the
+// in-memory store behavior and the established pagination contract.  Both limit
+// and offset are applied server-side.  limit ≤ 0 disables the limit (returns
+// all remaining rows from offset).
 func (s *PostgresKeyStore) ListKeys(ctx context.Context, tenantID string, limit, offset int) ([]*APIKey, error) {
 	const baseQ = `
 		SELECT key_id, secret_hash, tenant_id, description, created_at, expires_at, revoked_at, created_by, metadata
 		FROM api_keys
 		WHERE tenant_id = $1
-		ORDER BY created_at DESC, key_id ASC
+		ORDER BY created_at ASC, key_id ASC
 		OFFSET $2`
 
 	var (

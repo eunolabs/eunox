@@ -5,6 +5,7 @@ package minter
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -36,6 +37,20 @@ func TestInMemoryStore_CreateAndGetKey(t *testing.T) {
 	}
 	if got.TenantID != "tenant-1" {
 		t.Errorf("got TenantID %q, want %q", got.TenantID, "tenant-1")
+	}
+}
+
+func TestInMemoryStore_CreateKey_Duplicate(t *testing.T) {
+	t.Parallel()
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	key := &APIKey{KeyID: "dup-key", TenantID: "t1", CreatedAt: time.Now()}
+	if err := store.CreateKey(ctx, key); err != nil {
+		t.Fatalf("first CreateKey: %v", err)
+	}
+	if err := store.CreateKey(ctx, key); !errors.Is(err, ErrKeyExists) {
+		t.Fatalf("expected ErrKeyExists on duplicate key_id, got %v", err)
 	}
 }
 

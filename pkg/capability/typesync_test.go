@@ -60,12 +60,20 @@ func TestConditionTypesInSyncWithUpstreamTypeScript(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		// HTTP 404 means the upstream file simply does not exist at this path.
-		// This is expected for a Go-only repository where the TypeScript source is
-		// no longer maintained alongside the Go implementation.  Treat 404 as a
-		// benign skip rather than a hard failure, even in CI.
+	if resp.StatusCode == http.StatusNotFound {
+		// HTTP 404 means the upstream file does not exist at this path; treat as a
+		// benign skip (even in CI) since the TypeScript source may no longer be
+		// maintained alongside this Go implementation.
 		t.Skipf("skipping types-sync: upstream returned HTTP %d (file not found or moved)", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		// For any other non-200 status (e.g. 401, 403, 429, 500) fail loudly in CI
+		// so regressions or upstream outages don't silently hide sync failures.
+		// Outside CI, skip to keep offline and rate-limited developer builds green.
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("types-sync: upstream returned HTTP %d in CI", resp.StatusCode)
+		}
+		t.Skipf("skipping types-sync: upstream returned HTTP %d", resp.StatusCode)
 	}
 
 	// Parse type discriminator strings from TypeScript.

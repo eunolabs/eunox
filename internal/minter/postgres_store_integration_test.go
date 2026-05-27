@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -18,7 +19,9 @@ import (
 	"github.com/edgeobs/eunox/pkg/testutil"
 )
 
-// migratePostgres applies the minter schema to a test database.
+// migratePostgres applies the minter schema to a test database by loading
+// the real migration SQL from disk, ensuring the test always validates against
+// the production schema rather than a potentially stale embedded copy.
 func migratePostgres(t *testing.T, dsn string) {
 	t.Helper()
 	db, err := sql.Open("postgres", dsn)
@@ -27,35 +30,12 @@ func migratePostgres(t *testing.T, dsn string) {
 	}
 	defer db.Close()
 
-	const schema = `
-CREATE TABLE IF NOT EXISTS api_keys (
-    key_id       TEXT PRIMARY KEY,
-    secret_hash  TEXT NOT NULL,
-    tenant_id    TEXT NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at   TIMESTAMPTZ,
-    revoked_at   TIMESTAMPTZ,
-    created_by   TEXT NOT NULL DEFAULT '',
-    metadata     JSONB NOT NULL DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_api_keys_tenant_id ON api_keys (tenant_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_created_at ON api_keys (created_at DESC);
-
-CREATE TABLE IF NOT EXISTS key_policies (
-    policy_id    TEXT PRIMARY KEY,
-    tenant_id    TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
-    rules        JSONB NOT NULL DEFAULT '{}',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by   TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_key_policies_tenant_id ON key_policies (tenant_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_key_policies_tenant_name ON key_policies (tenant_id, name);
-`
-	if _, err := db.Exec(schema); err != nil {
+	// Load the canonical migration from disk (working dir is the package directory).
+	sqlBytes, err := os.ReadFile("../../migrations/minter/001_create_api_keys.up.sql")
+	if err != nil {
+		t.Fatalf("read migration file: %v", err)
+	}
+	if _, err := db.Exec(string(sqlBytes)); err != nil {
 		t.Fatalf("apply schema: %v", err)
 	}
 }
@@ -132,8 +112,8 @@ func TestPostgresKeyStore_CreateKey_Duplicate(t *testing.T) {
 	if err := store.CreateKey(ctx, key); err != nil {
 		t.Fatalf("first CreateKey: %v", err)
 	}
-	if err := store.CreateKey(ctx, key); err == nil {
-		t.Fatal("expected error on duplicate key_id insert")
+	if err := store.CreateKey(ctx, key); !errors.Is(err, ErrKeyExists) {
+		t.Fatalf("expected ErrKeyExists on duplicate key_id insert, got %v", err)
 	}
 }
 
@@ -170,6 +150,15 @@ func TestPostgresKeyStore_ListKeys(t *testing.T) {
 	}
 	if len(keys) != 5 {
 		t.Errorf("expected 5 keys, got %d", len(keys))
+	}
+
+	// Assert ascending (oldest-first) ordering to lock the pagination contract.
+	for i := 1; i < len(keys); i++ {
+		prev, curr := keys[i-1], keys[i]
+		if prev.CreatedAt.After(curr.CreatedAt) {
+			t.Errorf("ListKeys: ordering violation at index %d: %s (%s) > %s (%s)",
+				i, prev.KeyID, prev.CreatedAt, curr.KeyID, curr.CreatedAt)
+		}
 	}
 
 	// Limit.
