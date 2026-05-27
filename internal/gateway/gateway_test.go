@@ -58,7 +58,9 @@ func newTestApp(t *testing.T, verifier gateway.JWTVerifier) (app *gateway.App, k
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	app = gateway.New(&cfg, &deps)
+	var err error
+	app, err = gateway.New(&cfg, &deps)
+	require.NoError(t, err)
 	return app, ks, revStore
 }
 
@@ -480,7 +482,8 @@ func newTestAppWithBackend(t *testing.T, verifier gateway.JWTVerifier, backendUR
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	app := gateway.New(&cfg, &deps)
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
 	return app, ks
 }
 
@@ -618,10 +621,7 @@ func TestCORS_DisallowedOrigin(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
-func TestCORS_WildcardProductionWarning(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-
+func TestCORS_WildcardProductionError(t *testing.T) {
 	counter := callcounter.NewInMemory()
 	engine := enforcement.New(enforcement.WithCallCounter(counter))
 	ks := killswitch.NewInMemory()
@@ -634,7 +634,6 @@ func TestCORS_WildcardProductionWarning(t *testing.T) {
 		Revocation:  revStore,
 		JWTVerifier: &mockJWTVerifier{},
 		DPoPStore:   dpopStore,
-		Logger:      logger,
 	}
 
 	cfg := gateway.Config{
@@ -643,16 +642,12 @@ func TestCORS_WildcardProductionWarning(t *testing.T) {
 		Environment:     "production",
 	}
 
-	_ = gateway.New(&cfg, &deps)
-
-	logOutput := buf.String()
-	assert.Contains(t, logOutput, "CORS wildcard (*) detected in production environment")
+	_, err := gateway.New(&cfg, &deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CORS wildcard")
 }
 
-func TestCORS_WildcardNoWarningInDevelopment(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-
+func TestCORS_WildcardNoErrorInDevelopment(t *testing.T) {
 	counter := callcounter.NewInMemory()
 	engine := enforcement.New(enforcement.WithCallCounter(counter))
 	ks := killswitch.NewInMemory()
@@ -665,7 +660,6 @@ func TestCORS_WildcardNoWarningInDevelopment(t *testing.T) {
 		Revocation:  revStore,
 		JWTVerifier: &mockJWTVerifier{},
 		DPoPStore:   dpopStore,
-		Logger:      logger,
 	}
 
 	cfg := gateway.Config{
@@ -674,10 +668,62 @@ func TestCORS_WildcardNoWarningInDevelopment(t *testing.T) {
 		Environment:     "development",
 	}
 
-	_ = gateway.New(&cfg, &deps)
+	_, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+}
 
-	logOutput := buf.String()
-	assert.NotContains(t, logOutput, "CORS wildcard")
+// TestCORS_ProductionExplicitOrigins_NoError verifies that explicit CORS origins
+// in production do not cause New() to return an error (Finding 4).
+func TestCORS_ProductionExplicitOrigins_NoError(t *testing.T) {
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ks := killswitch.NewInMemory()
+	revStore := revocation.NewInMemory()
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		JWTVerifier: &mockJWTVerifier{},
+		DPoPStore:   dpopStore,
+	}
+
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  []string{"https://app.example.com", "https://admin.example.com"},
+		Environment:     "production",
+	}
+
+	_, err := gateway.New(&cfg, &deps)
+	assert.NoError(t, err, "production with explicit origins must not error")
+}
+
+// TestCORS_ProductionNoOrigins_NoError verifies that an empty AllowedOrigins
+// list in production does not cause New() to return an error (Finding 4).
+func TestCORS_ProductionNoOrigins_NoError(t *testing.T) {
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ks := killswitch.NewInMemory()
+	revStore := revocation.NewInMemory()
+	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+
+	deps := gateway.Dependencies{
+		Engine:      engine,
+		KillSwitch:  ks,
+		Revocation:  revStore,
+		JWTVerifier: &mockJWTVerifier{},
+		DPoPStore:   dpopStore,
+	}
+
+	cfg := gateway.Config{
+		GatewayAudience: "test-gateway",
+		AllowedOrigins:  nil,
+		Environment:     "production",
+	}
+
+	_, err := gateway.New(&cfg, &deps)
+	assert.NoError(t, err, "production with no AllowedOrigins must not error")
 }
 
 func TestEnforce_GlobalKillSwitch(t *testing.T) {

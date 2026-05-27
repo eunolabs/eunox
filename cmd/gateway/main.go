@@ -170,7 +170,10 @@ func run() error {
 		Environment:             string(cfg.NodeEnv),
 	}
 
-	app := gateway.New(&appCfg, &deps)
+	app, err := gateway.New(&appCfg, &deps)
+	if err != nil {
+		return fmt.Errorf("gateway configuration error: %w", err)
+	}
 
 	// Create main server
 	srv := &http.Server{

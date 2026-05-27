@@ -200,7 +200,7 @@ func newOIDCProvider(cfg *OIDCConfig, httpClient *http.Client, providerType Prov
 		resolvedCfg = cfg
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	if err := validateOIDCConfig(resolvedCfg); err != nil {
 		return nil, err

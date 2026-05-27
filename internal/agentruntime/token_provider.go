@@ -122,6 +122,11 @@ func NewAuthTokenProvider(cfg *AuthTokenProviderConfig) *AuthTokenProvider {
 
 // defaultJitter returns a random duration in [0, 10%) of base to add to a
 // refresh delay, spreading out synchronized restarts to prevent thundering herd.
+//
+// math/rand/v2 (not crypto/rand) is intentional here: jitter is a load-spreading
+// mechanism, not a security primitive. In Go 1.22+, math/rand/v2 is automatically
+// seeded from the runtime's cryptographic entropy source, producing non-deterministic
+// output suitable for this purpose.
 func defaultJitter(base time.Duration) time.Duration {
 	if base <= 0 {
 		return 0

@@ -217,7 +217,9 @@ func newTestAppWithION(t *testing.T, ionResolver *did.IONResolver) *gateway.App 
 		AllowedOrigins:  []string{"http://localhost:3000"},
 	}
 
-	return gateway.New(&cfg, &deps)
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+	return app
 }
 
 // --- Test Helpers ---

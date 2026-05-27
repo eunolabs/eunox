@@ -34,7 +34,7 @@ func BenchmarkEnforce_SimpleAllow(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
 	}, &gateway.Dependencies{
@@ -44,6 +44,7 @@ func BenchmarkEnforce_SimpleAllow(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 
@@ -89,7 +90,7 @@ func BenchmarkEnforce_WithConditions(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
 	}, &gateway.Dependencies{
@@ -99,6 +100,7 @@ func BenchmarkEnforce_WithConditions(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 
@@ -137,7 +139,7 @@ func BenchmarkEnforce_Deny(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
 	}, &gateway.Dependencies{
@@ -147,6 +149,7 @@ func BenchmarkEnforce_Deny(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 
@@ -191,7 +194,7 @@ func BenchmarkEnforce_WithKillSwitchCheck(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
 	}, &gateway.Dependencies{
@@ -201,6 +204,7 @@ func BenchmarkEnforce_WithKillSwitchCheck(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 
@@ -245,7 +249,7 @@ func BenchmarkEnforce_WithRevocationCheck(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "bench-gateway",
 		AdminAPIKey:     "bench-admin-key",
 	}, &gateway.Dependencies{
@@ -255,6 +259,7 @@ func BenchmarkEnforce_WithRevocationCheck(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 
@@ -293,7 +298,7 @@ func BenchmarkEnforce_P99Threshold(b *testing.B) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "perf-gateway",
 		AdminAPIKey:     "perf-admin-key",
 	}, &gateway.Dependencies{
@@ -303,6 +308,7 @@ func BenchmarkEnforce_P99Threshold(b *testing.B) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(b, err)
 
 	handler := app.Handler()
 

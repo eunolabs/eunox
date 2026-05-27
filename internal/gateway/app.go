@@ -5,7 +5,9 @@
 package gateway
 
 import (
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -57,6 +59,13 @@ type Config struct {
 	// MaxRequestBodySize is the maximum size of request bodies in bytes.
 	// Defaults to 1 MB (1048576) if not set.
 	MaxRequestBodySize int64
+
+	// TrustedProxyCIDRs is the list of CIDR blocks (e.g. "10.0.0.0/8") whose
+	// requests are permitted to set the X-Forwarded-For header.  When this list
+	// is non-empty and the immediate peer (RemoteAddr) matches one of the CIDRs,
+	// the first IP in XFF is used as the client IP for enforcement.  When the
+	// list is empty, XFF is ignored and RemoteAddr is always used.
+	TrustedProxyCIDRs []string
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -91,6 +100,7 @@ type App struct {
 	usageTracker     *UsageTracker
 	adminDeps        AdminDependencies
 	ionHealthChecker *IONHealthChecker
+	trustedProxyNets []*net.IPNet
 }
 
 type gatewayMetrics struct {
@@ -101,10 +111,33 @@ type gatewayMetrics struct {
 }
 
 // New creates a new gateway App with the given configuration and dependencies.
-func New(cfg *Config, deps *Dependencies) *App {
+// Returns an error if the configuration is invalid for the runtime environment
+// (e.g. CORS wildcard is not permitted in production).
+func New(cfg *Config, deps *Dependencies) (*App, error) {
+	// Finding 4: Fail-closed on CORS wildcard in production.
+	if cfg.Environment == "production" {
+		for _, origin := range cfg.AllowedOrigins {
+			if origin == "*" {
+				return nil, fmt.Errorf("CORS wildcard (*) not allowed in production; configure explicit AllowedOrigins")
+			}
+		}
+	}
+
 	app := &App{
 		config: *cfg,
 		deps:   *deps,
+	}
+
+	// Finding 1: Parse trusted proxy CIDRs for X-Forwarded-For handling.
+	for _, cidr := range cfg.TrustedProxyCIDRs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			if deps.Logger != nil {
+				deps.Logger.Warn("invalid TrustedProxyCIDR ignored", "cidr", cidr, "err", err)
+			}
+			continue
+		}
+		app.trustedProxyNets = append(app.trustedProxyNets, ipNet)
 	}
 
 	app.metrics = app.initMetrics()
@@ -166,18 +199,6 @@ func New(cfg *Config, deps *Dependencies) *App {
 	app.router = app.buildRouter()
 	app.adminRouter = app.buildAdminRouter()
 
-	// DI-5: Warn if CORS wildcard is configured in production.
-	if app.config.Environment == "production" {
-		for _, origin := range app.config.AllowedOrigins {
-			if origin == "*" {
-				if deps.Logger != nil {
-					deps.Logger.Warn("CORS wildcard (*) detected in production environment. This disables cross-origin protection. Configure explicit AllowedOrigins for production.")
-				}
-				break
-			}
-		}
-	}
-
 	if cfg.BackendURL != "" {
 		target, err := url.Parse(cfg.BackendURL)
 		if err == nil {
@@ -185,7 +206,7 @@ func New(cfg *Config, deps *Dependencies) *App {
 		}
 	}
 
-	return app
+	return app, nil
 }
 
 // Handler returns the http.Handler for the gateway public API.

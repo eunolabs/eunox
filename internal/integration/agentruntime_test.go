@@ -149,7 +149,7 @@ func setupTestGateway(t *testing.T, signingKey *eunocrypto.SoftwareSigner) *http
 	metrics := observability.NewMetricsRegistry("test", "integration")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		AdminAPIKey:     "test-admin-key",
 		GatewayAudience: "https://gateway.test",
 	}, &gateway.Dependencies{
@@ -159,6 +159,7 @@ func setupTestGateway(t *testing.T, signingKey *eunocrypto.SoftwareSigner) *http
 		Logger:      logger,
 		Metrics:     metrics,
 	})
+	require.NoError(t, err)
 
 	return httptest.NewServer(app.Handler())
 }
