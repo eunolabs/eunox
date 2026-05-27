@@ -99,6 +99,8 @@ func NewPostgresLedgerBackend(db DB, lock AdvisoryLock, cfg PostgresLedgerConfig
 func (b *PostgresLedgerBackend) AcquireLock(ctx context.Context) error {
 	if b.lockTimeout > 0 {
 		ms := b.lockTimeout.Milliseconds()
+		// SET does not support query parameters in PostgreSQL; ms is an int64
+		// derived from a time.Duration so there is no injection risk here.
 		if _, err := b.db.ExecContext(ctx, fmt.Sprintf("SET lock_timeout = '%dms'", ms)); err != nil {
 			return fmt.Errorf("audit: set lock_timeout: %w", err)
 		}

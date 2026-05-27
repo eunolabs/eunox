@@ -320,7 +320,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// reach the enforcement engine or are written into audit records.
 	toolName := r.Header.Get("X-Tool-Name")
 	if !validToolNameRE.MatchString(toolName) {
-		writeJSON(w, http.StatusBadRequest, errorResponse("X-Tool-Name header is missing or invalid; must match ^[a-zA-Z0-9_\\-:.]{1,256}$"))
+		writeJSON(w, http.StatusBadRequest, errorResponse(`X-Tool-Name header is missing or invalid; must match ^[a-zA-Z0-9_\-:.]{1,256}$`))
 		return
 	}
 

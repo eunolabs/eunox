@@ -50,7 +50,8 @@ func main() {
 }
 
 func run() error {
-	// Root context — cancelled when the process receives a shutdown signal.
+	// Root context — cancel() is called explicitly after the shutdown signal is
+	// received to unblock all in-flight operations tied to this context.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
