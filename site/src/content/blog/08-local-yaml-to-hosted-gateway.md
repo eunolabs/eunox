@@ -1,10 +1,11 @@
 ---
-title: "From local YAML to hosted policy store: euno's migration story"
+title: "From local YAML to hosted policy store: eunox's migration story"
 description: "developers and platform engineers scaling agent governance beyond a single machine"
 pubDate: "2026-05-27"
 ---
+# From local YAML to hosted policy store: eunox's migration story
 
-*Audience: developers and platform engineers scaling agent governance beyond a single machine*
+_Audience: developers and platform engineers scaling agent governance beyond a single machine_
 
 ---
 
@@ -16,7 +17,7 @@ This post is about that transition — what breaks, what stays the same, and the
 
 ## The local mode design and its assumptions
 
-When you run `@euno/mcp proxy --policy ./euno.policy.yaml` in local mode, the whole governance stack is in one process. The policy YAML is loaded at startup. Conditions are evaluated in-memory. Call counters live in-memory. The audit log goes to a local file — `~/.euno/audit.jsonl`.
+When you run `eunox-mcp proxy --policy ./euno.policy.yaml` in local mode, the whole governance stack is in one process. The policy YAML is loaded at startup. Conditions are evaluated in-memory. Call counters live in-memory. The audit log goes to a local file — `~/.euno/audit.jsonl`.
 
 This design was deliberate. For a single developer using Claude Desktop, it's exactly right. There's no infrastructure to run, no services to keep up, no distributed state to worry about. You change a YAML file and restart. The feedback loop is tight. Onboarding takes five minutes, as [the previous post](./07-drop-in-governance-claude-desktop.md) demonstrates.
 
@@ -40,15 +41,15 @@ The hosted gateway is a different architecture, not a replacement philosophy. Th
 
 Here's the side-by-side:
 
-| Concern | Local mode | Hosted mode |
-|---|---|---|
-| Policy storage | YAML file on disk | Gateway policy store (versioned, hash-verified) |
-| Call counters | In-memory, per-process | Redis, shared across all agent instances |
-| Kill-switch | In-memory, per-process | Redis global flag, instant effect everywhere |
-| Revocation list | In-memory, per-process | Redis, checked per call across all sessions |
-| Audit log | `~/.euno/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable) |
-| Token signing | Simplified / skipped | Full JWT signed by HSM-backed tenant key |
-| Multi-user | Not designed for it | Native multi-tenancy with per-tenant isolation |
+| Concern         | Local mode                           | Hosted mode                                     |
+| --------------- | ------------------------------------ | ----------------------------------------------- |
+| Policy storage  | YAML file on disk                    | Gateway policy store (versioned, hash-verified) |
+| Call counters   | In-memory, per-process               | Redis, shared across all agent instances        |
+| Kill-switch     | In-memory, per-process               | Redis global flag, instant effect everywhere    |
+| Revocation list | In-memory, per-process               | Redis, checked per call across all sessions     |
+| Audit log       | `~/.euno/audit.jsonl` (HMAC-chained) | Postgres ledger (KMS-signed, durable)           |
+| Token signing   | Simplified / skipped                 | Full JWT signed by HSM-backed tenant key        |
+| Multi-user      | Not designed for it                  | Native multi-tenancy with per-tenant isolation  |
 
 The policy format is identical. That's the single most important architectural decision in the whole migration story, and I'll explain why it was hard to maintain and why we held the line on it.
 
@@ -66,14 +67,14 @@ The bridge is the minter façade.
 
 ## The minter façade: the seam that makes it work
 
-When `@euno/mcp` in hosted mode sends a tool call to the gateway, it sends its `sk-...` API key as the bearer token. That API key is a long-lived bearer secret — essentially a password. It's not a JWT. It doesn't have a signature. It doesn't have an expiry. It can't pass through the gateway's JWT verification step.
+When `eunox-mcp` in hosted mode sends a tool call to the gateway, it sends its `sk-...` API key as the bearer token. That API key is a long-lived bearer secret — essentially a password. It's not a JWT. It doesn't have a signature. It doesn't have an expiry. It can't pass through the gateway's JWT verification step.
 
 The minter façade sits between the proxy and the enforcement endpoint. It receives the API key, looks up the tenant and policy associated with it, and mints a short-lived signed JWT — TTL of five minutes or less — using the tenant's HSM-backed signing key. That JWT goes to the enforcement endpoint, which verifies it like any other capability token.
 
 The flow looks like this:
 
 ```
-@euno/mcp (proxy)
+eunox-mcp (proxy)
       │
       │  POST /api/v1/enforce
       │  Authorization: Bearer sk-x7Kp9mRq...
@@ -115,17 +116,17 @@ I said the policy format is identical between local and hosted mode. This is a s
 
 The hosted gateway internally represents policies in a slightly different shape than the YAML you write. It needs to version them, hash them, associate them with tenants. There's a temptation to expose that internal shape — let you upload a "gateway-native" policy format that has the versioning and tenant fields baked in. It's a natural evolution.
 
-We didn't do it. The `AgentCapabilityManifest` schema in `@euno/common-core` is the single schema. The same TypeScript type, same conditions, same resource pattern syntax, same validation logic — used by `@euno/mcp` for local mode evaluation and by the capability issuer for JWT generation and by the gateway for enforcement. The gateway wraps the manifest in internal metadata, but the manifest itself is the same thing you write locally.
+We didn't do it. The shared manifest types live in Go packages under `pkg/`. The same Go structs, conditions, resource-pattern parsing, and validation code are used by `eunox-mcp` for local mode evaluation, by the issuer service for JWT generation, and by the hosted gateway in `cmd/gateway` for enforcement. The gateway wraps the manifest in internal metadata, but the manifest itself is the same thing you write locally.
 
-The reason this matters practically: a developer who writes a manifest on their laptop, validates it with `euno validate`, runs it locally for a week, and then uploads it to the gateway should have no surprises. The policy they tested locally is the policy being enforced remotely. There's no "that works locally but not in the gateway" class of problem if the schema is genuinely shared.
+The reason this matters practically: a developer who writes a manifest on their laptop, validates it with `eunox-mcp validate`, runs it locally for a week, and then uploads it to the gateway should have no surprises. The policy they tested locally is the policy being enforced remotely. There's no "that works locally but not in the gateway" class of problem if the schema is genuinely shared.
 
-The shared schema also means that `euno validate` — which runs the same validation logic as both the local evaluator and the gateway — is a trustworthy pre-flight check in CI. If the validation passes, the gateway will accept it. If the gateway rejects it, the validation would have caught it. This makes the policy authoring loop genuinely usable, which is something that falls apart quickly if the local and remote validation rules diverge.
+The shared schema also means that `eunox-mcp validate` — which runs the same validation logic as both the local evaluator and the gateway — is a trustworthy pre-flight check in CI. If the validation passes, the gateway will accept it. If the gateway rejects it, the validation would have caught it. This makes the policy authoring loop genuinely usable, which is something that falls apart quickly if the local and remote validation rules diverge.
 
 ---
 
 ## The migration in practice
 
-We built `euno-mcp upgrade-to-hosted` to make the mechanics as smooth as the conceptual story. The command does four things:
+We built `eunox-mcp upgrade-to-hosted` to make the mechanics as smooth as the conceptual story. The command does four things:
 
 1. Validates the API key against the gateway (catches auth problems before you're half-migrated)
 2. Uploads your policy YAML to the gateway's policy store
@@ -133,7 +134,7 @@ We built `euno-mcp upgrade-to-hosted` to make the mechanics as smooth as the con
 4. Optionally patches your MCP config to swap `--policy` for `--enforcer-url` + `--enforcer-api-key`, with a `.bak` backup of your old config
 
 ```bash
-euno-mcp upgrade-to-hosted \
+eunox-mcp upgrade-to-hosted \
   --gateway-url https://gateway.euno.example \
   --api-key sk-x7Kp9mRq.bL3nYv2wQs... \
   --admin-key sk-adminKey... \
@@ -148,25 +149,38 @@ The recommended approach is to run both modes in parallel briefly before committ
 {
   "mcpServers": {
     "database-local": {
-      "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--policy", "/path/to/euno.policy.yaml",
-               "--", "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
+      "command": "eunox-mcp",
+      "args": [
+        "proxy",
+        "--policy",
+        "/path/to/euno.policy.yaml",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics",
+      ],
     },
     "database-hosted": {
-      "command": "npx",
-      "args": ["-y", "@euno/mcp", "proxy",
-               "--enforcer-url", "https://gateway.euno.example",
-               "--enforcer-api-key", "sk-x7Kp9mRq...",
-               "--", "npx", "-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://localhost:5432/analytics"]
-    }
-  }
+      "command": "eunox-mcp",
+      "args": [
+        "proxy",
+        "--enforcer-url",
+        "https://gateway.euno.example",
+        "--enforcer-api-key",
+        "sk-x7Kp9mRq...",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost:5432/analytics",
+      ],
+    },
+  },
 }
 ```
 
-A day or two of parallel running tells you quickly if there are any policy edge cases that behave differently. In practice, if `euno validate` passes on your local file, the hosted gateway will behave identically — the validation is shared code. But the parallel run catches any environmental differences.
+A day or two of parallel running tells you quickly if there are any policy edge cases that behave differently. In practice, if `eunox-mcp validate` passes on your local file, the hosted gateway will behave identically — the validation is shared code. But the parallel run catches any environmental differences.
 
 ---
 
@@ -175,6 +189,7 @@ A day or two of parallel running tells you quickly if there are any policy edge 
 Moving to hosted mode means tool call arguments leave your network on their way to the gateway's policy evaluation engine. This is worth being explicit about for anyone doing a SOC 2 review or GDPR analysis.
 
 What goes to the gateway on every tool call:
+
 - Tool name
 - Tool arguments (raw — these are evaluated for policy conditions like `allowedOperations`, `argumentSchema`, `recipientDomain`)
 - Session identifier
@@ -182,6 +197,7 @@ What goes to the gateway on every tool call:
 - Timestamp
 
 What stays on your network:
+
 - The upstream MCP server's response — the gateway never sees it
 - Raw tool arguments after evaluation — only a SHA-256 hash (`argsHash`) is written to the audit ledger, not the raw arguments
 - Your policy YAML content — uploaded once at setup, not re-transmitted per call
@@ -199,7 +215,7 @@ One thing I insisted on early: rollback to local mode should be instant and requ
 
 It is. If you need to roll back from hosted to local: restore the `--policy` flag, remove `--enforcer-url` and `--enforcer-api-key`, restart your MCP host. Done. Local enforcement is active again.
 
-The gateway doesn't delete anything. Audit records written during the hosted period remain in the Postgres ledger and are queryable via the audit API even after you switch back. The local HMAC audit log file is untouched — records from before the migration are still there for `euno-mcp stats` and local analysis. The two audit trails — local HMAC and hosted Postgres — coexist independently.
+The gateway doesn't delete anything. Audit records written during the hosted period remain in the Postgres ledger and are queryable via the audit API even after you switch back. The local HMAC audit log file is untouched — records from before the migration are still there for `eunox-mcp stats` and local analysis. The two audit trails — local HMAC and hosted Postgres — coexist independently.
 
 This wasn't an accident. Systems where rollback is a major operation discourage rollback, which means teams are stuck with a bad upgrade longer than they should be. Making rollback trivial changes the risk calculus of migrating in the first place.
 
@@ -233,6 +249,6 @@ That flexibility is what makes the architecture useful in practice. Not everyone
 
 ---
 
-*Previous: [Drop-in governance: adding @euno/mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop.md)*
+_Previous: [Drop-in governance: adding eunox-mcp to Claude Desktop in 5 minutes](./07-drop-in-governance-claude-desktop.md)_
 
-*Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)*
+_Next: [Capability tokens: a cryptographic contract between agent and operator](./09-capability-tokens.md)_

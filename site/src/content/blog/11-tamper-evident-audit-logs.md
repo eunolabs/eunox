@@ -120,11 +120,11 @@ To forge a record while defeating both layers, an attacker would need to simulta
 
 ---
 
-## The local audit log in `@euno/mcp`
+## The local audit log in `eunox-mcp`
 
-Posts 9 and 10 covered the gateway — the enterprise enforcement path. But the same OCSF schema is also used in `@euno/mcp`, the open-source local proxy.
+Posts 9 and 10 covered the gateway — the enterprise enforcement path. But the same OCSF schema is also used in `eunox-mcp`, the open-source local proxy.
 
-When you're running `@euno/mcp` locally (no gateway, no Postgres, just a YAML policy file and a stdio process), every tool call still gets logged to `~/.euno/audit.jsonl`. The format is the same OCSF API Activity shape. The difference is the signer: instead of a KMS-backed asymmetric key, the local log uses a locally-generated HMAC key stored in `~/.euno/key` (created on first run, mode 0600).
+When you're running `eunox-mcp` locally (no gateway, no Postgres, just a YAML policy file and a stdio process), every tool call still gets logged to `~/.euno/audit.jsonl`. The format is the same OCSF API Activity shape. The difference is the signer: instead of a KMS-backed asymmetric key, the local log uses a locally-generated HMAC key stored in `~/.euno/key` (created on first run, mode 0600).
 
 This is a deliberate design choice. The policy format is the same whether you're running locally or against the hosted gateway. The audit record format is the same. When you move from local development to a production gateway deployment, your tooling — log parsers, monitoring scripts, SIEM ingest rules — doesn't need to change. The only thing that changes is the signer and the sink.
 

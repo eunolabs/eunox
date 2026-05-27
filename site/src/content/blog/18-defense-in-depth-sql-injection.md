@@ -116,7 +116,7 @@ The block-comment-before-verb case is actually handled correctly by fail-closed 
 
 ## Layer 2: `argumentSchema` pattern guards
 
-The `argumentSchema` feature (from `@euno/common-core`) lets you declare not just the shape of the arguments but also constraints on their values. For the SQL use case, this means adding a `pattern` constraint on the query argument:
+The `argumentSchema` feature (from the shared `pkg/` Go packages) lets you declare not just the shape of the arguments but also constraints on their values. For the SQL use case, this means adding a `pattern` constraint on the query argument:
 
 ```yaml
 capabilities:

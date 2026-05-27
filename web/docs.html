@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Documentation · euno</title>
-    <meta name="description" content="Index of euno documentation: package READMEs, architecture, capability model, enforcement, and the staged execution plan.">
+    <title>Documentation · eunox</title>
+    <meta name="description" content="Index of eunox documentation: service references, architecture, capability model, enforcement, and operations guidance.">
     <link rel="icon" href="./assets/eunolabs.png">
     <link rel="stylesheet" href="./assets/styles.css">
 </head>
@@ -13,8 +13,8 @@
     <header class="site-header">
         <div class="header-left">
             <a class="logo" href="./index.html">
-                <img src="./assets/eunolabs.png" alt="euno">
-                <span class="wordmark">euno</span>
+                <img src="./assets/eunolabs.png" alt="eunox">
+                <span class="wordmark">eunox</span>
             </a>
             <span class="stage-badge">GA</span>
         </div>
@@ -24,7 +24,7 @@
             <a href="./how-it-works.html" class="nav-link">How it works</a>
             <a href="./policies.html" class="nav-link">Policies</a>
             <a href="./docs.html" class="nav-link active">Docs</a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
                 GitHub
             </a>
@@ -34,7 +34,7 @@
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>Docs</div>
         <h1>Documentation</h1>
-        <p class="hero-sub">Package READMEs, architecture, capability model, and the full platform documentation. The authoritative source is the GitHub repo — this page links straight to the relevant files.</p>
+        <p class="hero-sub">Service references, architecture, capability model, and the full platform documentation. The authoritative source is the GitHub repo — this page links straight to the relevant files.</p>
     </section>
 
     <nav class="breadcrumbs" aria-label="Breadcrumb">
@@ -51,102 +51,108 @@
             <li><a href="./policies.html">Reference policies</a> — drop-in YAML for popular MCP servers (this site).</li>
         </ul>
 
-        <h2>Package READMEs</h2>
-        <ul>
-            <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer"><code>@euno/mcp</code></a> — the MCP policy proxy (CLI + library).</li>
-            <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer"><code>@euno/langchain</code></a> — in-process LangChain.js companion.</li>
-            <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/cli/README.md" target="_blank" rel="noopener noreferrer"><code>@euno/cli</code></a> — the developer CLI (<code>euno</code> binary).</li>
-            <li><a href="https://github.com/edgeobs/euno/tree/main/public/packages/common" target="_blank" rel="noopener noreferrer"><code>@euno/common-core</code></a> — shared types &amp; in-memory implementations.</li>
-        </ul>
+        <h2>Service &amp; runtime references</h2>
+<ul>
+    <li><a href="https://github.com/edgeobs/eunox/blob/main/README.md" target="_blank" rel="noopener noreferrer"><code>README.md</code></a> — repo overview, Go 1.25+ requirements, and build/test commands.</li>
+    <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — Go Agent Runtime, token management, and adapter examples.</li>
+    <li><a href="https://github.com/edgeobs/eunox/tree/main/cmd/gateway" target="_blank" rel="noopener noreferrer"><code>cmd/gateway/</code></a> — <code>eunox-gateway</code> service entrypoint.</li>
+    <li><a href="https://github.com/edgeobs/eunox/tree/main/cmd/issuer" target="_blank" rel="noopener noreferrer"><code>cmd/issuer/</code></a> — <code>eunox-issuer</code> service entrypoint.</li>
+    <li><a href="https://github.com/edgeobs/eunox/tree/main/cmd/minter" target="_blank" rel="noopener noreferrer"><code>cmd/minter/</code></a> — <code>eunox-minter</code> service entrypoint.</li>
+    <li><a href="https://github.com/edgeobs/eunox/tree/main/cmd/storage-grant-svc" target="_blank" rel="noopener noreferrer"><code>cmd/storage-grant-svc/</code></a> — storage grant service entrypoint.</li>
+</ul>
 
         <h2>Concepts &amp; architecture</h2>
-        <table>
-            <thead><tr><th>Doc</th><th>What it is</th></tr></thead>
-            <tbody>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">mvp.md</a></td>
-                    <td>Implementation history, gate criteria, business model.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">ARCHITECTURE.md</a></td>
-                    <td>C4 views, sequence diagrams, cross-cutting concerns.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/capability-model.md" target="_blank" rel="noopener noreferrer">capability-model.md</a></td>
-                    <td>Security model and capability design.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/enforcement.md" target="_blank" rel="noopener noreferrer">enforcement.md</a></td>
-                    <td>Policy decision point design, enforcement guarantees.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/CAPABILITY_MANIFEST_GUIDE.md" target="_blank" rel="noopener noreferrer">CAPABILITY_MANIFEST_GUIDE.md</a></td>
-                    <td>Policy authoring guide.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/mcp-support.md" target="_blank" rel="noopener noreferrer">mcp-support.md</a></td>
-                    <td>MCP SDK pin and protocol support window.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/repo-split.md" target="_blank" rel="noopener noreferrer">repo-split.md</a></td>
-                    <td>Two-folder structure, license boundary rules.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/stage-0-freeze.md" target="_blank" rel="noopener noreferrer">stage-0-freeze.md</a></td>
-                    <td>Platform package freeze policy.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/repo-guide.md" target="_blank" rel="noopener noreferrer">repo-guide.md</a></td>
-                    <td>Repository structure, development setup, lint &amp; test commands.</td>
-                </tr>
-            </tbody>
-        </table>
+<table>
+    <thead><tr><th>Doc</th><th>What it is</th></tr></thead>
+    <tbody>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/README.md" target="_blank" rel="noopener noreferrer">README.md</a></td>
+            <td>Docs index and maintenance guide.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">ARCHITECTURE.md</a></td>
+            <td>C4 views, sequence diagrams, and deployment view.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE_REVIEW.md" target="_blank" rel="noopener noreferrer">ARCHITECTURE_REVIEW.md</a></td>
+            <td>Formal architecture review and execution plan.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/capability-model.md" target="_blank" rel="noopener noreferrer">capability-model.md</a></td>
+            <td>Security model and capability design.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/enforcement.md" target="_blank" rel="noopener noreferrer">enforcement.md</a></td>
+            <td>Gateway-first enforcement guidance and guarantees.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/CAPABILITY_MANIFEST_GUIDE.md" target="_blank" rel="noopener noreferrer">CAPABILITY_MANIFEST_GUIDE.md</a></td>
+            <td>Policy authoring guide.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/diagrams.md" target="_blank" rel="noopener noreferrer">diagrams.md</a></td>
+            <td>Mermaid architecture diagrams.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/DISTRIBUTED_STATE.md" target="_blank" rel="noopener noreferrer">DISTRIBUTED_STATE.md</a></td>
+            <td>Redis-backed shared state for multi-agent deployments.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/repo-guide.md" target="_blank" rel="noopener noreferrer">repo-guide.md</a></td>
+            <td>Repository structure, development setup, lint &amp; test commands.</td>
+        </tr>
+    </tbody>
+</table>
 
         <h2>Enterprise &amp; operations</h2>
-        <table>
-            <thead><tr><th>Doc</th><th>What it is</th></tr></thead>
-            <tbody>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/self-host.md" target="_blank" rel="noopener noreferrer">self-host.md</a></td>
-                    <td>Hosted-vs-self-host matrix and the full enterprise deployment guide.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/DEPLOYMENT.md" target="_blank" rel="noopener noreferrer">DEPLOYMENT.md</a></td>
-                    <td>On-prem Helm bundle, air-gap image workflow, and restricted-network deployment checklist.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/ADAPTERS.md" target="_blank" rel="noopener noreferrer">ADAPTERS.md</a></td>
-                    <td>Pluggable identity and signing adapter reference, plus the partner federation operator workflow.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">agent-sdk.md</a></td>
-                    <td>Runtime SDK guidance including the AGT in-process guard integration.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/issuer-idp-setup.md" target="_blank" rel="noopener noreferrer">issuer-idp-setup.md</a></td>
-                    <td>Identity-provider, SCIM, and <code>did:ion</code> deployment recipes.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/security/enterprise-federation-threat-model.md" target="_blank" rel="noopener noreferrer">enterprise-federation-threat-model.md</a></td>
-                    <td>Signed-off threat model covering federation, SCIM, audit export, and AGT risks.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/security/soc2-mapping.md" target="_blank" rel="noopener noreferrer">soc2-mapping.md</a></td>
-                    <td>SOC 2 control mapping for the signed audit export and evidence pipeline.</td>
-                </tr>
-                <tr>
-                    <td><a href="https://github.com/edgeobs/euno/blob/main/docs/release-readiness-report-stage5.md" target="_blank" rel="noopener noreferrer">release-readiness-report-stage5.md</a></td>
-                    <td>Consolidated release verification report and release recommendation.</td>
-                </tr>
-            </tbody>
-        </table>
+<table>
+    <thead><tr><th>Doc</th><th>What it is</th></tr></thead>
+    <tbody>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/self-host.md" target="_blank" rel="noopener noreferrer">self-host.md</a></td>
+            <td>Hosted-vs-self-host matrix and the full enterprise deployment guide.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/DEPLOYMENT.md" target="_blank" rel="noopener noreferrer">DEPLOYMENT.md</a></td>
+            <td>On-prem Helm bundle, air-gap image workflow, and restricted-network deployment checklist.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/ADAPTERS.md" target="_blank" rel="noopener noreferrer">ADAPTERS.md</a></td>
+            <td>Pluggable identity and signing adapter reference, plus the partner federation operator workflow.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">agent-sdk.md</a></td>
+            <td>Go Agent Runtime guidance including token management and adapters.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/issuer-idp-setup.md" target="_blank" rel="noopener noreferrer">issuer-idp-setup.md</a></td>
+            <td>Identity-provider, SCIM, and <code>did:ion</code> deployment recipes.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a></td>
+            <td>Migration guide from local proxy usage to hosted enforcement.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/security/enterprise-federation-threat-model.md" target="_blank" rel="noopener noreferrer">enterprise-federation-threat-model.md</a></td>
+            <td>Signed-off threat model covering federation, SCIM, audit export, and AGT risks.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/security/soc2-mapping.md" target="_blank" rel="noopener noreferrer">soc2-mapping.md</a></td>
+            <td>SOC 2 control mapping for the signed audit export and evidence pipeline.</td>
+        </tr>
+        <tr>
+            <td><a href="https://github.com/edgeobs/eunox/blob/main/docs/pricing.md" target="_blank" rel="noopener noreferrer">pricing.md</a></td>
+            <td>Dual-license tiers, OSS boundary, and hosted feature matrix.</td>
+        </tr>
+    </tbody>
+</table>
 
         <h2>Project</h2>
         <ul>
-            <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">Source on GitHub</a> — issues and PRs welcome.</li>
-            <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issue tracker</a></li>
-            <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a> — Apache-2.0 for <code>public/</code>, BUSL-1.1 for <code>eunox/</code>.</li>
-            <li><a href="https://github.com/edgeobs/euno/blob/main/CODEOWNERS" target="_blank" rel="noopener noreferrer">CODEOWNERS</a></li>
+            <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">Source on GitHub</a> — issues and PRs welcome.</li>
+            <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issue tracker</a></li>
+            <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a> — BSL-1.1 for server-side services, Apache-2.0 for the <code>eunox-mcp</code> OSS tier.</li>
+            <li><a href="https://github.com/edgeobs/eunox/blob/main/CODEOWNERS" target="_blank" rel="noopener noreferrer">CODEOWNERS</a></li>
         </ul>
 
         <h2>External</h2>
@@ -159,13 +165,13 @@
     <footer class="site-footer">
         <div class="footer-grid">
             <div class="footer-col footer-brand">
-                <a class="logo" href="./index.html">
-                    <img src="./assets/eunolabs.png" alt="euno" style="height:30px">
-                    <span class="wordmark">euno</span>
-                </a>
-                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
-                <span class="footer-license">Apache-2.0</span>
-            </div>
+    <a class="logo" href="./index.html">
+        <img src="./assets/eunolabs.png" alt="eunox" style="height:30px">
+        <span class="wordmark">eunox</span>
+    </a>
+    <p>Capability-native zero-trust governance for AI agents. Dual license: BSL-1.1 for server-side services, Apache-2.0 for <code>eunox-mcp</code>.</p>
+    <span class="footer-license">BSL-1.1 / Apache-2.0</span>
+</div>
             <div class="footer-col">
                 <h5>Product</h5>
                 <ul>
@@ -176,26 +182,26 @@
                 </ul>
             </div>
             <div class="footer-col">
-                <h5>Resources</h5>
-                <ul>
-                    <li><a href="./docs.html">Documentation</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
-                </ul>
-            </div>
+    <h5>Resources</h5>
+    <ul>
+        <li><a href="./docs.html">Documentation</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/README.md" target="_blank" rel="noopener noreferrer">eunox README</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">Go agent runtime</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">Architecture</a></li>
+    </ul>
+</div>
             <div class="footer-col">
-                <h5>Project</h5>
-                <ul>
-                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
-                    <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
-                </ul>
-            </div>
+    <h5>Project</h5>
+    <ul>
+        <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
+    </ul>
+</div>
         </div>
         <div class="footer-bottom">
-            <span>&copy; 2026 euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
+            <span>&copy; 2026 eunox · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
             <span>Built for the Model Context Protocol</span>
         </div>
     </footer>

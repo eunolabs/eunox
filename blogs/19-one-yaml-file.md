@@ -26,7 +26,7 @@ A YAML file that says `allowedOperations: [SELECT, EXPLAIN, SHOW]` communicates 
 
 ## The manifest structure
 
-The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in `@euno/common-core`. The required fields at the top level are:
+The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in the `internal/agentruntime` Go package. The required fields at the top level are:
 
 ```yaml
 agentId: "sales-research-bot" # stable, kebab-case, machine-readable identifier
@@ -175,7 +175,7 @@ The agent developer reads it as a specification of the tools their agent can use
 
 The security team reads it as a description of what the agent is permitted to do. "This agent can read customer records but can't write them. It's rate-limited to prevent bulk extraction. The `redactFields` condition means the audit log will record when it accessed PII." They approve or deny the manifest based on whether the described capabilities are appropriate.
 
-The critical thing is that both audiences are reading the same document and their readings of it correspond. There's no "implementation detail" layer that the security team is trusting the developer to get right — the YAML is the policy, and the enforcement engine implements exactly what the YAML describes, using the shared code from `@euno/common-core` ([post 16](./16-schema-parity-over-version-drift.md)).
+The critical thing is that both audiences are reading the same document and their readings of it correspond. There's no "implementation detail" layer that the security team is trusting the developer to get right — the YAML is the policy, and the enforcement engine implements exactly what the YAML describes, using the shared `pkg/` Go packages ([post 16](./16-schema-parity-over-version-drift.md)).
 
 This also means the YAML can live in source control alongside the agent code, with the same review processes. Security teams can review manifest changes in pull requests. Compliance teams can audit the git history of the manifest to understand what the agent was permitted to do at any point in time. The answer to "what was this agent allowed to do on March 15th?" is the commit in git that was deployed on March 15th.
 

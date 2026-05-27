@@ -20,7 +20,7 @@ The right solution wasn't more conditionals. It was treating identity validation
 
 ## Two interfaces, one contract
 
-The core abstractions live in `@euno/common-core` (the Apache-2.0 package, so the contracts are public even for self-hosted deployments that use BUSL-licensed platform code):
+The core abstractions live in the `pkg/` Go packages (Apache-2.0 licensed, so the contracts are public even for self-hosted deployments that use BUSL-licensed platform code):
 
 **`IdentityAdapter`** — responsible for validating an inbound identity credential and returning a normalized `UserContext`. Implementations handle the cloud-specific validation logic: verifying OIDC tokens against a Cognito user pool, checking Azure AD claims, resolving a DID document and verifying a signed challenge. What they return is always the same shape: a `UserContext` with a stable subject identifier, a role set, and optional metadata like the original token claims.
 
@@ -111,33 +111,27 @@ Another customer uses GCP Workforce Identity Federation for human user auth but 
 
 ## Implementing a custom adapter
 
-The registry also supports runtime registration of custom implementations. If you have a private PKI or a specialized HSM that isn't Azure Key Vault, AWS KMS, or Cloud KMS, you implement the `SigningAdapter` abstract class and register it:
+The runtime also supports wiring in custom implementations. If you have a private PKI or a specialized HSM that isn't Azure Key Vault, AWS KMS, or Cloud KMS, you implement the signing interface in Go and wire it into your runtime:
 
-```typescript
-import {
-  defaultSigningRegistry,
-  SigningAdapter,
-} from "@euno/capability-issuer/adapters";
+```go
+import (
+  "context"
 
-class HardwareHsmSigner extends SigningAdapter {
-  async sign(payload: JwtPayload): Promise<string> {
-    // call your HSM vendor's API
-    const signature = await myHsmClient.sign(canonicalize(payload));
-    return assembleJwt(payload, signature);
-  }
+  "github.com/edgeobs/eunox/pkg/crypto"
+)
 
-  async getPublicKey(): Promise<JsonWebKey> {
-    return myHsmClient.exportPublicKey();
-  }
+type HardwareHsmSigner struct{}
+
+func (s *HardwareHsmSigner) Sign(ctx context.Context, digest []byte) ([]byte, error) {
+  // call your HSM vendor's API
+  return myHsmClient.Sign(ctx, digest)
 }
 
-defaultSigningRegistry.register(
-  "my-hsm",
-  (config) => new HardwareHsmSigner(config),
-);
+func (s *HardwareHsmSigner) Algorithm() crypto.Algorithm { return crypto.RS256 }
+func (s *HardwareHsmSigner) KeyID() string               { return "my-hsm" }
 ```
 
-This is the BUSL-licensed extension path. The types (`SigningAdapter`, `SigningAdapterConfig`) are Apache-2.0 and publicly documented; the registration mechanism and built-in implementations are platform code.
+This is the BUSL-licensed extension path. The public contracts (for example, the signing interfaces in `pkg/crypto`) are Apache-2.0 and publicly documented; the runtime wiring and built-in implementations are platform code.
 
 ---
 

@@ -1,22 +1,25 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+const baseUrl = import.meta.env.BASE_URL;
+const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 ---
-<BaseLayout title="Quick start · euno" description="Run @euno/mcp in 60 seconds. Drop-in setup for Claude Desktop, Cursor, Windsurf, LangChain.js, and any HTTP MCP client." activePage="quickstart">
+<BaseLayout title="Quick start · eunox" description="Run eunox-mcp in 60 seconds. Drop-in setup for Claude Desktop, Cursor, Windsurf, Go services, and any HTTP MCP client." activePage="quickstart">
 
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>Quick start</div>
         <h1>Ship a governed agent <em>in 60 seconds</em></h1>
-        <p class="hero-sub">Three commands and a YAML file. The proxy runs locally, wraps any MCP server, and enforces policy before the upstream is ever contacted.</p>
+        <p class="hero-sub">Three commands and a YAML file. The Go-based proxy runs locally, wraps any MCP server, and enforces policy before the upstream is ever contacted.</p>
         <div aria-live="polite" aria-atomic="true" id="copy-announce" class="sr-only"></div>
         <button class="install-snippet" aria-label="Copy install command">
             <span class="prompt" aria-hidden="true">$</span>
-            <span class="cmd">npx -y @euno/mcp proxy --policy ./euno.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data</span>
+            <span class="cmd">eunox-mcp proxy --policy ./eunox.policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data</span>
             <span class="copy-btn" aria-hidden="true">copy</span>
         </button>
     </section>
 
     <nav class="breadcrumbs" aria-label="Breadcrumb">
-        <a href="/">Home</a> &nbsp;›&nbsp; Quick start
+        <a href={withBase('/')}>Home</a> &nbsp;›&nbsp; Quick start
     </nav>
 
     <main class="content-section">
@@ -32,31 +35,33 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <li><a href="#step-5">Try it from a host</a></li>
                 <li><a href="#step-6">Inspect the audit log</a></li>
                 <li><a href="#claude">Claude Desktop / Cursor / Windsurf</a></li>
-                <li><a href="#http">HTTP transport · LangChain.js</a></li>
-                <li><a href="#langchain">In-process LangChain.js</a></li>
+                <li><a href="#http">HTTP transport · any MCP client</a></li>
+                <li><a href="#go-sdk">Go SDK embedding</a></li>
                 <li><a href="#next">Next steps</a></li>
             </ul>
         </div>
 
         <h2 id="prereqs">Prerequisites</h2>
         <ul>
-            <li>Node.js <strong>≥ 18</strong> and npm <strong>≥ 9</strong></li>
+            <li>Go <strong>1.25+</strong> and the <code>eunox-mcp</code> binary on your <code>PATH</code></li>
             <li>An MCP host: <a href="https://www.anthropic.com/news/claude-desktop" target="_blank" rel="noopener noreferrer">Claude Desktop</a>, <a href="https://cursor.com/" target="_blank" rel="noopener noreferrer">Cursor</a>, <a href="https://codeium.com/windsurf" target="_blank" rel="noopener noreferrer">Windsurf</a>, or any agent that speaks <a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP</a></li>
-            <li>An upstream MCP server you want to govern (e.g. <code>@modelcontextprotocol/server-filesystem</code>)</li>
+            <li>An upstream MCP server you want to govern (for example <code>@modelcontextprotocol/server-filesystem</code>)</li>
         </ul>
 
         <div class="callout">
-            <strong>Note.</strong> <code>@euno/*</code> packages publish to GitHub Packages while the project is in early stages. See the <a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a> for the scoped <code>.npmrc</code> setup.
+            <strong>Note.</strong> The OSS tier ships the <code>eunox-mcp</code> binary, while server-side services remain BSL-1.1. See <a href="https://github.com/edgeobs/eunox/blob/main/docs/pricing.md" target="_blank" rel="noopener noreferrer">docs/pricing.md</a> for the tier boundaries.
         </div>
 
         <h2 id="step-1">1. Install</h2>
-        <p>You can run <code>@euno/mcp</code> directly with <code>npx</code> — no global install required:</p>
-<pre><code>npx -y @euno/mcp --version</code></pre>
-        <p>Or install once for repeated use:</p>
-<pre><code>npm install -g @euno/mcp</code></pre>
+        <p>Download the OSS <code>eunox-mcp</code> binary from the <a href="https://github.com/edgeobs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>, make it executable, and place it on your <code>PATH</code>:</p>
+<pre><code># after downloading the binary for your platform
+chmod +x ./eunox-mcp
+mkdir -p ~/.local/bin
+mv ./eunox-mcp ~/.local/bin/eunox-mcp
+eunox-mcp --version</code></pre>
 
         <h2 id="step-2">2. Author a policy</h2>
-        <p>A policy is a single YAML file describing which tools are allowed and the conditions on each call. Save the following as <code>euno.policy.yaml</code>:</p>
+        <p>A policy is a single YAML file describing which tools are allowed and the conditions on each call. Save the following as <code>eunox.policy.yaml</code>:</p>
 <pre><code>agentId: filesystem-agent
 name:    Filesystem Agent
 version: 0.1.0
@@ -74,17 +79,15 @@ requiredCapabilities:
   - resource: list_directory
     actions: [call]
 </code></pre>
-        <p>The schema is a literal subset of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code> — there is exactly one shape, no drift between proxy and the rest of the system.</p>
+        <p>The schema is shared across the Go implementation, including the public packages under <code>pkg/capability</code> and <code>pkg/enforcement</code> — there is exactly one shape, no drift between the CLI and the rest of the system.</p>
 
         <h2 id="step-3">3. Validate the policy</h2>
-<pre><code>npx -y @euno/mcp validate ./euno.policy.yaml</code></pre>
+<pre><code>eunox-mcp validate ./eunox.policy.yaml</code></pre>
         <p>Validation runs without contacting any server and rejects unknown condition types and malformed YAML up front.</p>
 
         <h2 id="step-4">4. Run the proxy</h2>
         <p>Wrap any MCP server with the proxy. Everything after <code>--</code> is the upstream command:</p>
-<pre><code>npx -y @euno/mcp proxy \
-  --policy ./euno.policy.yaml \
-  -- npx -y @modelcontextprotocol/server-filesystem /data
+<pre><code>eunox-mcp proxy   --policy ./eunox.policy.yaml   -- npx -y @modelcontextprotocol/server-filesystem /data
 </code></pre>
         <p>The proxy speaks MCP on stdio in both directions and is transparent to clients.</p>
 
@@ -93,9 +96,9 @@ requiredCapabilities:
 
         <h2 id="step-6">6. Inspect the audit log</h2>
         <p>Every decision — allow or deny — is recorded as a signed OCSF API Activity event:</p>
-<pre><code>tail -F ~/.euno/audit.jsonl | jq</code></pre>
+<pre><code>tail -F ~/.eunox/audit.jsonl | jq</code></pre>
         <p>For aggregated denial counts, run:</p>
-<pre><code>npx -y @euno/mcp stats</code></pre>
+<pre><code>eunox-mcp stats</code></pre>
         <p>This prints an ASCII histogram grouped by condition type and denial code, including rotated log files.</p>
 
         <h2 id="claude">Claude Desktop / Cursor / Windsurf</h2>
@@ -103,10 +106,10 @@ requiredCapabilities:
 <pre><code>{'{'}
   "mcpServers": {'{'}
     "filesystem-governed": {'{'}
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y", "@euno/mcp", "proxy",
-        "--policy", "/absolute/path/to/euno.policy.yaml",
+        "proxy",
+        "--policy", "/absolute/path/to/eunox.policy.yaml",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
       ]
@@ -115,36 +118,27 @@ requiredCapabilities:
 {'}'}</code></pre>
         <p>Without <code>--policy</code> the proxy is transparent — handy for capturing an audit trail before you write any rules.</p>
 
-        <h2 id="http">HTTP transport · LangChain.js</h2>
+        <h2 id="http">HTTP transport · any MCP client</h2>
         <p>For agents that connect over HTTP rather than stdio, run the proxy as an HTTP server:</p>
-<pre><code>npx -y @euno/mcp proxy \
-  --transport http --port 7391 \
-  --policy ./euno.policy.yaml \
-  -- node ./my-mcp-server.js
+<pre><code>eunox-mcp proxy   --transport http --port 7391   --policy ./eunox.policy.yaml   -- ./my-mcp-server
 </code></pre>
         <p>Connect your client to <code>http://127.0.0.1:7391/mcp</code>. The same policy file works on both transports — and <code>ipRange</code> conditions become enforceable here.</p>
 
-        <h2 id="langchain">In-process LangChain.js</h2>
-        <p>If your agent runs LangChain tools in-process and you don't want a separate proxy process, install <code>@euno/langchain</code> and wrap your tool:</p>
-<pre><code>import {'{'} createLocalRuntime, wrapAsLangChainTool {'}'} from '@euno/langchain';
-
-const runtime = await createLocalRuntime({'{'} policyFile: './euno.policy.yaml' {'}'});
-
-const queryTool = wrapAsLangChainTool(runtime, {'{'}
-  name:        'query_db',
-  description: 'Run a read-only SQL query',
-  schema: {'{'} type: 'object', required: ['sql'],
-            properties: {'{'} sql: {'{'} type: 'string' {'}'} {'}'} {'}'},
-  handler: async ({'{'} sql {'}'}) =&gt; db.query(String(sql)),
-{'}'});</code></pre>
-        <p>Same YAML, same conditions, same audit format — no transport hop.</p>
+        <h2 id="go-sdk">Go SDK embedding</h2>
+        <p>If your agent runtime already runs in Go and you do not want a separate proxy process, reuse the same manifest and enforcement primitives directly from the repository:</p>
+        <ul>
+            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg" target="_blank" rel="noopener noreferrer"><code>pkg/</code></a> — public Go packages for capabilities, enforcement, audit, identity, and support libraries.</li>
+            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — runtime SDK guidance for integrating hosted and local enforcement.</li>
+            <li><a href="https://github.com/edgeobs/eunox/tree/main/internal/agentruntime" target="_blank" rel="noopener noreferrer"><code>internal/agentruntime/</code></a> — the Go runtime implementation used by the project itself.</li>
+        </ul>
+        <p>Same YAML policy model, same conditions, same audit semantics — no Node.js package required.</p>
 
         <h2 id="next">Next steps</h2>
         <ul>
-            <li>Drop in a ready-made policy from the <a href="/policies">reference policies</a> page.</li>
-            <li>Browse the <a href="/features">full condition matrix</a> with worked demos for each.</li>
-            <li>Read <a href="/how-it-works">how the proxy enforces policy</a> end-to-end.</li>
-            <li>Explore the source on <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a> — issues and PRs welcome.</li>
+            <li>Drop in a ready-made policy from the <a href={withBase('/policies')}>reference policies</a> page.</li>
+            <li>Browse the <a href={withBase('/features')}>full condition matrix</a> with worked demos for each.</li>
+            <li>Read <a href={withBase('/how-it-works')}>how the proxy enforces policy</a> end-to-end.</li>
+            <li>Explore the source on <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a> — issues and PRs welcome.</li>
         </ul>
     </main>
 

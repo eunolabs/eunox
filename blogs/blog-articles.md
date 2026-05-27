@@ -42,7 +42,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
    server rather than instrumenting either side; STDIO vs. HTTP transport
    considerations; and the fail-closed guarantee.
 
-7. **Drop-in governance: adding `@euno/mcp` to Claude Desktop in 5 minutes**
+7. **Drop-in governance: adding `eunox-mcp` to Claude Desktop in 5 minutes**
    Step-by-step tutorial with screenshots. Audience: individual developers
    who have never thought about AI agent security.
 
@@ -95,8 +95,8 @@ grouped by theme and roughly ordered from introductory to in-depth.
     than allow. Contrasts with real-world systems that chose differently.
 
 16. **Schema parity over version drift: keeping the YAML format honest**
-    Explains why `@euno/mcp`, `@euno/langchain`, and the gateway all share a
-    single `AgentCapabilityManifest` type from `@euno/common-core` and why
+    Explains why `eunox-mcp`, the Go runtime SDK, and the gateway all share a
+    single `AgentCapabilityManifest` type from the shared `pkg/` Go packages and why
     the Apache/BUSL license split exists to keep that contract public.
 
 17. **Declarative, not transitive: the partner federation trust model**

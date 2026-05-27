@@ -71,7 +71,7 @@ A few categories euno specifically handles as hard failures:
 
 **Missing required claims.** The `AgentCapabilityManifest` JWT format has required fields: `sub`, `iss`, `aud`, `jti`, `iat`, `exp`, `capabilities`, `schemaVersion`. If any of those are absent or malformed, the token is rejected. We don't try to "fill in defaults" for missing claims or treat `null` as equivalent to some expected value. The token is malformed; deny.
 
-**Unknown schema versions.** This one is worth calling out specifically. The token payload carries a `schemaVersion` field, and the gateway maintains an explicit set of supported versions (`SUPPORTED_SCHEMA_VERSIONS` in `@euno/common-core`). A token with a schema version outside that set is rejected — even if everything else looks valid.
+**Unknown schema versions.** This one is worth calling out specifically. The token payload carries a `schemaVersion` field, and the gateway maintains an explicit set of supported versions (`SUPPORTED_SCHEMA_VERSIONS` in the `pkg/manifest` Go package). A token with a schema version outside that set is rejected — even if everything else looks valid.
 
 ```typescript
 export const SUPPORTED_SCHEMA_VERSIONS: ReadonlySet<string> = new Set([
@@ -227,11 +227,11 @@ None of these individual layers is perfect. All of them together create a system
 
 ---
 
-## A note on the `@euno/mcp` local mode
+## A note on the `eunox-mcp` local mode
 
-Everything I've described above is about the hosted gateway. The local `@euno/mcp` proxy has a different failure surface because it runs in the agent's own process — but it makes the same fundamental choices.
+Everything I've described above is about the hosted gateway. The local `eunox-mcp` proxy has a different failure surface because it runs in the agent's own process — but it makes the same fundamental choices.
 
-If the YAML policy file fails to load (corrupted, missing, permissions error), `@euno/mcp` refuses to start. It doesn't start in a "no policy" mode where all calls are allowed. If the policy file loads but fails validation (schema error, unrecognized condition type), same thing: no start.
+If the YAML policy file fails to load (corrupted, missing, permissions error), `eunox-mcp` refuses to start. It doesn't start in a "no policy" mode where all calls are allowed. If the policy file loads but fails validation (schema error, unrecognized condition type), same thing: no start.
 
 If the audit log rotation fails, the proxy logs the error and continues — because in the local case, the audit log is best-effort observability rather than the primary enforcement mechanism. (The gateway is the enforcement mechanism, even in hybrid deployments.) But the policy enforcement itself doesn't depend on the audit log's health.
 
@@ -239,4 +239,4 @@ The local mode is the first stage of what might become a fully hosted deployment
 
 ---
 
-_This post is the first in the "Design principles" series. Next: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md), which covers why `@euno/mcp`, `@euno/langchain`, and the gateway share a single `AgentCapabilityManifest` type and why that Apache-2.0 contract is public. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
+_This post is the first in the "Design principles" series. Next: [post 16 — Schema parity over version drift: keeping the YAML format honest](./16-schema-parity-over-version-drift.md), which covers why `eunox-mcp`, the Go runtime SDK, and the gateway share a single `AgentCapabilityManifest` type and why that Apache-2.0 contract is public. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._

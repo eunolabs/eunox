@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>How it works · euno</title>
-    <meta name="description" content="How @euno/mcp enforces capability policy on every MCP tool call: architecture, request flow, schema parity, and the OCSF audit log.">
+    <title>How it works · eunox</title>
+    <meta name="description" content="How eunox-mcp enforces capability policy on every MCP tool call: architecture, request flow, schema parity, and the OCSF audit log.">
     <link rel="icon" href="./assets/eunolabs.png">
     <link rel="stylesheet" href="./assets/styles.css">
 </head>
@@ -13,8 +13,8 @@
     <header class="site-header">
         <div class="header-left">
             <a class="logo" href="./index.html">
-                <img src="./assets/eunolabs.png" alt="euno">
-                <span class="wordmark">euno</span>
+                <img src="./assets/eunolabs.png" alt="eunox">
+                <span class="wordmark">eunox</span>
             </a>
             <span class="stage-badge">GA</span>
         </div>
@@ -24,7 +24,7 @@
             <a href="./how-it-works.html" class="nav-link active">How it works</a>
             <a href="./policies.html" class="nav-link">Policies</a>
             <a href="./docs.html" class="nav-link">Docs</a>
-            <a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer" class="btn-github">
+            <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
                 GitHub
             </a>
@@ -34,7 +34,7 @@
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>How it works</div>
         <h1>A reference monitor <em>at the protocol boundary</em></h1>
-        <p class="hero-sub">euno is a transparent MCP proxy that speaks the protocol on both ends and evaluates capability policy in the middle. The decision happens before the upstream is contacted, and every event is signed and audited.</p>
+        <p class="hero-sub">eunox is a transparent MCP proxy that speaks the protocol on both ends and evaluates capability policy in the middle. The decision happens before the upstream is contacted, and every event is signed and audited.</p>
     </section>
 
     <nav class="breadcrumbs" aria-label="Breadcrumb">
@@ -56,16 +56,16 @@
         </div>
 
         <h2 id="architecture">Architecture</h2>
-        <p>The proxy sits between any MCP host (Claude Desktop, Cursor, Windsurf, LangChain.js, …) and any upstream MCP server. It is transparent on the protocol — the host sees an MCP server, the upstream sees an MCP client.</p>
+        <p>The proxy sits between any MCP host (Claude Desktop, Cursor, Windsurf, Go agents, …) and any upstream MCP server. It is transparent on the protocol — the host sees an MCP server, the upstream sees an MCP client.</p>
 
 <pre style="background:#0a0a14;color:#cbd5e1;padding:20px;border-radius:10px;font-size:0.85em">
                        ┌──────────────────────────────────────────┐
-   MCP host            │                @euno/mcp                 │            Upstream MCP server
+   MCP host            │               eunox-mcp                  │            Upstream MCP server
  (Claude / Cursor /    │                                          │       (filesystem, postgres, github,
   Windsurf / agent)    │   ┌────────────┐    ┌─────────────────┐  │        slack, fetch, your own…)
         │              │   │  Policy    │    │  Audit sink     │  │                  │
         │  tools/call  │   │  engine    │    │  (OCSF + HMAC)  │  │                  │
-        ├──────────────┼──►│  evaluate  │───►│  ~/.euno/audit  │  │                  │
+        ├──────────────┼──►│  evaluate  │───►│ ~/.eunox/audit  │  │                  │
         │              │   │  conditions│    │  .jsonl         │  │                  │
         │              │   └─────┬──────┘    └─────────────────┘  │                  │
         │  CapDenied   │         │ allow                          │                  │
@@ -78,7 +78,7 @@
         │              └──────────────────────────────────────────┘                  │
 </pre>
 
-        <p>Two transports are supported: <strong>stdio</strong> (Claude / Cursor / Windsurf) and <strong>HTTP</strong> (LangChain.js and other in-process clients). The same policy file works for both. <code>ipRange</code> is enforceable only on HTTP — stdio sessions have no source IP.</p>
+        <p>Two transports are supported: <strong>stdio</strong> (Claude / Cursor / Windsurf) and <strong>HTTP</strong> (Go agents and other in-process clients). The same policy file works for both. <code>ipRange</code> is enforceable only on HTTP — stdio sessions have no source IP.</p>
 
         <h2 id="flow">Request flow</h2>
         <ol>
@@ -102,25 +102,25 @@ host ──tools/call──►  proxy ──► [parse] ──► [match capabil
 host ◄────────────────── result / CapabilityDenied ──────────────────────────────────┴─┘
                                                                        │
                                                                        ▼
-                                                          OCSF audit (~/.euno/audit.jsonl)
+                                                          OCSF audit (~/.eunox/audit.jsonl)
 </pre>
 
         <h2 id="parity">Schema parity — one shape, zero drift</h2>
-        <p>The policy file is a <strong>literal subset</strong> of <code>AgentCapabilityManifest</code> from <code>@euno/common-core</code> (Apache-2.0). <code>@euno/mcp</code> imports condition types directly from <code>@euno/common-core</code> and never defines its own. This means:</p>
+        <p>The policy file follows the shared <code>AgentCapabilityManifest</code> used across the Go runtime and hosted eunox services. The reimplementation keeps one manifest shape and one condition vocabulary, so local and hosted enforcement stay aligned. This means:</p>
         <ul>
-            <li>A policy authored today for <code>@euno/mcp</code> is forward-compatible with the hosted gateway and the capability issuer.</li>
-            <li>Unknown condition types are denied at <strong>two</strong> points: <code>euno-mcp validate</code> rejects the policy, and the runtime engine refuses to evaluate it.</li>
-            <li>The same enforcement engine is reused by <code>@euno/langchain</code> for in-process LangChain.js tools.</li>
+            <li>A policy authored today for <code>eunox-mcp</code> stays aligned with the hosted gateway and capability issuer services.</li>
+            <li>Unknown condition types are denied at <strong>two</strong> points: <code>eunox-mcp validate</code> rejects the policy, and the runtime engine refuses to evaluate it.</li>
+            <li>The same enforcement model is reused by the Go Agent Runtime and adapter layer for in-process Go tools.</li>
         </ul>
 
         <h2 id="audit">Audit log internals</h2>
         <p>Each event conforms to the <a href="https://schema.ocsf.io/" target="_blank" rel="noopener noreferrer">OCSF</a> API Activity class (<code>class_uid: 6003</code>). The signer:</p>
         <ul>
-            <li>generates a 32-byte random key on first run and stores it at <code>~/.euno/key</code> with mode <code>0600</code>;</li>
+            <li>generates a 32-byte random key on first run and stores it at <code>~/.eunox/key</code> with mode <code>0600</code>;</li>
             <li>computes <code>HMAC-SHA256(key, SHA-256(canonical-json(event)))</code>;</li>
-            <li>writes the event with its signature as a single JSON line to <code>~/.euno/audit.jsonl</code>.</li>
+            <li>writes the event with its signature as a single JSON line to <code>~/.eunox/audit.jsonl</code>.</li>
         </ul>
-        <p>The log rotates at <strong>100 MiB</strong>. Rotated files are named <code>audit.jsonl.&lt;ISO-timestamp&gt;</code>. <code>verifyAuditEvent()</code> recomputes the HMAC for round-trip integrity checks, and <code>euno-mcp stats</code> aggregates denials across active and rotated logs into an ASCII histogram grouped by <code>conditionType</code> and <code>denialCode</code>.</p>
+        <p>The log rotates at <strong>100 MiB</strong>. Rotated files are named <code>audit.jsonl.&lt;ISO-timestamp&gt;</code>. <code>verifyAuditEvent()</code> recomputes the HMAC for round-trip integrity checks, and <code>eunox-mcp stats</code> aggregates denials across active and rotated logs into an ASCII histogram grouped by <code>conditionType</code> and <code>denialCode</code>.</p>
 
         <div class="callout">
             <strong>Why HMAC and not a digital signature?</strong> Local audit is <em>tamper-evident on-device</em> — anyone with read access to the key can verify, anyone without it cannot forge. The enterprise tier introduces KMS-backed signing (Azure Key Vault, AWS KMS, GCP Cloud KMS) and a cross-chain anchor for tamper-evident audit across hosts.
@@ -140,14 +140,14 @@ host ◄────────────────── result / Capabili
         <table>
             <thead><tr><th>Capability tier</th><th>What's included</th></tr></thead>
             <tbody>
-                <tr><td><strong>Local proxy</strong></td><td><code>@euno/mcp</code> proxy, policy engine, OCSF audit log, full condition matrix, <code>@euno/langchain</code>, reference policies</td></tr>
+                <tr><td><strong>Local proxy</strong></td><td><code>eunox-mcp</code> proxy, policy engine, OCSF audit log, full condition matrix, Go Agent Runtime adapters, reference policies</td></tr>
                 <tr><td><strong>Hosted gateway</strong></td><td>Tool Gateway, API-key façade, signed JWT capability tokens, shared Redis state, Postgres audit ledger</td></tr>
                 <tr><td><strong>Identity-bound tokens</strong></td><td>Capability Issuer, IdP integration (Entra ID, Cognito, Cloud Identity), PKCE flow, role-to-capability mapping</td></tr>
                 <tr><td><strong>Enterprise</strong></td><td>DID federation, KMS signing, SOC 2 audit export, SCIM 2.0, cross-chain anchor, AGT guard, on-prem Helm bundle</td></tr>
             </tbody>
         </table>
 
-        <p>See <a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">docs/mvp.md</a> for the full plan and gate criteria, and <a href="https://github.com/edgeobs/euno/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">docs/ARCHITECTURE.md</a> for C4 views and sequence diagrams.</p>
+        <p>See <a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">docs/ARCHITECTURE.md</a> for C4 views and sequence diagrams, and <a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE_REVIEW.md" target="_blank" rel="noopener noreferrer">docs/ARCHITECTURE_REVIEW.md</a> for the current execution plan.</p>
 
         <p style="margin-top:32px"><a href="./quickstart.html" class="btn-primary" style="text-decoration:none">Try it in 60 seconds →</a></p>
     </main>
@@ -155,13 +155,13 @@ host ◄────────────────── result / Capabili
     <footer class="site-footer">
         <div class="footer-grid">
             <div class="footer-col footer-brand">
-                <a class="logo" href="./index.html">
-                    <img src="./assets/eunolabs.png" alt="euno" style="height:30px">
-                    <span class="wordmark">euno</span>
-                </a>
-                <p>Capability-native zero-trust governance for AI agents. Open source, Apache-2.0.</p>
-                <span class="footer-license">Apache-2.0</span>
-            </div>
+    <a class="logo" href="./index.html">
+        <img src="./assets/eunolabs.png" alt="eunox" style="height:30px">
+        <span class="wordmark">eunox</span>
+    </a>
+    <p>Capability-native zero-trust governance for AI agents. Dual license: BSL-1.1 for server-side services, Apache-2.0 for <code>eunox-mcp</code>.</p>
+    <span class="footer-license">BSL-1.1 / Apache-2.0</span>
+</div>
             <div class="footer-col">
                 <h5>Product</h5>
                 <ul>
@@ -172,26 +172,26 @@ host ◄────────────────── result / Capabili
                 </ul>
             </div>
             <div class="footer-col">
-                <h5>Resources</h5>
-                <ul>
-                    <li><a href="./docs.html">Documentation</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/mcp/README.md" target="_blank" rel="noopener noreferrer">@euno/mcp README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/public/packages/langchain/README.md" target="_blank" rel="noopener noreferrer">@euno/langchain README</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/docs/mvp.md" target="_blank" rel="noopener noreferrer">Roadmap</a></li>
-                </ul>
-            </div>
+    <h5>Resources</h5>
+    <ul>
+        <li><a href="./docs.html">Documentation</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/README.md" target="_blank" rel="noopener noreferrer">eunox README</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer">Go agent runtime</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener noreferrer">Architecture</a></li>
+    </ul>
+</div>
             <div class="footer-col">
-                <h5>Project</h5>
-                <ul>
-                    <li><a href="https://github.com/edgeobs/euno" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
-                    <li><a href="https://github.com/edgeobs/euno/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
-                    <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
-                </ul>
-            </div>
+    <h5>Project</h5>
+    <ul>
+        <li><a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
+        <li><a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        <li><a href="https://spec.modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP spec</a></li>
+    </ul>
+</div>
         </div>
         <div class="footer-bottom">
-            <span>&copy; 2026 euno · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
+            <span>&copy; 2026 eunox · An <a href="https://github.com/edgeobs" target="_blank" rel="noopener noreferrer">eunolabs</a> project</span>
             <span>Built for the Model Context Protocol</span>
         </div>
     </footer>
