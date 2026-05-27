@@ -15,23 +15,19 @@ mechanically.
 
 ## 1. Required structure
 
-Every manifest must match the `AgentCapabilityManifest` interface in
-`pkg//src/types.ts`. The required top-level fields are
-`agentId`, `name`, `version`, and `requiredCapabilities`. The
-optional fields are `optionalCapabilities` and `metadata`. Anything
-missing or shaped differently is rejected by `eunox validate`.
+Every manifest must match `AgentCapabilityManifest` in
+`internal/agentruntime/manifest.go`. The required top-level fields are
+`name`, `version`, and `capabilities`. Optional fields are
+`description`, `defaultTtl`, and `audience`. Anything missing or shaped
+differently is rejected by `eunox validate`.
 
 ```yaml
-agentId: "sales-research-bot" # stable, kebab-case, globally unique
 name: "Sales Research Bot" # human-readable
 version: "0.1.0" # agent version (semver)
-requiredCapabilities: [] # see § 2 — every entry is a CapabilityConstraint
-optionalCapabilities: [] # optional; same shape as requiredCapabilities
-metadata:
-  description: "Synthesizes account-research briefings."
-  owner: "revops-oncall@example.com" # free-form; surfaced into the posture inventory
-  tags: ["revops", "research"]
-  runtime: "node:20" # optional descriptor for AI posture inventory
+capabilities: [] # see § 2 — every entry is a capability.Constraint
+description: "Synthesizes account-research briefings."
+defaultTtl: 600 # optional
+audience: "eunox-gateway" # optional
 ```
 
 Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
@@ -51,7 +47,7 @@ unless none of these fits.
 > _"This agent looks things up and reports. It never writes anywhere."_
 
 ```yaml
-requiredCapabilities:
+capabilities:
   - resource: "api://crm/customers/*"
     actions: ["read"]
   - resource: "api://reports/*"
@@ -70,7 +66,7 @@ requiredCapabilities:
 > _"This agent reads broadly but only writes back to one specific path."_
 
 ```yaml
-requiredCapabilities:
+capabilities:
   - resource: "api://crm/customers/*"
     actions: ["read"]
   - resource: "api://crm/customers/*/notes"
@@ -90,7 +86,7 @@ requiredCapabilities:
 > _"This agent calls a single internal tool a lot, with arguments."_
 
 ```yaml
-requiredCapabilities:
+capabilities:
   - resource: "api://forecasting/predict"
     actions: ["execute"]
     conditions:
@@ -103,9 +99,8 @@ requiredCapabilities:
 
 - Use `execute` for RPC-style endpoints.
 - Apply typed conditions instead of relying on TTL alone.
-- Each entry is one of the typed shapes in
-  `pkg//src/types.ts` (`CapabilityCondition` discriminated
-  union); the gateway enforces them through the
+- Each entry is one of the typed condition shapes in
+  `pkg/capability/condition.go`; the gateway enforces them through the
   `ConditionRegistry` — no new validator code is needed if the type
   already exists.
 
@@ -132,7 +127,7 @@ ttl: 120 # seconds; must be ≤ parent TTL
 
 ## 3. Resource pattern do's and don'ts
 
-The wildcard semantics are **segment-aware** (`pkg//src/utils.ts::matchesResource`).
+The wildcard semantics are **segment-aware** (`pkg/enforcement/engine.go::matchesResource`).
 Internalize the table below.
 
 | Pattern                  | Matches                                        | Does **not** match                         |
@@ -154,11 +149,11 @@ Rules:
 
 ## 4. Conditions cookbook
 
-`conditions` is an array of typed shapes from the
-`CapabilityCondition` discriminated union in
-`pkg//src/types.ts`. Every entry has a `type` discriminator
-and is enforced by the shared `ConditionRegistry`. Unknown types are
-denied at both issuance and at the gateway, so spelling matters.
+`conditions` is an array of typed shapes from
+`pkg/capability/condition.go` and `pkg/capability/conditions.go`.
+Every entry has a `type` discriminator and is enforced by the shared
+`ConditionRegistry`. Unknown types are denied at both issuance and at
+the gateway, so spelling matters.
 
 ```yaml
 - resource: "api://billing/invoices/*"
@@ -203,9 +198,9 @@ The full list of shipped condition types is `timeWindow`, `ipRange`,
 `ConditionRegistry`).
 
 > If a condition you need is not in the union, **add a new typed
-> shape to `pkg//src/types.ts` first**, register its
-> handler in `pkg//src/condition-registry.ts`, and ship a
-> validator with tests under `pkg//src/capability-validators.ts`.
+> shape to `pkg/capability/condition.go` first**, register its
+> handler in `pkg/enforcement/handlers.go`, and ship a
+> validator with tests under `pkg/capability/validate.go`.
 > Free-form conditions are denied at the gateway, which is the correct
 > behaviour but a policy regression for the manifest author.
 
@@ -230,13 +225,13 @@ Keep the issuer's `DEFAULT_TOKEN_TTL` ≤ 3600 in the pilot.
 These all _worked_ (token issued, gateway happy) but each one degrades
 the security posture and triggered tuning churn during hypercare.
 
-1. **Manifest copied between agents** with `agentId` not changed.
-   Audit logs lose all attribution. Use a unique `agentId` per logical
+1. **Manifest copied between agents** with `name` not changed.
+   Audit logs lose attribution clarity. Use a unique manifest `name` per logical
    agent, not per pod / replica.
 2. **`api://*` with `["read", "write"]`** "for development". This
    passes `validate` only when the strict mode is off. In production
    the issuer rejects it; configure your dev manifests with realistic
-   scopes and a separate dev `agentId`.
+   scopes and a separate dev manifest identity (`name`/`version`).
 3. **Adding `delete` "for cleanup"**. If the agent doesn't currently
    delete anything, do not list `delete`. The Sentinel "Write attempt
    from a read-only session" rule treats delete as write; over-broad

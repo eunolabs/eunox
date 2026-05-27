@@ -211,19 +211,10 @@ Any `SignedCrossChainCommitment` can be verified offline:
 # 1. Fetch the gateway JWKS
 curl https://<gateway>/.well-known/jwks.json > jwks.json
 
-# 2. Verify the commitment (pseudo-code; adapt to your tooling)
-node -e "
-const commit = require('./commit.json');
-const canonical = require('@eunox/common').canonicalSha256(
-  Object.fromEntries(
-    Object.entries(commit).filter(([k]) =>
-      !['signature', 'keyId', 'algorithm'].includes(k)
-    )
-  )
-);
-console.log('canonical SHA-256:', canonical);
-console.log('verify signature against digest using', commit.algorithm, 'with key', commit.keyId);
-"
+# 2. Verify the commitment using any JWT library
+# The signature is a base64-encoded digital signature over SHA-256(canonicalJSON(commitment)).
+# The canonical form includes all commitment fields EXCEPT signature, keyId, and algorithm.
+# There is currently no built-in `eunox audit verify-commitment` CLI command.
 ```
 
 The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSON(commitment))` where the canonical form includes all `CrossChainCommitment` fields **excluding** `signature`, `keyId`, and `algorithm`. The signing key matches the gateway's evidence signing key (same `keyId`).
@@ -254,7 +245,7 @@ The `signature` is a base64-encoded digital signature over `SHA-256(canonicalJSO
 
 - **Authentication**: `GET /api/v1/audit/chain-proof` requires `X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>` (timing-safe comparison). The route is absent (404) when `ENABLE_CROSS_CHAIN_ANCHOR=false`.
 - **Signing key**: Commitments are signed by the same KMS key as per-record evidence. An attacker who obtains the HMAC secret (`AUDIT_LEDGER_HMAC_SECRET`) can forge **HMAC metadata** on individual rows but cannot forge the commitment **signature** (which requires the KMS private key). See `docs/security/minter-threat-model.md` and `docs/runbooks/ledger-hmac-rotation.md` for HMAC key rotation procedures.
-- **S3 anchoring**: The bootstrap does not wire an S3 client by default. To publish commitments to S3 Object-Lock, construct `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` in a custom entrypoint. See `CrossChainAnchorOptions.s3` in `pkg/src/ledger-signer.ts`.
+- **S3 anchoring**: The bootstrap does not wire an S3 client by default. To publish commitments to S3 Object-Lock, construct `PerReplicaPostgresLedgerBackend` with an `S3AnchorClient` in a custom entrypoint. See `CrossChainAnchorOptions` in `pkg/audit/anchor.go`.
 
 ### Azure Confidential Ledger (ACL) backend
 

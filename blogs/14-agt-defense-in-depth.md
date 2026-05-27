@@ -8,7 +8,7 @@ One of the architectural tensions I've wrestled with throughout building eunox i
 
 But "the gateway will catch it" is not the same as "we checked it." There's a real gap between a system where the agent tries to call a tool, the call hits the network, the gateway rejects it, the rejection propagates back to the agent, and the agent recovers — and a system where the agent checks whether a call is permitted _before_ invoking any of that machinery. Both enforce the policy. They have different latency, cost, and observability properties.
 
-The in-process guard (`createAgtGuard()`, part of `@eunox/agent-runtime`) is the answer to that gap. It's not a replacement for the gateway. It's an additional layer that runs earlier, cheaper, and with different failure modes.
+The in-process guard (part of `internal/agentruntime` — `github.com/edgeobs/eunox/internal/agentruntime`) is the answer to that gap. It's not a replacement for the gateway. It's an additional layer that runs earlier, cheaper, and with different failure modes.
 
 ---
 
@@ -32,7 +32,7 @@ The inner layer can fail — a bug in the guard implementation, a null dereferen
 
 ## The guard is a soft guard
 
-This is the most important thing to understand about `createAgtGuard()`, and it's stated explicitly in the code and documentation: **the guard is a soft guard**. Passing the in-process check does not guarantee the outer gateway will also allow the call.
+This is the most important thing to understand about the `agentruntime.Runtime`, and it's stated explicitly in the code and documentation: **the guard is a soft guard**. Passing the in-process check does not guarantee the outer gateway will also allow the call.
 
 The gateway performs:
 
@@ -46,7 +46,7 @@ The guard performs:
 
 - A lookup of the tool name against the capability manifest's `requiredCapabilities` and `optionalCapabilities` arrays
 
-That's it. The guard doesn't verify JWT signatures (the token comes from a `tokenSupplier` callback that the caller is responsible for refreshing). It doesn't check revocation. It doesn't evaluate conditions — it doesn't know whether the specific SQL query in the `query_db` call passes the `allowedOperations` condition; it only knows whether `query_db` appears in the manifest at all.
+That's it. The guard doesn't verify JWT signatures (the token comes from `IdentityTokenProvider` — a callback that the caller is responsible for refreshing). It doesn't check revocation. It doesn't evaluate conditions — it doesn't know whether the specific SQL query in the `query_db` call passes the `allowedOperations` condition; it only knows whether `query_db` appears in the manifest at all.
 
 This distinction matters for threat modelling. If you're thinking "does the guard prevent prompt injection?" — it helps, but not completely. A prompt injection attack that causes the agent to call a tool that's declared in the manifest but with arguments that violate a condition will pass the guard and be caught by the gateway. A prompt injection attack that causes the agent to call a tool that's _not_ in the manifest at all will be caught by the guard.
 
@@ -56,32 +56,27 @@ The guard is a first line of defense against the most obvious violations, optimi
 
 ## The API
 
-```typescript
-import { createAgtGuard, HttpToolTransport } from "@eunox/agent-runtime";
+```go
+import "github.com/edgeobs/eunox/internal/agentruntime"
 
-const guard = createAgtGuard(
-  {
-    tokenSupplier: () => tokenStore.currentToken(),
-    policy: manifest,
-    onDeny: (tool, reason) => logger.warn("guard deny", { tool, reason }),
-    onGatewayDeny: (tool, code) =>
-      metrics.increment("gateway_deny", { tool, code }),
-  },
-  new HttpToolTransport(gatewayUrl),
-);
+rt, err := agentruntime.New(&agentruntime.Config{
+    IssuerURL:             "https://issuer.example.com",
+    GatewayURL:            "https://gateway.example.com",
+    IdentityTokenProvider: tokenStore.CurrentToken,
+}, agentruntime.WithLogger(logger))
 
-const response = await guard.invokeTool({
-  tool: "db:read",
-  args: { table: "users" },
-});
+resp, err := rt.InvokeTool(ctx, &agentruntime.ToolRequest{
+    ToolName:  "db:read",
+    Arguments: map[string]interface{}{"table": "users"},
+})
 ```
 
-The returned `AgtGuardInvokeResponse` has two fields beyond the standard transport response:
+The returned `ToolResponse` carries:
 
-- `guardResult: 'allow' | 'deny'` — the guard's own verdict
-- `denyReason?: AgtGuardDenyReason` — set when the guard itself blocked the call
+- `Allowed bool` — whether the gateway permitted the action
+- `Denial *capability.DenialInfo` — set when the gateway blocked the call (includes `Code` and `Reason`)
 
-If the guard allowed the call but the gateway denied it, `guardResult` is `'allow'` and `success` is `false`. The distinction matters for observability: a guard deny means the agent violated its declared manifest; a gateway deny after a guard allow means the agent had a valid manifest entry but the gateway found a condition violation, revoked token, or other enforcement failure. These are different operational situations and you want to track them separately.
+If the runtime blocked the call before sending to the gateway (e.g., token acquisition failed), `Allowed` is false and `Denial` describes the pre-screen reason. If the runtime allowed the call but the gateway denied it, `Allowed` is false and `Denial.Code` reflects the gateway's enforcement decision. These are different operational situations and you want to track them separately.
 
 ---
 
@@ -91,7 +86,7 @@ There are two meaningful deny reasons from the guard:
 
 **`capability_not_found`** — the tool name doesn't appear in either `requiredCapabilities` or `optionalCapabilities` in the manifest. This is the most common guard deny in practice. It fires when the model attempts to call a tool that the operator never granted access to.
 
-**`policy_evaluation_error`** — an unexpected error during the in-process policy check, or a failure from the `tokenSupplier`. The guard fails closed on evaluation errors. If the `tokenSupplier` throws (perhaps because the token refresh failed due to a network issue), the guard returns a deny rather than forwarding the call without a token.
+**`policy_evaluation_error`** — an unexpected error during the in-process policy check, or a failure from `IdentityTokenProvider`. The guard fails closed on evaluation errors. If the `IdentityTokenProvider` returns an error (perhaps because the token refresh failed due to a network issue), the guard returns a deny rather than forwarding the call without a token.
 
 There is no `condition_violation` deny reason at the guard layer. As noted above, the guard doesn't evaluate conditions — that's the gateway's job.
 
@@ -127,44 +122,38 @@ The `onDeny` callback is where guard denials land — in your application's logg
 
 ## The transport abstraction
 
-`createAgtGuard()` takes a `ToolTransport` as its second argument. In production, this is an `HttpToolTransport` configured with the gateway URL. In tests, it's an `InProcessToolTransport` backed by a mock handler — this means you can write unit tests for your agent's tool-calling behavior, including guard behavior, without a live gateway instance.
+`agentruntime.New()` uses the `HTTPClient` interface for outbound requests. In production, the default HTTP client is used. In tests, a mock `HTTPClient` can be injected:
 
-```typescript
-import {
-  createAgtGuard,
-  HttpToolTransport,
-  InProcessToolTransport,
-} from "@eunox/agent-runtime";
+```go
+// In production (default)
+rt, _ := agentruntime.New(&agentruntime.Config{...})
 
-// In production
-const guard = createAgtGuard(
-  options,
-  new HttpToolTransport("https://gateway.example.com"),
-);
-
-// In tests
-const guard = createAgtGuard(options, new InProcessToolTransport(mockHandler));
+// In tests — inject a mock client
+rt, _ := agentruntime.New(&agentruntime.Config{
+    ...,
+    HTTPClient: &mockHTTPClient{handler: mockHandler},
+})
 ```
 
-The `InProcessToolTransport` was one of those features that seemed like a testing nicety when I added it but turned out to matter for the real test suite. Integration tests that need a live gateway are valuable but slow and require infrastructure. Unit tests that use `InProcessToolTransport` run in milliseconds and need no external dependencies. Having both paths — and having them be the same guard code — is what lets the test pyramid work correctly for agent-runtime tests.
+The mock client was one of those features that seemed like a testing nicety but turned out to matter for the real test suite. Integration tests that need a live gateway are valuable but slow and require infrastructure. Unit tests that use an injected mock client run in milliseconds and need no external dependencies. Having both paths — and having them be the same runtime code — is what lets the test pyramid work correctly for agent-runtime tests.
 
 ---
 
 ## Where the guard fits in the deployment topology
 
-The guard lives inside `@eunox/agent-runtime`, which is the BUSL-licensed library that wraps your AI agent framework code. The typical deployment looks like:
+The guard lives inside `internal/agentruntime` (`github.com/edgeobs/eunox/internal/agentruntime`), the BUSL-licensed library that wraps your AI agent framework code. The typical deployment looks like:
 
 ```
 Agent process (sandboxed runtime)
 ├── Agent framework (LangChain / CrewAI / MAF)
 │   └── Tool transport
-│       └── createAgtGuard()         ← inner layer, in-process
-│           └── HttpToolTransport
-│               └── Tool Gateway     ← middle layer, network boundary
+│       └── agentruntime.Runtime         ← inner layer, in-process
+│           └── HTTP gateway client
+│               └── Tool Gateway         ← middle layer, network boundary
 │                   └── Protected backends
 ```
 
-The agent framework calls `createAgtGuard().invokeTool()` for every tool invocation. The guard checks the manifest, acquires the current token from `tokenSupplier`, and forwards to the `HttpToolTransport` if the tool is in scope. The transport makes the HTTPS call to the gateway. The gateway does the full enforcement check and either forwards to the backend or returns a denial.
+The agent framework calls `rt.InvokeTool()` for every tool invocation. The runtime acquires a current capability token and forwards to the HTTP gateway client if the call is in scope. The client makes the HTTPS call to the gateway. The gateway does the full enforcement check and either forwards to the backend or returns a denial.
 
 In the sandboxing model, the outer layer (OS/VM isolation) prevents the agent from making any network connections except to the gateway. This means that even if the guard is bypassed — say, by a bug in the guard implementation or by an agent that manages to make direct HTTP calls through an imported library — the network layer prevents those calls from reaching backends directly. The gateway is the only reachable destination.
 
@@ -196,7 +185,7 @@ If the gateway is unreachable (network partition, gateway restart, misconfigured
 
 The manifest has two capability arrays: `requiredCapabilities` and `optionalCapabilities`. Both are checked by the guard — if a tool is listed in either array, the guard allows it. The distinction between required and optional is semantic at the manifest level (required capabilities must be present in the token for the agent to start; optional ones may or may not be present) but at the guard level, both arrays are treated as the allowable tool set.
 
-This means the guard's check is: _is this tool listed in the manifest at all?_ Not: _does the current token include this capability?_ Token coverage is the gateway's job. The guard trusts that the token from `tokenSupplier` is the agent's current valid token; what capabilities it actually contains is verified by the gateway's cryptographic check.
+This means the guard's check is: _is this tool listed in the manifest at all?_ Not: _does the current token include this capability?_ Token coverage is the gateway's job. The guard trusts that the token from `IdentityTokenProvider` is the agent's current valid token; what capabilities it actually contains is verified by the gateway's cryptographic check.
 
 ---
 
@@ -208,7 +197,7 @@ A few things I've learned from running the guard in production:
 
 **Separate guard denials from gateway denials in your dashboards.** They have different root causes. Guard denials are usually manifest coverage issues. Gateway denials after guard allows are usually condition violations (the model is calling the right tool with the wrong arguments).
 
-**Use `InProcessToolTransport` in your agent's integration tests.** Testing your agent against a mock transport is much faster than testing against a live gateway, and it catches manifest coverage issues early. The live gateway tests are valuable for end-to-end validation but shouldn't be your primary feedback loop during development.
+**Use a mock `HTTPClient` in your agent's integration tests.** Testing your agent against a mock HTTP client is much faster than testing against a live gateway, and it catches manifest coverage issues early. The live gateway tests are valuable for end-to-end validation but shouldn't be your primary feedback loop during development.
 
 **Don't treat guard allows as evidence of permitted actions.** The audit log is the evidence of what the gateway decided. Guard allows are implementation details of the agent process. For compliance purposes, only gateway decisions matter.
 

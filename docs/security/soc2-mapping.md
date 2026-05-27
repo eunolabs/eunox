@@ -60,29 +60,21 @@ admin credential. These map directly to CC6.1 (access policies) and CC6.3
 
 ## 2. Signed evidence record schema
 
-Each record in the export bundle is a `SignedAuditEvidence` object:
+Each record in the export bundle is a `SignedAuditEvidence` struct (see `pkg/audit/audit.go`):
 
-```typescript
-interface SignedAuditEvidence {
-  // OCSF envelope
-  class_uid: 3003 | 6003;
-  category_uid: 3 | 6;
-  type_uid: number; // class_uid * 100 + activity_id
-  time: number; // Unix ms
-  severity_id: number; // OCSF severity (0=Unknown, 1=Informational, …)
-  status: "Success" | "Failure";
-  metadata: {
-    version: "1.1.0";
-    product: { name: "eunox"; vendor_name: "eunox"; version: string };
-    uid: string; // UUID, stable per event
-  };
-
-  // eunox extensions
-  evidenceJwt: string; // JWT signed by gateway KMS key
-  replicaId: string; // Gateway replica that wrote the record
-  seq: number; // Monotonic per-replica sequence
-  previousHash: string; // SHA-256 hex of previous record in chain
-  recordHash: string; // SHA-256 hex of this record's canonical JSON
+```go
+// SignedAuditEvidence from pkg/audit/audit.go
+type SignedAuditEvidence struct {
+    // OCSF record
+    Record       LogEntry `json:"record"`
+    // eunox extensions
+    Signature    string   `json:"signature"`   // Digital signature over canonical Record bytes
+    Algorithm    string   `json:"algorithm"`
+    KeyID        string   `json:"keyId"`
+    ChainHash    string   `json:"chainHash"`   // HMAC chain hash
+    PreviousHash string   `json:"previousHash"` // SHA-256 hex of previous record
+    ReplicaID    string   `json:"replicaId,omitempty"` // Gateway replica
+    SequenceNum  int64    `json:"sequenceNum"` // Monotonic per-replica sequence
 }
 ```
 

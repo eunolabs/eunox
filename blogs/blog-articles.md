@@ -81,7 +81,7 @@ grouped by theme and roughly ordered from introductory to in-depth.
     trip the circuit.
 
 14. **AGT: defense in depth inside the agent process**
-    Introduces the in-process `createAgtGuard()` that checks policy before the
+    Introduces the in-process `agentruntime.Runtime` that checks policy before the
     network ever sees a tool call, and explains the single-audit-entry invariant
     it maintains with the gateway.
 

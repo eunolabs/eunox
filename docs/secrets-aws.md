@@ -402,18 +402,20 @@ Automate this with an EventBridge rule that triggers a Lambda function on the
 
 ---
 
-## 9. Native SDK integration — `AwsSecretsManagerSecretStore` (Phase 2)
+## 9. Planned native SDK integration (Phase 2)
 
-eunox now ships a native `AwsSecretsManagerSecretStore` implementation in
-`@eunox/common-core` that fetches secrets from Secrets Manager at runtime using
-the standard AWS SDK v3 credential provider chain (IRSA, EC2 instance profile,
-`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` env vars).
+The current Go repository does **not** yet ship a native
+`AwsSecretsManagerSecretStore` implementation in `pkg/config`.
+This section documents the planned Phase 2 design for direct
+Secrets Manager fetch at startup.
+All examples in §9 are forward-looking until that implementation lands.
 
 ### 9.1 ARN-based fallback pattern
 
-Instead of managing external Kubernetes Secrets or volume mounts, operators can
-tell eunox to fetch specific secrets directly from Secrets Manager at startup by
-setting `AWS_SECRETS_ARN_*` environment variables.
+In the planned implementation, instead of managing external Kubernetes Secrets
+or volume mounts, operators can tell eunox to fetch specific secrets directly
+from Secrets Manager at startup by setting `AWS_SECRETS_ARN_*` environment
+variables.
 
 ```bash
 # Pod environment (e.g. injected via EKS Pod Identity / IRSA-annotated Deployment)
@@ -428,11 +430,10 @@ AWS_SECRETS_ARN_ADMIN_API_KEY=arn:aws:secretsmanager:us-east-1:123456789012:secr
 PARTNER_DID_PIN_SECRET=changeme   # still a plain env var for non-sensitive overrides
 ```
 
-`createSecretStoreFromEnv()` (called automatically by service startup)
-auto-builds the `arnsBySecretName` map from every `AWS_SECRETS_ARN_<NAME>`
-variable it finds. For any name without an ARN entry, the store returns the
-value of `process.env[name]` directly — identical to the default
-`EnvSecretStore` behaviour.
+In the planned implementation, `createSecretStoreFromEnv()` would auto-build
+an `arnsBySecretName` map from every `AWS_SECRETS_ARN_<NAME>` variable it
+finds. For any name without an ARN entry, the store would return the env var
+value directly (same fallback behaviour as today).
 
 This **incremental migration** approach lets operators move secrets to Secrets
 Manager one at a time without changing the rest of the configuration.
@@ -452,9 +453,9 @@ prefix. If you use explicit ARNs outside that prefix, add them to the policy
 | ASCP                                 | ✅ CSI driver              | ✅ via `secretObjects`     | ❌                                     |
 | **Native SDK (`AWS_SECRETS_ARN_*`)** | ❌ None                    | ❌ None                    | ✅                                     |
 
-Use the native SDK approach when you want to minimise cluster components and
-are comfortable with the pod startup latency of a Secrets Manager API call
-(typically < 50 ms for same-region calls).
+Use the native SDK approach after this Phase 2 work lands, when you want to
+minimise cluster components and are comfortable with the pod startup latency
+of a Secrets Manager API call (typically < 50 ms for same-region calls).
 
 ### 9.4 EdDSA shim for partner DID (`did:ion`) use cases (Phase 2)
 

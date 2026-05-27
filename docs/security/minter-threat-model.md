@@ -47,8 +47,8 @@ Managed HSM — key material is never software-resident. Non-exportability must 
 ### Design
 
 The minter uses one of the three KMS drivers already implemented in
-`internal/issuer/src/{azure-signer,aws-kms-signer,gcp-cloudkms-signer}.ts`.
-All three implement the `SigningAdapter` / `TokenSigner` interface from `@eunox/common`.
+`pkg/crypto/kms_azure.go`, `pkg/crypto/kms_aws.go`, and `pkg/crypto/kms_gcp.go`.
+All three implement the `Signer` interface from `pkg/crypto/signer.go`.
 The **chosen driver for the hosted offering is Azure Managed HSM** (not Standard Key
 Vault), with per-tenant EC P-256 (`EC-HSM`, `ES256`) signing keys. Self-hosters may
 use AWS CloudHSM or GCP Cloud HSM (HSM protection level). The reasoning:
@@ -167,7 +167,7 @@ The damage depends on which credential is compromised:
 
 | Layer                        | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Short TTL**                | Minted tokens expire in ≤ 5 minutes (configurable per tenant down to 1 minute). An attacker with a compromised key can only mint tokens during the window between key compromise and key rotation. The `@eunox/mcp` remote-enforcer client refreshes transparently before expiry.                                                                                                                                           |
+| **Short TTL**                | Minted tokens expire in ≤ 5 minutes (configurable per tenant down to 1 minute). An attacker with a compromised key can only mint tokens during the window between key compromise and key rotation. The `eunox-mcp` remote-enforcer client refreshes transparently before expiry.                                                                                                                                           |
 | **Per-issuance audit trail** | Every mint call writes an immutable row to the mint-audit store (see §6). On key or service compromise, the audit trail provides a complete enumeration of every token minted through the legitimate minter path: tenant, agent, jti, policy fingerprint, `iat`, and `exp`. Missing audit rows are treated as evidence of direct HSM-sign-oracle abuse and trigger emergency tenant-key rotation plus kill switch.          |
 | **Revocation list**          | The gateway's existing `RevocationStore` (Redis-backed with Redis-circuit-breaker fail-closed) covers the unexpired window. On key compromise, the rotation procedure (§3) bulk-revokes all JTIs issued after the estimated compromise time and before the new key becomes active. The kill-switch manager (Redis + Postgres dual-write, §3 step 5a) provides a broader emergency stop if the compromise window is unclear. |
 | **Per-tenant key isolation** | Per-tenant signing keys (§4) bound the blast radius to a single tenant's token population if a tenant-scoped key is compromised, not the entire platform. A compromise of the minter service identity is broader, so the service identity is segmented by tenant shard where operationally possible and all tenant key use is audited by the HSM provider.                                                                  |
@@ -444,9 +444,10 @@ hex `row_hash` in append order; the first row uses the genesis sentinel
 `0000000000000000000000000000000000000000000000000000000000000000`. `row_hash` is
 stored as lowercase hex SHA-256 of the canonical row. The sidecar supplies `minted_at`
 explicitly before hashing rather than relying on the database default. Binary `row_hmac`
-is encoded as base64url for verification exports. This is the same pattern used by
-`LedgerAuditEvidenceSigner` in
-`pkg/src/ledger-signer.ts`. An attacker who compromises
+is encoded as base64url for verification exports. The gateway audit pipeline uses
+`audit.EvidenceSigner` plus `audit.ComputeChainHash` /
+`audit.ComputeChainHashWithSecret` in `pkg/audit/audit.go` for signed, chained evidence.
+An attacker who compromises
 the Postgres instance cannot forge valid HMAC values without also compromising the sidecar
 process and its secret — two separate compromises required.
 
@@ -489,7 +490,7 @@ that deletes rows creates a detectable gap in the Merkle chain.
 ### Metrics
 
 The minter exposes the following Prometheus metrics (consistent with the naming convention
-in `pkg//src/metrics.ts`):
+in `internal/minter/app.go`):
 
 | Metric                                  | Type      | Labels                                     | Description                                                                          |
 | --------------------------------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -621,20 +622,17 @@ annotations:
 > only 1/N of the actual mint rate on each replica, potentially evading all
 > three anomaly rules. Mitigations:
 >
-> 1. **Redis-backed detector (primary):** Set `ANOMALY_REDIS_URL` to enable
->    `RedisAnomalyDetector` (`src/redis-anomaly-detector.ts`), which stores
->    bucket state in Redis hashes so all replicas share a coherent view.
->    HINCRBY ensures atomic increments with no write contention.
+> 1. **Current implementation:** `cmd/minter/main.go` wires
+>    `InMemoryAnomalyDetector` only. This means anomaly state is currently
+>    per-replica and not shared across replicas.
 > 2. **Per-replica label:** `eunox_minter_anomaly_alerts_total` carries a
 >    `replica` label (set from `MINTER_REPLICA_ID` env var or `os.hostname()`).
 >    The `MinterAnomalyReplicaSkew` Prometheus alert fires when one replica's
 >    anomaly rate significantly diverges from the fleet average, making
 >    distribution attacks visible even with the in-memory detector.
-> 3. **Redis-backed detector fall-back:** If `ANOMALY_REDIS_URL` is set but
->    Redis is unavailable, the detector transparently falls back to the
->    per-replica in-memory `AnomalyDetector` so anomaly detection is never
->    completely disabled by a Redis outage — it just reverts to per-replica
->    behaviour.
+> 3. **Future hardening:** add a Redis-backed detector and explicit
+>    `ANOMALY_REDIS_URL` wiring when shared, cross-replica anomaly state is
+>    required.
 
 #### Rule 7 — HSM sign/audit mismatch
 

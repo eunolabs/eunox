@@ -756,7 +756,7 @@ threat model must not imply that the in-process guard is a security boundary._
 **This section is explicit and non-negotiable. It must not be softened in any
 documentation, marketing material, or customer-facing description.**
 
-The `createAgtGuard()` function implements an
+The `agentruntime.Runtime` (from `internal/agentruntime`) implements an
 **in-process policy check** that evaluates tool calls against an
 `AgentCapabilityManifest` before forwarding them to the outer gateway.
 
@@ -768,12 +768,12 @@ It is not a security boundary.** Specifically:
    who has achieved code execution in the agent process — through prompt
    injection, deserialization of malicious tool responses, or any other
    in-process attack vector — can:
-   - Replace the `tokenSupplier` function to return a token with different
+   - Replace the `IdentityTokenProvider` function to return a token with different
      capabilities.
-   - Monkey-patch the guard's internal state to return `allow` unconditionally.
-   - Call the underlying `InProcessProxyHandler` directly, bypassing the
-     guard entirely.
-   - Craft a tool call that the guard would deny but deliver it directly to
+   - Manipulate the runtime's internal state to return `Allowed: true` unconditionally.
+   - Call the underlying HTTP transport directly, bypassing the
+     runtime entirely.
+   - Craft a tool call that the runtime would deny but deliver it directly to
      the transport layer.
 
 2. **The outer gateway is the only hard enforcement boundary.** The gateway
@@ -783,15 +783,14 @@ It is not a security boundary.** Specifically:
    at the network boundary. The gateway's verification cannot be bypassed by
    in-process state manipulation.
 
-3. **If the guard allows but the outer gateway denies:** the `onGatewayDeny`
-   callback is invoked (for observability), and the gateway's denial is the
-   authoritative enforcement outcome. The guard's allow is not logged as an
+3. **If the runtime allows but the outer gateway denies:** the gateway's denial is the
+   authoritative enforcement outcome. The runtime's allow is not logged as an
    authorization decision — only the gateway's deny appears in the audit
    trail as a `CAPABILITY_DENIED` event.
 
-4. **Guard denials are not audit trail entries.** A guard denial (via the
-   `onDeny` callback) is a diagnostic signal only — it does not replace the
-   gateway's enforcement audit record. An attacker who bypasses the guard
+4. **Runtime denials are not audit trail entries.** A runtime denial
+   is a diagnostic signal only — it does not replace the
+   gateway's enforcement audit record. An attacker who bypasses the runtime
    and reaches the gateway will still be denied and audited if they lack the
    required capability.
 
@@ -897,14 +896,8 @@ openssl ecparam -genkey -name prime256v1 -noout -out /secure-media/signing-key.p
 openssl ec -in /secure-media/signing-key.pem -pubout -out /secure-media/signing-key-pub.pem
 
 # Step 3: Compute the key thumbprint (RFC 7638, for JWKS kid)
-# Use a node.js snippet or jose CLI to compute the JWK thumbprint:
-node -e "
-const { createPrivateKey } = require('crypto');
-const key = createPrivateKey({ key: require('fs').readFileSync('/secure-media/signing-key.pem') });
-const jwk = key.export({ format: 'jwk' });
-const pubJwk = key.export({ format: 'jwk' }); // public fields only
-console.log(JSON.stringify({ crv: pubJwk.crv, kty: pubJwk.kty, x: pubJwk.x, y: pubJwk.y }));
-"
+# Use a JWK thumbprint tool such as the `jose` CLI:
+# jose jwk thp -i /secure-media/signing-key.pem
 
 # Step 4: Set permissions before copying to the service
 chmod 0400 /secure-media/signing-key.pem

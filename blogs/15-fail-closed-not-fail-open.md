@@ -42,15 +42,23 @@ What happens when the token contains a condition type that the gateway's registr
 
 The correct answer is: **reject the token immediately**.
 
-```typescript
-// From condition-registry.ts
-if (!this.handlers.has(condition.type)) {
-  return {
-    allowed: false,
-    denialCode: "unknown_condition_type",
-    reason: `Condition type '${condition.type}' is not registered in this enforcement engine`,
-  };
+```go
+// From pkg/enforcement/engine.go
+e.mu.RLock()
+handler, exists := e.handlers[condType]
+e.mu.RUnlock()
+
+if !exists {
+    return capability.EnforceResponse{
+        Decision: capability.DecisionDeny,
+        Denial: &capability.DenialInfo{
+            Code:          capability.ErrCodeConditionFailed,
+            ConditionType: condType,
+            Message:       fmt.Sprintf("unknown condition type: %s", condType),
+        },
+    }, nil
 }
+_ = handler
 ```
 
 An unknown condition is not a benign unknown. It's a constraint that this gateway cannot evaluate. If the token was issued with that constraint, the issuer intended it to be enforced. Running the token without enforcing all of its conditions is silently weakening the policy. The safe behavior — the only secure behavior — is to deny the call and let the operator know that there's a schema mismatch between the issuer and the gateway.
@@ -118,15 +126,17 @@ Token refresh involves making a network call to the capability issuer. That call
 
 The correct behavior is: **no calls proceed until a valid, non-expired token is available**.
 
-```typescript
-// From AGT guard's token supplier:
-const token = await options.tokenSupplier();
-if (!token) {
-  return {
-    guardResult: "deny",
-    denyReason: "policy_evaluation_error",
-    message: "tokenSupplier returned null/undefined — token not available",
-  };
+```go
+// From agentruntime token acquisition:
+token, err := rt.acquireToken(ctx)
+if err != nil || token == nil {
+    return &ToolResponse{
+        Allowed: false,
+        Denial: &capability.DenialInfo{
+            Code:   "policy_evaluation_error",
+            Reason: "token acquisition failed — token not available",
+        },
+    }
 }
 ```
 

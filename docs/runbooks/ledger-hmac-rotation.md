@@ -1,7 +1,7 @@
 # Runbook: Audit Ledger HMAC Secret Rotation
 
 > **Applies to:** `PostgresLedgerBackend` and `PerReplicaPostgresLedgerBackend`  
-> **File:** `pkg/src/ledger-signer.ts`
+> **File:** `pkg/audit/audit.go`
 
 ---
 
@@ -76,28 +76,27 @@ Create a new ledger table, configure the backend to write to it with the new sec
 
 ### Verification
 
-```bash
-# Verify recent rows in the new table (requires the new secret)
-AUDIT_LEDGER_TABLE=eunox_audit_ledger_v2 \
-AUDIT_LEDGER_HMAC_SECRET=<new-secret> \
-  node -e "
-const { PostgresLedgerBackend } = require('@eunox/common-infra');
-const { Pool } = require('pg');
-const pool = new Pool({ connectionString: process.env.POSTGRES_URL });
-const backend = new PostgresLedgerBackend({ pool, hmacSecret: process.env.AUDIT_LEDGER_HMAC_SECRET });
-// getEntries(fromSeq, toSeq) — both arguments are required positional numbers.
-backend.getEntries(1, 100).then(entries => {
-  for (const e of entries) {
-    // rowHmac is populated by getEntries() from the raw BYTEA column.
-    if (e.rowHmac) {
-      const ok = backend.verifyRowHmac(e, e.rowHmac);
-      console.log('seq', e.seq, ok ? 'OK' : 'TAMPERED');
-    }
-  }
-  pool.end();
-});
-"
+```sql
+-- Fetch a recent replica segment from the current Go schema (`audit_records`).
+-- Use this export as input to offline verification with pkg/audit.VerifyChainHash.
+SELECT
+  id,
+  sequence_num,
+  replica_id,
+  timestamp,
+  signature,
+  previous_hash,
+  chain_hash
+FROM audit_records
+WHERE replica_id = 'replica-1'
+  AND sequence_num BETWEEN 1 AND 100
+ORDER BY sequence_num;
 ```
+
+The current chain hash input in `pkg/audit/audit.go` is
+`recordID|timestamp|signature` (legacy mode) or
+`previousHash|recordID|timestamp|signature` when `AUDIT_CHAIN_HMAC_SECRET` is
+configured (`ComputeChainHashWithSecret`).
 
 ---
 
@@ -112,16 +111,14 @@ For deployments that cannot tolerate table recreation, add a `verifyHmac(oldSecr
    ```sql
    -- CAUTION: requires AUDIT_LEDGER_WRITE_LOCK during this operation.
    -- Replace $NEW_SECRET_HEX with the hex-encoded new secret.
-   -- pgcrypto hmac() produces the same HMAC-SHA256 as Node.js
-   --   crypto.createHmac('sha256', secret).update(message).digest()
-   -- The message format matches the gateway: seq:previousHash:recordHash:replicaId
-   UPDATE eunox_audit_ledger SET row_hmac = (
-     hmac(
-       (seq::text || ':' || previous_hash || ':' || record_hash || ':' || replica_id)::bytea,
-       decode($NEW_SECRET_HEX, 'hex'),
-       'sha256'
-     )
-   );
+   -- Recompute chain_hash for each row using the Go helper (offline), then
+   -- update rows in sequence order. The exact hash inputs are implemented in:
+   --   pkg/audit/audit.go (ComputeChainHash / ComputeChainHashWithSecret)
+   --
+   -- Example template:
+   -- UPDATE audit_records
+   -- SET chain_hash = :new_chain_hash
+   -- WHERE replica_id = :replica_id AND sequence_num = :sequence_num;
    ```
 
    > **Prerequisites:** The `pgcrypto` extension must be installed

@@ -183,10 +183,13 @@ The non-transitive model is also consistent with the fail-closed principle from 
 
 The code path is direct:
 
-```typescript
-const entry = await this.registry.findByDid(issClaim);
-if (!entry) {
-  return { allowed: false, reason: "partner_did_not_registered" };
+```go
+if !resolver.registry.IsApproved(issClaim) {
+    entry, found := resolver.registry.Get(issClaim)
+    if !found {
+        return fmt.Errorf("%w: %s", federation.ErrPartnerNotFound, issClaim)
+    }
+    return fmt.Errorf("%w: %s (status: %s)", federation.ErrPartnerNotApproved, issClaim, entry.Status)
 }
 ```
 

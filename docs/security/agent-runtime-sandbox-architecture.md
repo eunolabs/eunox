@@ -16,9 +16,9 @@ Attack scenarios in scope:
 | Scenario                | Vector                                                                               |
 | ----------------------- | ------------------------------------------------------------------------------------ |
 | Prompt injection        | Malicious tool output or user prompt causes the agent to issue unintended tool calls |
-| Supply-chain compromise | Malicious NPM package opens a reverse shell or exfiltrates tokens                    |
+| Supply-chain compromise | Malicious Go module or dependency opens a reverse shell or exfiltrates tokens        |
 | LLM-induced jailbreak   | Agent LLM is instructed to exfiltrate the bearer/DPoP key                            |
-| Kernel exploit          | Agent exploits a Node.js or Linux CVE to escape the container                        |
+| Kernel exploit          | Agent exploits a Go runtime or Linux CVE to escape the container                     |
 
 **Out of scope:** model alignment, content filtering, training-phase sandboxing.
 
@@ -43,9 +43,9 @@ this document:
 | Privilege escalation   | `allowPrivilegeEscalation: false`                                                | `k8s/agent-runtime.yaml`               |
 | Non-root UID           | UID/GID 1000                                                                     | `k8s/agent-runtime.yaml`, `Dockerfile` |
 | Seccomp                | `RuntimeDefault` (Docker's default blocklist)                                    | `k8s/agent-runtime.yaml`               |
-| Soft policy pre-screen | AGT in-process guard — checks tool name against capability manifest              | `src/agt-guard.ts`                     |
-| Hard enforcement       | Tool Gateway — cryptographic token verification, audit chain                     | `tool-gateway` package                 |
-| DPoP (optional)        | Sender-constrained tokens — stolen bearer is unusable without the private key    | `src/runtime.ts`                       |
+| Soft policy pre-screen | AGT in-process guard — checks tool name against capability manifest              | `internal/agentruntime/runtime.go`     |
+| Hard enforcement       | Tool Gateway — cryptographic token verification, audit chain                     | `internal/gateway/`                   |
+| DPoP (optional)        | Sender-constrained tokens — stolen bearer is unusable without the private key    | `internal/agentruntime/dpop.go`        |
 
 ---
 
@@ -57,13 +57,13 @@ Mapping the five enforcement tiers from the threat model to current status:
 | ---- | ------------------------------------------- | -------------------------------------------------------------- |
 | 1    | Hypervisor-level tap iptables (Firecracker) | ❌ Not implemented — plain OCI                                 |
 | 2    | Network namespace + iptables                | ✅ Kubernetes `NetworkPolicy` (CNI-enforced)                   |
-| 3    | WASM capability grant                       | ❌ Not applicable (Node.js runtime)                            |
+| 3    | WASM capability grant                       | ❌ Not applicable (Go binary runtime)                          |
 | 4    | Landlock + custom seccomp allowlist         | ✅ Custom seccomp allowlist (`k8s/seccomp/agent-runtime.json`) |
 | 5    | AppArmor/SELinux profiles                   | ⚠️ None defined for agent pods                                 |
 
 ### Gap 1 — No gVisor / Kata runtime class (shared host kernel)
 
-Agent pods run on the host kernel. A Node.js CVE or kernel 0-day from inside
+Agent pods run on the host kernel. A Go runtime CVE or kernel 0-day from inside
 the container is a full escape. `docs/sandboxing.md` calls for gVisor/Kata
 Containers but this is not wired in any manifest.
 
@@ -74,7 +74,7 @@ pool configuration change and a one-line uncomment in the manifest.
 
 ### Gap 2 — Custom seccomp allowlist absent ✅ Fixed
 
-`RuntimeDefault` is Docker's blocklist of ~50 syscalls. A tailored Node.js 18
+`RuntimeDefault` is Docker's blocklist of ~50 syscalls. A tailored Go agent
 allowlist blocks ~90% more of the exploitable syscall surface (e.g. `ptrace`,
 `mount`, `clone(CLONE_NEWUSER)`, `bpf`, `io_uring`, `keyctl`,
 `perf_event_open`).
@@ -89,15 +89,16 @@ in a Kubernetes `Secret`. It should be obtained via projected workload identity
 (Azure Workload Identity, SPIRE SVID, or a short-TTL projected service account
 token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
 
-**Status:** Fully implemented:
+**Status:** Partially implemented:
 
-- `AUTH_TOKEN` is now optional in `AgentRuntimeConfigSchema`.
-- `AUTH_TOKEN_FILE` field added — path to a file the runtime reads on every
-  capability-issuance call (token never persisted in memory between refreshes).
-- `main.ts` builds a file-reader `authTokenProvider` when `AUTH_TOKEN_FILE` is set.
+- `internal/agentruntime/types.go` supports `IdentityTokenProvider` for dynamic
+  token fetch on issuance/refresh calls.
+- There is currently no built-in `AUTH_TOKEN_FILE` config field or
+  `cmd/agent-runtime/main.go` entrypoint in this repository.
 - `k8s/agent-runtime.yaml` carries a commented `sa-token` projected volume block
   (kubelet-managed, audience-bound, 1-hour expiry) and a `AUTH_TOKEN_FILE` env
-  var commented with enablement instructions.
+  var commented with enablement instructions; this is deployment scaffolding and
+  still requires custom `IdentityTokenProvider` callback wiring.
 - The agent-runtime `ServiceAccount` carries a commented Azure Workload Identity
   annotation block.
 
@@ -125,8 +126,8 @@ theft but not content confidentiality.
 
 - `k8s/agent-runtime.yaml` carries a commented cert-manager `Certificate` resource
   block for issuing a cluster-internal TLS certificate for the agent pod.
-- Commented `tls-ca` volume and `NODE_EXTRA_CA_CERTS` env var show exactly which
-  lines to uncomment to enable the CA trust bundle in Node.js.
+- Commented `tls-ca` volume and `EUNOX_TLS_CA_FILE` env var show exactly which
+  lines to uncomment to enable the CA trust bundle in the Go runtime.
 - `k8s/network-policies.yaml` carries a commented port `8443` rule for the Envoy
   egress once TLS is configured.
 - Activating requires: (1) cert-manager installed + ClusterIssuer named
@@ -140,7 +141,7 @@ theft but not content confidentiality.
 
 ### 4.1 Custom seccomp allowlist — `k8s/seccomp/agent-runtime.json`
 
-A tight syscall allowlist for Node.js 18 running as a plain HTTPS client.
+A tight syscall allowlist for the Go agent binary running as a plain HTTPS client.
 All unlisted syscalls return `EPERM`. Explicitly blocked (belt-and-suspenders):
 
 - `ptrace` — process inspection / injection
@@ -180,30 +181,34 @@ highest-confidence defence against container-escape exploits.
 **AKS:** enable `--workload-runtime KataMshvVmIsolation` on the agent node pool.
 **Self-managed K8s:** add a gVisor node pool; label it and schedule agent pods there.
 
-### 4.5 `AUTH_TOKEN_FILE` — file-based token provider (Gap 3)
+### 4.5 Identity token provider hook (Gap 3)
 
-`AUTH_TOKEN` is now optional. The new `AUTH_TOKEN_FILE` config variable accepts a
-filesystem path from which the runtime reads the token on every capability
-issuance/refresh call. When set, `main.ts` builds a `buildFileTokenProvider()`
-that reads the file at call time, so:
+`internal/agentruntime/runtime.go` supports dynamic token fetch through
+`Config.IdentityTokenProvider`. Embedding services can implement file-backed
+token reads in that callback if needed, so:
 
 1. No static credential sits in the environment or process memory between calls.
 2. The kubelet-managed token is automatically picked up after rotation (every hour
    for projected service-account tokens).
 
-The manifest carries a commented `sa-token` projected volume (audience-bound,
-1-hour TTL) and a commented `AUTH_TOKEN_FILE` env var. Enabling requires:
+The manifest carries a commented `sa-token` projected volume. Enabling a
+file-backed provider requires adding callback wiring in your embedding service
+entrypoint.
+
+In Kubernetes manifests, enabling this still requires:
 
 1. Azure Workload Identity or SPIRE configured on the cluster.
 2. The ServiceAccount annotated with `azure.workload.identity/client-id`.
 3. Three comment blocks in `k8s/agent-runtime.yaml` uncommented.
+4. A runtime host implementation that maps `AUTH_TOKEN_FILE` (or equivalent)
+   into `Config.IdentityTokenProvider`.
 
 ### 4.6 cert-manager TLS certificate scaffolding (Gap 6 — awaiting operator activation)
 
 `k8s/agent-runtime.yaml` carries a commented cert-manager `Certificate` resource
 block that issues a cluster-internal TLS certificate for the agent pod when
-cert-manager ≥ v1.12 is installed. A commented `tls-ca` volume + `NODE_EXTRA_CA_CERTS`
-env var show exactly what to uncomment to trust the cluster-internal CA in Node.js.
+cert-manager ≥ v1.12 is installed. A commented `tls-ca` volume + `EUNOX_TLS_CA_FILE`
+env var show exactly what to uncomment to trust the cluster-internal CA in Go.
 
 `k8s/network-policies.yaml` carries a commented port `8443` egress rule for the
 Envoy shard router.
@@ -215,11 +220,11 @@ Full activation steps are documented in the cert-manager `Certificate` block in
 
 ## 5. Remaining Recommendations
 
-### P3 — Landlock self-restriction in `main.ts`
+### P3 — Landlock self-restriction in runtime host entrypoint
 
 Compile a small `landlock-wrapper` binary (Rust or C) that installs Landlock
 network restrictions (port 3001 + 3002 only) then calls `execve()` to replace
-itself with Node. Use it as the container `CMD`. Requires Linux ≥ 6.7 (available
+itself with the Go agent. Use it as the container `CMD`. Requires Linux ≥ 6.7 (available
 in AKS node pools as of 2025).
 
 ### P3 — Ephemeral per-session pods

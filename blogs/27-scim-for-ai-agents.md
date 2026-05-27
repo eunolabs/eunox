@@ -241,7 +241,7 @@ This is RFC-aligned behavior for create semantics, but it means IdP full-sync jo
 
 ## Testing your SCIM integration before go-live
 
-The SCIM spec is specific enough that automated testing against a reference implementation is possible. In this repo, the SCIM coverage lives in `eunox/packages/capability-issuer/tests/scim.test.ts` and exercises flows such as:
+The SCIM spec is specific enough that automated testing against a reference implementation is possible. In this repo, the SCIM coverage lives in `internal/issuer/scim_test.go` and exercises flows such as:
 
 1. Provisions a test user via `POST /scim/v2/Users`
 2. Verifies the user appears in token issuance with the expected role

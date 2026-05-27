@@ -71,7 +71,7 @@ below maps every Cloud feature to its self-host equivalent.
 | SCIM 2.0 provisioning                      | Cloud Enterprise        | ✅ — `/scim/v2/` endpoints (§12.3)                       |
 | DB credential issuance                     | Cloud Enterprise        | ✅ — db-token-service (§12.6)                            |
 | Storage-grant issuance                     | Cloud Enterprise        | ✅ — storage-grant-service (§12.7)                       |
-| AGT in-process guard                       | Cloud Enterprise        | ✅ — `createAgtGuard()` (§12.8)                          |
+| AGT in-process guard                       | Cloud Enterprise        | ✅ — `agentruntime.New()` (§12.8)                        |
 | Discovery endpoint v1.0.0                  | Cloud Enterprise        | ✅ — `/.well-known/capability-issuer` (§12.9)            |
 | Helm chart + air-gap bundle                | Cloud Enterprise        | ✅ — `k8s/helm/` (§12.10)                                |
 
@@ -1317,7 +1317,7 @@ The enterprise self-host stack includes four additional services beyond the base
 │  ┌───────────────────┐                       │                               │
 │  │  @eunox/mcp        │── JWT ──────────────► │                               │
 │  │  (agent proxy)    │                       ▼                               │
-│  │  + AgtGuard       │             ┌─────────────────────────────────────┐   │
+│  │  + Runtime        │             ┌─────────────────────────────────────┐   │
 │  │  (in-process)     │             │  Tool Gateway :3002                 │   │
 │  └───────────────────┘             │                                     │   │
 │                                    │  POST /api/v1/enforce               │   │
@@ -1634,16 +1634,13 @@ curl -s "https://gateway.internal:3002/api/v1/audit/export?cursor=<cursor>" \
 #### 12.5.2 Offline evidence verification
 
 ```bash
-# Verify an evidenceJwt field against the issuer JWKS
-node -e "
-  const { createRemoteJWKSet, jwtVerify } = require('jose');
-  const jwks = createRemoteJWKSet(
-    new URL('https://issuer.internal:3001/.well-known/jwks.json'));
-  jwtVerify(process.env.EVIDENCE_JWT, jwks)
-    .then(r => console.log('VALID', r.payload))
-    .catch(e => { console.error('INVALID', e.message); process.exit(1); });
-"
+# Fetch signing keys for offline verification of SignedAuditEvidence.signature
+curl -s "https://gateway.internal:3002/api/v1/audit/signing-keys" \
+  -H "X-Admin-Api-Key: <GATEWAY_ADMIN_API_KEY>" | jq .
 ```
+
+Use the returned keys to verify each exported `records[i].signature` against
+`records[i].record` with your JOSE verifier.
 
 See `docs/security/soc2-mapping.md` for the full OCSF `class_uid` to SOC2
 control mapping and the auditor-facing export procedure.
@@ -1824,7 +1821,7 @@ curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
 > **Reference:** `docs/agent-sdk.md` §"AGT in-process guard";
 > `docs/diagrams.md` Set D.
 
-The AGT guard (`createAgtGuard()` from `@eunox/agent-runtime`) is an in-process
+The AGT guard (`internal/agentruntime` — `github.com/edgeobs/eunox/internal/agentruntime`) is an in-process
 capability pre-screen that sits between the agent logic and the outer gateway.
 It implements the **defense-in-depth Set-D architecture**. The guard is a soft
 layer only — the outer gateway remains the sole hard enforcement boundary.
@@ -1837,30 +1834,23 @@ layer only — the outer gateway remains the sole hard enforcement boundary.
 
 #### 12.8.1 Quick-start wiring
 
-```
-import { createAgtGuard, type AgtGuardOptions } from "@eunox/agent-runtime";
+```go
+import "github.com/edgeobs/eunox/internal/agentruntime"
 
-const guard = createAgtGuard({
-  tokenSupplier: () => fetchCapabilityToken(), // called before each tool invoke
-  policy: agentCapabilityManifest,
+rt, err := agentruntime.New(&agentruntime.Config{
+    IssuerURL:             "https://issuer.example.com",
+    GatewayURL:            "https://gateway.example.com",
+    IdentityTokenProvider: fetchCapabilityToken, // called before each token refresh
+}, agentruntime.WithLogger(logger))
+if err != nil {
+    log.Fatal(err)
+}
 
-  onDeny(toolName, reason) {
-    logger.warn("AGT guard blocked", { toolName, reason });
-  },
-
-  onGatewayDeny(toolName, gatewayErrorCode) {
-    // Guard allowed; outer gateway denied.  The gateway audit log is the record.
-    logger.warn("Gateway denied after guard allow", {
-      toolName,
-      gatewayErrorCode,
-    });
-  },
-} satisfies AgtGuardOptions);
-
-// Use guard.invokeTool() instead of calling the tool directly.
-const response = await guard.invokeTool("read_file", {
-  path: "/tmp/output.txt",
-});
+// Use rt.InvokeTool() instead of calling the tool directly.
+resp, err := rt.InvokeTool(ctx, &agentruntime.ToolRequest{
+    ToolName:  "read_file",
+    Arguments: map[string]interface{}{"path": "/tmp/output.txt"},
+})
 ```
 
 See `docs/agent-sdk.md` §"AGT in-process guard" for the full API reference,
@@ -2225,7 +2215,7 @@ routing production traffic through an enterprise deployment:
       requires `X-Admin-Api-Key`. Admin port (3003) excluded from public
       load-balancer ingress rules.
 - [ ] **In-process guard is soft.** Security posture does not rely on
-      `createAgtGuard()` as a security boundary. Outer gateway is the sole hard
+      `agentruntime.Runtime` as a security boundary. Outer gateway is the sole hard
       enforcement point.
 - [ ] **Air-gap egress checklist completed.** For air-gapped deployments,
       every egress endpoint in §12.10.2 is reachable via a controlled proxy or
