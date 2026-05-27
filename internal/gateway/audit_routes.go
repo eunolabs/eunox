@@ -294,7 +294,7 @@ func (app *App) authenticateAuditRequest(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid audit token"))
 		return nil, false
 	}
-	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
 		writeJSON(w, http.StatusUnauthorized, errorResponse("audit token has expired"))
 		return nil, false
 	}

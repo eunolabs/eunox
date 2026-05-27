@@ -767,7 +767,7 @@ func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capa
 	}
 
 	// Check expiry
-	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
 		return nil, errors.New("token has expired")
 	}
 

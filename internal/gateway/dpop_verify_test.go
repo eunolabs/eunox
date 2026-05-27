@@ -356,3 +356,44 @@ func TestVerifyECDSA_WrongSignature(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "verification failed")
 }
+
+func TestVerifyRSA_ExponentOutOfRange(t *testing.T) {
+	// A minimal valid RSA modulus (just for parsing; we never reach signature verification).
+	nBytes := make([]byte, 256) // 2048-bit modulus placeholder
+	nBytes[0] = 0x80            // ensure high bit is set
+
+	tests := []struct {
+		name    string
+		eBytes  []byte
+		wantErr string
+	}{
+		{
+			name:    "exponent exceeds MaxInt32",
+			eBytes:  []byte{0x01, 0x00, 0x00, 0x00, 0x01}, // 2^32 + 1 > MaxInt32
+			wantErr: "exponent out of safe range",
+		},
+		{
+			name:    "exponent does not fit in int64",
+			eBytes:  []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}, // 2^64 + 1
+			wantErr: "exponent out of safe range",
+		},
+		{
+			name:    "exponent is zero",
+			eBytes:  []byte{0x00},
+			wantErr: "exponent out of safe range",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			jwk := map[string]interface{}{
+				"kty": "RSA",
+				"n":   base64.RawURLEncoding.EncodeToString(nBytes),
+				"e":   base64.RawURLEncoding.EncodeToString(tc.eBytes),
+			}
+			err := verifyRSA([]byte("signing input"), []byte("signature"), "RS256", jwk)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}

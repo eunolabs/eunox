@@ -97,7 +97,7 @@ func (v *PartnerTokenVerifier) VerifyPartnerToken(ctx context.Context, tokenStr 
 
 		// Validate standard JWT claims.
 		now := v.now()
-		if claims.ExpiresAt > 0 && now.Unix() > claims.ExpiresAt {
+		if claims.ExpiresAt > 0 && now.Unix() >= claims.ExpiresAt {
 			return nil, errors.New("partner token has expired")
 		}
 		if claims.IssuedAt > 0 && now.Unix() < claims.IssuedAt-300 {
