@@ -327,8 +327,8 @@ Key metrics to alert on:
 
 ## 10. Related Documents
 
-- [Agent Runtime Security](AGENT_RUNTIME_SECURITY.md) — How agents acquire and use tokens
-- [DB Token Architecture](DB_TOKEN_ARCHITECTURE.md) — Similar pattern for database credentials
-- [Architecture Overview](ARCHITECTURE.md) — System-wide component interactions
-- [Deployment Guide](DEPLOYMENT.md) — Production deployment patterns
+- [Agent Runtime Security](agent-runtime-security.md) — How agents acquire and use tokens
+- [DB Token Architecture](db-token-architecture.md) — Similar pattern for database credentials
+- [Architecture Overview](architecture.md) — System-wide component interactions
+- [Deployment Guide](deployment.md) — Production deployment patterns
 - [Multi-Cloud](multi-cloud.md) — Cross-cloud credential management

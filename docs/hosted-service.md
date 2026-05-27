@@ -6,11 +6,11 @@
 >
 > **Related documents:**
 >
-> - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — current system context and component map
-> - [`docs/MULTI_TENANCY.md`](./MULTI_TENANCY.md) — tenant isolation model and threat model
+> - [`docs/architecture.md`](./architecture.md) — current system context and component map
+> - [`docs/multi-tenancy.md`](./multi-tenancy.md) — tenant isolation model and threat model
 > - [`docs/pricing.md`](./pricing.md) — tier definitions and feature matrix
 > - [`docs/upgrade-to-hosted.md`](./upgrade-to-hosted.md) — self-hosted → cloud migration path
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — build and configuration reference
+> - [`docs/deployment.md`](./deployment.md) — build and configuration reference
 
 ---
 

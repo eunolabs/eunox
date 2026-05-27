@@ -737,5 +737,5 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Understand _why_ the design looks like this       | [`capability-model.md`](./capability-model.md), [`enforcement.md`](./enforcement.md) |
 | See abstract / executive-friendly diagrams        | [`diagrams.md`](./diagrams.md)                                                       |
 | Use the MCP proxy                                 | [`agent-sdk.md`](./agent-sdk.md)                                                     |
-| Deploy the full stack                             | [`DEPLOYMENT.md`](./DEPLOYMENT.md)                                                   |
+| Deploy the full stack                             | [`deployment.md`](./deployment.md)                                                   |
 | Find the gaps and the proposed work to close them | [`capability-model.md`](./capability-model.md)                                       |

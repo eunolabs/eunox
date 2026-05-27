@@ -104,7 +104,7 @@ I've thought hard about whether there's a principled way to build a "local polic
 
 There's also the revocation problem. The gateway checks the revocation list on every call (through the in-memory `RevocationStore` backed by Redis). A local fallback has no way to check revocation in real time. A token that was revoked thirty seconds before the gateway went down would be treated as valid by the local fallback. That's unacceptable.
 
-The right operational answer to gateway availability is: run the gateway at high availability. The deployment documentation (see `docs/DEPLOYMENT.md`) covers the HA configuration — Redis cluster for shared state, multiple gateway replicas behind a load balancer, readiness probes that prevent a misconfigured instance from receiving traffic. If you've set up HA correctly, the gateway should not have downtime.
+The right operational answer to gateway availability is: run the gateway at high availability. The deployment documentation (see `docs/deployment.md`) covers the HA configuration — Redis cluster for shared state, multiple gateway replicas behind a load balancer, readiness probes that prevent a misconfigured instance from receiving traffic. If you've set up HA correctly, the gateway should not have downtime.
 
 But even in a worst case — a rolling deployment, a rack-level failure, a botched Kubernetes upgrade — the correct behavior is for tool calls to fail until the gateway recovers, not to proceed without enforcement.
 
@@ -207,7 +207,7 @@ I want to be honest about the trade-offs, because this is not a free decision.
 
 Fail-closed makes debugging harder. When something goes wrong and tool calls start failing, the failure is sometimes opaque — you need to read the denial code, correlate with the audit log, check the gateway metrics, figure out whether it's a token expiry, a Redis hiccup, an unknown condition, or a killed token. A fail-open system would have let the call through and you might not have known anything was wrong.
 
-Fail-closed requires higher availability from your dependencies. If the gateway fails closed on Redis unavailability, you need Redis to be highly available. That's an operational cost. The [post on Redis HA in the deployment docs](../DEPLOYMENT.md) covers the specific configuration — Redis cluster mode, Sentinel, etc. — but there's no getting around the fact that you're adding operational complexity to achieve the availability you need.
+Fail-closed requires higher availability from your dependencies. If the gateway fails closed on Redis unavailability, you need Redis to be highly available. That's an operational cost. The [post on Redis HA in the deployment docs](../deployment.md) covers the specific configuration — Redis cluster mode, Sentinel, etc. — but there's no getting around the fact that you're adding operational complexity to achieve the availability you need.
 
 Fail-closed can create user-visible disruptions from infrastructure blips. A five-second Redis restart causes tool call failures during those five seconds. In a local development setup, that's annoying. In a production deployment where an AI agent is processing a user's request, it can mean an error response that the user sees.
 

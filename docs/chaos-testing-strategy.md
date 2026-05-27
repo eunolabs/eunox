@@ -280,8 +280,8 @@ Before tagging a release:
 
 ## 8. Related Documents
 
-- [Agent Runtime Security](AGENT_RUNTIME_SECURITY.md) — Token provider resilience model
-- [Redis Failure Modes](REDIS_FAILURE_MODES.md) — Fail-open vs. fail-closed policies
-- [Distributed State](DISTRIBUTED_STATE.md) — Kill switch and revocation consistency
-- [Posture Scaling](POSTURE_SCALING.md) — SQLite queue resilience
-- [Architecture Overview](ARCHITECTURE.md) — System-wide component interactions
+- [Agent Runtime Security](agent-runtime-security.md) — Token provider resilience model
+- [Redis Failure Modes](redis-failure-modes.md) — Fail-open vs. fail-closed policies
+- [Distributed State](distributed-state.md) — Kill switch and revocation consistency
+- [Posture Scaling](posture-scaling.md) — SQLite queue resilience
+- [Architecture Overview](architecture.md) — System-wide component interactions

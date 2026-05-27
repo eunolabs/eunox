@@ -330,8 +330,8 @@ patterns (slog, Prometheus, health endpoints).
 
 ## 11. Related Documents
 
-- [Storage Grant Architecture](STORAGE_GRANT_ARCHITECTURE.md) — Similar pattern for storage credentials
-- [Agent Runtime Security](AGENT_RUNTIME_SECURITY.md) — How agents acquire and use tokens
-- [Architecture Overview](ARCHITECTURE.md) — System-wide component interactions
-- [Deployment Guide](DEPLOYMENT.md) — Production deployment patterns
+- [Storage Grant Architecture](storage-grant-architecture.md) — Similar pattern for storage credentials
+- [Agent Runtime Security](agent-runtime-security.md) — How agents acquire and use tokens
+- [Architecture Overview](architecture.md) — System-wide component interactions
+- [Deployment Guide](deployment.md) — Production deployment patterns
 - [Multi-Cloud](multi-cloud.md) — Cross-cloud credential management

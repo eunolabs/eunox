@@ -358,7 +358,7 @@ cfg := &agentruntime.Config{
 
 ## See Also
 
-- [docs/ARCHITECTURE.md](./ARCHITECTURE.md) — System architecture overview
+- [docs/architecture.md](./architecture.md) — System architecture overview
 - [docs/openapi/capability-issuer.yaml](./openapi/capability-issuer.yaml) — Issuer API specification
 - [docs/openapi/tool-gateway.yaml](./openapi/tool-gateway.yaml) — Gateway API specification
 - [docs/enforcement.md](./enforcement.md) — Policy enforcement guarantees

@@ -231,4 +231,4 @@ For reference, here's the sequence for a first-time air-gapped deployment:
 
 For on-premises environments that aren't running Kubernetes, the docker-compose path replaces steps 1-3 of the Helm configuration but is otherwise equivalent.
 
-The full deployment guide is in `docs/DEPLOYMENT.md`, in the "Stage-5 on-prem deployment" section. For compliance requirements that include a formal deployment verification step, the smoke test output and check-deployment-bundle output can be archived as deployment evidence.
+The full deployment guide is in `docs/deployment.md`, in the "Stage-5 on-prem deployment" section. For compliance requirements that include a formal deployment verification step, the smoke test output and check-deployment-bundle output can be archived as deployment evidence.

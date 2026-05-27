@@ -12,7 +12,7 @@
 eunox is a capability-native, zero-trust governance plane for AI agents. Its core design
 — cryptographically signed, time-limited JWT capability tokens enforced at a
 single gateway PEP — is architecturally sound. The threat model is clearly
-articulated (`docs/ARCHITECTURE.md`) and the code is largely consistent with it.
+articulated (`docs/architecture.md`) and the code is largely consistent with it.
 The team has applied good practices: default-deny enforcement engine, constant-time
 key comparison, DPoP replay protection, Redis HA validation at boot, and a
 structured config validation layer.
@@ -611,7 +611,7 @@ otherwise, it should be removed to avoid confusion.
 
 ### OQ-4 — Partner federation DID allowlist vs. TRUSTED_PARTNER_DIDS
 
-The architecture document (`ARCHITECTURE.md §5.3 DFD-2`) references
+The architecture document (`architecture.md §5.3 DFD-2`) references
 `TRUSTED_PARTNER_DIDS` as the allowlist for cross-org federation. In the Go code,
 trusted partner DIDs are managed via the admin API (`handlePartnerDIDRegister`) and
 stored in `InMemoryPartnerDIDStore`. There is no `TRUSTED_PARTNER_DIDS` environment
@@ -620,9 +620,9 @@ intended for an upcoming stage?
 
 ---
 
-### OQ-5 — `docs/ARCHITECTURE.md` references TypeScript implementation details
+### OQ-5 — `docs/architecture.md` references TypeScript implementation details
 
-Several sequence diagrams and component names in `docs/ARCHITECTURE.md` reference
+Several sequence diagrams and component names in `docs/architecture.md` reference
 TypeScript/Node.js constructs (`index.ts`, `CapabilityIssuerService.ts`,
 `@eunox/common`, `helmet`). The repository is now a pure Go codebase. Are these
 documents intentionally retained as conceptual references, or do they need updating

@@ -186,4 +186,4 @@ env:
 ### Cross-references
 
 - `pkg/audit/audit.go` — backend implementation, `verifyRowHmac()` function
-- `docs/ARCHITECTURE.md §7` — audit ledger design
+- `docs/architecture.md §7` — audit ledger design

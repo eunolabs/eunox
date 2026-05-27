@@ -977,7 +977,7 @@ When rotating the signing key in an air-gapped deployment:
 
 ## References
 
-- [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — architecture overview
+- [`docs/architecture.md`](../architecture.md) — architecture overview
 - [`internal/gateway/partner_did_redis.go`](../../internal/gateway/partner_did_redis.go) — partner DID pin storage and retrieval
 - [`internal/gateway/partner_verifier.go`](../../internal/gateway/partner_verifier.go) — partner issuer verification and cache behavior
 - [`internal/dbtokensvc/app.go`](../../internal/dbtokensvc/app.go) — DB credential issuance and request validation

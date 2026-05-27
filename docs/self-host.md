@@ -10,13 +10,13 @@
 >
 > **Related documents:**
 >
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — build and configuration reference
-> - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — system context and component map
+> - [`docs/deployment.md`](./deployment.md) — build and configuration reference
+> - [`docs/architecture.md`](./architecture.md) — system context and component map
 > - [`docs/capability-model.md`](./capability-model.md) — enforcement invariants
 > - [`docs/security/minter-threat-model.md`](./security/minter-threat-model.md) — minter threat model
 > - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — enterprise threat model
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP wiring recipes (including SCIM §8)
-> - [`docs/ADAPTERS.md`](./ADAPTERS.md) — identity and signing adapter reference
+> - [`docs/adapters.md`](./adapters.md) — identity and signing adapter reference
 > - [`docs/agent-sdk.md`](./agent-sdk.md) — AGT in-process guard SDK reference
 > - [`docs/issuer-operator-runbook.md`](./issuer-operator-runbook.md) — operator runbook
 > - [`docs/openapi/capability-issuer-discovery.yaml`](./openapi/capability-issuer-discovery.yaml) — discovery endpoint OpenAPI spec
@@ -165,7 +165,7 @@ policy YAML/JSON) as claims. To issue one you need:
    provider validates. With `IDENTITY_PROVIDER=did`, callers present a DID-bound
    JWT, avoiding a dependency on Azure AD / Cognito / GCP Identity.
 4. **A policy manifest** — a YAML file matching the `AgentCapabilityManifest`
-   schema (see [`docs/CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md)).
+   schema (see [`docs/capability-manifest-guide.md`](./capability-manifest-guide.md)).
 
 ### 4.2 Step-by-step
 
@@ -196,12 +196,12 @@ aws kms create-key \
 > **Production note:** Use an HSM-backed key in production (AWS CloudHSM-origin
 > CMK, Azure Managed HSM key, or GCP HSM protection level). For the Azure
 > Managed HSM provisioning procedure and non-exportability verification steps,
-> see `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for details on KMS providers.
+> see `docs/deployment.md` §"Configuration Reference → Issuer → Signing Provider" for details on KMS providers.
 
 #### Step 2 — Write a capability policy manifest
 
 Create `/srv/eunox/policies/agent.yaml` following the pattern in
-[`CAPABILITY_MANIFEST_GUIDE.md`](./CAPABILITY_MANIFEST_GUIDE.md):
+[`capability-manifest-guide.md`](./capability-manifest-guide.md):
 
 ```yaml
 agentId: "my-agent"
@@ -491,7 +491,7 @@ AUDIT_SIGNING_KMS_PROVIDER=aws-kms   # or azure-keyvault / gcp-cloudkms
 AUDIT_SIGNING_AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
 ```
 
-See `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider" for the Azure Managed HSM
+See `docs/deployment.md` §"Configuration Reference → Issuer → Signing Provider" for the Azure Managed HSM
 provisioning procedure and the non-exportability verification steps.
 
 ### 5.2 Add Redis and Postgres
@@ -769,7 +769,7 @@ full parameter reference.
 
 The admin API is served on `ADMIN_PORT` (default 3003) and is bound to
 `ADMIN_HOST` (should be `127.0.0.1` or an in-cluster-only address). See
-[`docs/ADMIN_API_CURL_RECIPES.md`](./ADMIN_API_CURL_RECIPES.md) for the full
+[`docs/admin-api-curl-recipes.md`](./admin-api-curl-recipes.md) for the full
 reference.
 
 ```bash
@@ -803,7 +803,7 @@ item in this checklist:
       `aws-kms`, or `gcp-cloudkms`. A local PEM key is not acceptable in production.
 - [ ] **Key is non-exportable.** Confirm at the KMS level (not just IAM policy).
       For Azure Managed HSM, follow the non-exportability verification procedure in
-      `docs/DEPLOYMENT.md` §"Configuration Reference → Issuer → Signing Provider".
+      `docs/deployment.md` §"Configuration Reference → Issuer → Signing Provider".
 - [ ] **Admin port is not publicly reachable.** `ADMIN_HOST=127.0.0.1` and the
       admin port (3003) is not in the public-facing load-balancer ingress rules.
 - [ ] **`REDIS_CIRCUIT_OPEN_MODE` is set explicitly.** The gateway logs an error
@@ -1288,10 +1288,10 @@ available in both the hosted product and the self-host bundle at parity.
 >
 > - [`docs/security/enterprise-federation-threat-model.md`](./security/enterprise-federation-threat-model.md) — approved threat model (BLOCKING gate for partner federation, SOC2 export, SCIM)
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) §8 — SCIM 2.0 provisioning (Okta, Entra ID, Ping Identity)
-> - [`docs/ADAPTERS.md`](./ADAPTERS.md) §"Partner Federation" — DID adapter reference
+> - [`docs/adapters.md`](./adapters.md) §"Partner Federation" — DID adapter reference
 > - [`docs/agent-sdk.md`](./agent-sdk.md) §"AGT in-process guard" — defense-in-depth SDK guide
 > - [`docs/openapi/capability-issuer-discovery.yaml`](./openapi/capability-issuer-discovery.yaml) — discovery v1.0.0 contract
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — on-prem deployment and Helm guide
+> - [`docs/deployment.md`](./deployment.md) — on-prem deployment and Helm guide
 
 ### 12.1 Updated service topology
 
@@ -1372,7 +1372,7 @@ The enterprise self-host stack includes four additional services beyond the base
 > to production. See §1 and §2 of that document for partner-DID-compromise and
 > DID-document-spoofing mitigations.
 >
-> **Reference:** `docs/ADAPTERS.md` §"Partner Federation".
+> **Reference:** `docs/adapters.md` §"Partner Federation".
 
 Partner federation lets a remote organization issue capability tokens from
 their own W3C DID-backed signing key. The eunox gateway accepts and
@@ -1657,7 +1657,7 @@ POSTURE_DURABLE_QUEUE_PATH=/var/lib/eunox/posture.db  # persistent volume path
 ```
 
 For HA (multi-replica) deployments use a Redis-stream queue drainer. See
-`docs/DEPLOYMENT.md` §"Posture-emitter queue topology for HA issuers" for the
+`docs/deployment.md` §"Posture-emitter queue topology for HA issuers" for the
 full HA topology diagram.
 
 ---
@@ -1926,7 +1926,7 @@ resolution.
 
 ### 12.10 On-prem deployment bundle (Helm + air-gap)
 
-> **Reference:** `docs/DEPLOYMENT.md` §"Deployment Targets".
+> **Reference:** `docs/deployment.md` §"Deployment Targets".
 
 The `k8s/helm/` directory contains per-service Helm chart values schemas for
 `tool-gateway`, `capability-issuer`, `db-token-service`, `storage-grant-service`,

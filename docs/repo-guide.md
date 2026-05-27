@@ -73,7 +73,7 @@ eunox/
 ├── migrations/             # SQL migrations (golang-migrate format)
 ├── k8s/                    # Kubernetes manifests & Helm charts
 ├── infra/                  # Docker Compose, Terraform, cloud configs
-├── docs/                   # Documentation
+├── docs/                   # Documentation (all filenames lowercase kebab-case)
 ├── web/                    # Static website
 ├── site/                   # Astro blog/site
 └── blogs/                  # Blog content
