@@ -930,3 +930,80 @@ assert.Equal(t, capability.DecisionDeny, resp.Decision)
 require.NotNil(t, resp.Denial)
 assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
 }
+
+// CI-3: path.Match glob semantics tests.
+
+func TestEngine_ValidateAction_GlobQuestionMark(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "file:a",
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{Resource: "file:?", Actions: []string{"*"}},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_ValidateAction_GlobQuestionMark_NoMatch(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "file:ab",
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{Resource: "file:?", Actions: []string{"*"}},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+func TestEngine_ValidateAction_GlobCharacterClass(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "tool:b",
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{Resource: "tool:[abc]", Actions: []string{"*"}},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_ValidateAction_MidStringWildcard(t *testing.T) {
+engine := enforcement.New()
+ctx := context.Background()
+
+req := capability.EnforceRequest{
+SessionID: "sess-1",
+ToolName:  "file:data.csv",
+}
+resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+{Resource: "file:*.csv", Actions: []string{"*"}},
+})
+require.NoError(t, err)
+assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestValidateResourcePattern_Valid(t *testing.T) {
+cases := []string{"*", "tool:*", "file:?.csv", "tool:[abc]", "email:send"}
+for _, c := range cases {
+t.Run(c, func(t *testing.T) {
+assert.NoError(t, enforcement.ValidateResourcePattern(c))
+})
+}
+}
+
+func TestValidateResourcePattern_Invalid(t *testing.T) {
+// Unclosed character class is a malformed pattern.
+err := enforcement.ValidateResourcePattern("tool:[abc")
+assert.Error(t, err)
+}

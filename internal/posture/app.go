@@ -99,6 +99,28 @@ func New(cfg *Config, plugins []Plugin, deps *Dependencies) (*App, error) {
 	}
 
 	// Create durable queue.
+	//
+	// Current implementation: SQLite-backed queue stored at cfg.QueuePath.
+	//
+	// PostgreSQL migration path (CI-10):
+	// The Queue interface (Push/Pop/Ack/Nack/Depth/DeadLetterDepth/ListDeadLetters/Close)
+	// is the only dependency the App has on the queue storage technology.
+	// To migrate to a PostgreSQL-backed queue without data loss:
+	//
+	//   1. Drain the SQLite queue to zero depth — let the delivery worker process
+	//      all pending events until Depth() returns 0 (or drain manually via the
+	//      /admin/dead-letters endpoint for DLQ entries).
+	//   2. Stop the service (SIGTERM).
+	//   3. Implement a PostgresQueue that satisfies the Queue interface, backed by
+	//      a "posture_queue" table (see internal/posture/queue.go for the SQLite
+	//      reference implementation).
+	//   4. Update NewApp (or add a config toggle such as QUEUE_BACKEND=postgres and
+	//      QUEUE_DSN) to construct a PostgresQueue instead of SQLiteQueue.
+	//   5. Restart the service pointing at the new PostgreSQL DSN.
+	//
+	// No data migration is needed if the queue is drained first.  If draining is
+	// not possible, export the SQLite queue contents and import them into the
+	// PostgreSQL table before switching.
 	queue, err := NewSQLiteQueue(cfg.QueuePath)
 	if err != nil {
 		return nil, fmt.Errorf("posture emitter: create queue: %w", err)

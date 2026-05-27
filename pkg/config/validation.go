@@ -136,7 +136,11 @@ func validateField(fieldPath, envVar string, value reflect.Value, tags *fieldTag
 	}
 
 	if tags.Regex != "" {
-		matched, err := regexp.MatchString(tags.Regex, stringifyValue(value))
+		// Wrap the caller-supplied pattern with unconditional anchors so that
+		// patterns without explicit ^ / $ cannot match partial strings.
+		// e.g. "foo" becomes "^(?:foo)$", preventing "xfooy" from matching.
+		anchored := "^(?:" + tags.Regex + ")$"
+		matched, err := regexp.MatchString(anchored, stringifyValue(value))
 		if err != nil {
 			errs = append(errs, ValidationError{
 				Field:   fieldPath,

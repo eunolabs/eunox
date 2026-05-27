@@ -585,6 +585,7 @@ func TestProxy_SuccessWithBackend(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/some/path", http.NoBody)
 	req.Header.Set("Authorization", "Bearer valid-token")
+	req.Header.Set("X-Tool-Name", "some-tool")
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 

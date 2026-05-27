@@ -8,6 +8,7 @@ package enforcement
 import (
 	"context"
 	"fmt"
+	"path"
 	"sync"
 	"time"
 
@@ -179,17 +180,43 @@ func (e *Engine) findMatchingCapability(req *capability.EnforceRequest, capabili
 	return nil
 }
 
-// matchesResource checks if a capability resource pattern matches the tool name.
+// matchesResource reports whether a capability resource pattern matches the tool name.
+//
+// Pattern syntax follows [path.Match] semantics:
+//   - '*' matches any sequence of non-Separator characters (here, '/' is the only
+//     separator, so '*' effectively matches any characters except '/').
+//   - '?' matches any single non-Separator character.
+//   - '[abc]' matches any character in the set.
+//   - An exact value (e.g. "email:send") matches only that value.
+//   - The special value "*" matches any tool name.
+//
+// Because capability resources use ':' as a namespace separator (not '/'),
+// the path.Match '*' glob matches across colons, giving full glob semantics
+// (e.g. "file:*.csv" matches "file:data.csv").
 func matchesResource(resource, toolName string) bool {
 	if resource == "*" || resource == toolName {
 		return true
 	}
-	// Glob-style prefix match: "tool:*" matches any tool
-	if resource != "" && resource[len(resource)-1] == '*' {
-		prefix := resource[:len(resource)-1]
-		return len(toolName) >= len(prefix) && toolName[:len(prefix)] == prefix
+	// path.Match provides consistent glob semantics: *, ?, and character classes.
+	// An error is only returned for malformed patterns (e.g. unclosed '[');
+	// such patterns should have been rejected at capability validation time, so
+	// we treat them as non-matching here rather than propagating an error through
+	// the hot enforcement path.
+	matched, err := path.Match(resource, toolName)
+	if err != nil {
+		return false
 	}
-	return false
+	return matched
+}
+
+// ValidateResourcePattern returns an error if the resource pattern is not a
+// valid glob pattern according to [path.Match] semantics.  Callers should
+// reject capabilities with invalid patterns at load time.
+func ValidateResourcePattern(resource string) error {
+	if _, err := path.Match(resource, ""); err != nil {
+		return fmt.Errorf("enforcement: invalid resource pattern %q: %w", resource, err)
+	}
+	return nil
 }
 
 // matchesAction checks if the capability grants the requested action/operation.

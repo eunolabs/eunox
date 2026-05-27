@@ -552,6 +552,7 @@ func (m *mockRows) Err() error          { return m.err }
 type mockDB struct {
 	execErr       error
 	execQuery     string
+	execQueries   []string
 	execArgs      []any
 	queryRow      *mockRow
 	queryRowQuery string
@@ -562,6 +563,7 @@ type mockDB struct {
 
 func (m *mockDB) ExecContext(_ context.Context, query string, args ...any) (Result, error) {
 	m.execQuery = query
+	m.execQueries = append(m.execQueries, query)
 	m.execArgs = append([]any(nil), args...)
 	if m.execErr != nil {
 		return nil, m.execErr
@@ -628,6 +630,40 @@ func TestPostgresLedgerBackend_AcquireLock_Contention(t *testing.T) {
 
 	err := backend.AcquireLock(context.Background())
 	assert.ErrorIs(t, err, ErrLockContention)
+}
+
+// CI-11: lock_timeout is emitted before acquiring the advisory lock.
+
+func TestPostgresLedgerBackend_AcquireLock_WithLockTimeout(t *testing.T) {
+	t.Parallel()
+
+	lock := &mockAdvisoryLock{}
+	db := &mockDB{}
+	backend := NewPostgresLedgerBackend(db, lock, PostgresLedgerConfig{
+		LockTimeout: 5 * time.Second,
+	})
+
+	err := backend.AcquireLock(context.Background())
+	require.NoError(t, err)
+
+	// First exec must be the SET lock_timeout statement.
+	require.Len(t, db.execQueries, 1, "expected SET lock_timeout exec before TryLock")
+	assert.Contains(t, db.execQueries[0], "SET lock_timeout")
+	assert.Contains(t, db.execQueries[0], "5000ms")
+}
+
+func TestPostgresLedgerBackend_AcquireLock_NoLockTimeout_NoExec(t *testing.T) {
+	t.Parallel()
+
+	lock := &mockAdvisoryLock{}
+	db := &mockDB{}
+	backend := NewPostgresLedgerBackend(db, lock, PostgresLedgerConfig{})
+
+	err := backend.AcquireLock(context.Background())
+	require.NoError(t, err)
+
+	// With zero LockTimeout, no SET statement should be issued.
+	assert.Empty(t, db.execQueries, "zero LockTimeout must not emit SET lock_timeout")
 }
 
 func TestPostgresLedgerBackend_Append(t *testing.T) {
@@ -918,4 +954,75 @@ func (b *failingBackend) LastSequenceNum(ctx context.Context) (int64, error) {
 
 func (b *failingBackend) Close() error {
 	return b.inner.Close()
+}
+
+// CI-4: dedicated chain HMAC secret tests.
+
+func TestComputeChainHashWithSecret_DifferentFromLegacy(t *testing.T) {
+ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+legacy := ComputeChainHash("prev", "rec-1", ts, "sig-1")
+withSecret := ComputeChainHashWithSecret("my-secret", "prev", "rec-1", ts, "sig-1")
+assert.NotEqual(t, legacy, withSecret, "dedicated secret must produce a different hash than legacy")
+}
+
+func TestComputeChainHashWithSecret_Deterministic(t *testing.T) {
+ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+h1 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
+h2 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
+assert.Equal(t, h1, h2)
+}
+
+func TestComputeChainHashWithSecret_IncludesPreviousHash(t *testing.T) {
+ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+h1 := ComputeChainHashWithSecret("secret", "prev-a", "rec-1", ts, "sig-1")
+h2 := ComputeChainHashWithSecret("secret", "prev-b", "rec-1", ts, "sig-1")
+assert.NotEqual(t, h1, h2, "different previousHash must produce different hashes even with same secret")
+}
+
+func TestVerifyChainHashWithSecret_RoundTrip(t *testing.T) {
+ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+prev := "prev-hash"
+secret := "my-chain-secret"
+chainHash := ComputeChainHashWithSecret(secret, prev, "rec-1", ts, "sig-1")
+
+evidence := &SignedAuditEvidence{
+Record:       LogEntry{ID: "rec-1", Timestamp: ts},
+Signature:    "sig-1",
+ChainHash:    chainHash,
+PreviousHash: prev,
+}
+assert.True(t, VerifyChainHashWithSecret(secret, evidence))
+}
+
+func TestVerifyChainHashWithSecret_WrongSecret(t *testing.T) {
+ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+chainHash := ComputeChainHashWithSecret("correct-secret", "prev", "rec-1", ts, "sig-1")
+evidence := &SignedAuditEvidence{
+Record:       LogEntry{ID: "rec-1", Timestamp: ts},
+Signature:    "sig-1",
+ChainHash:    chainHash,
+PreviousHash: "prev",
+}
+assert.False(t, VerifyChainHashWithSecret("wrong-secret", evidence))
+}
+
+func TestPipeline_ChainHMACSecret_UsedInAppend(t *testing.T) {
+signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
+backend := newInMemoryLedgerBackend()
+secret := "test-chain-secret"
+
+pipeline, err := NewPipeline(signer, backend, PipelineConfig{ChainHMACSecret: secret})
+require.NoError(t, err)
+require.NoError(t, pipeline.Initialize(context.Background()))
+
+entry := &LogEntry{TenantID: "t1", EventType: "test", Action: "read", Outcome: "success"}
+require.NoError(t, pipeline.Append(context.Background(), entry))
+
+records := backend.Records()
+require.Len(t, records, 1)
+
+// The chain hash should verify with the secret.
+assert.True(t, VerifyChainHashWithSecret(secret, &records[0]))
+// But NOT with the legacy (no-secret) verifier.
+assert.False(t, VerifyChainHash(&records[0]))
 }

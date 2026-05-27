@@ -50,6 +50,10 @@ func main() {
 }
 
 func run() error {
+	// Root context — cancelled when the process receives a shutdown signal.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Load config
 	cfg := config.LoadOrExit[config.GatewayConfig]("GATEWAY")
 
@@ -87,6 +91,7 @@ func run() error {
 	ks := killswitch.NewInMemory()
 	revStore := revocation.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	dpopStore.Start(ctx)
 
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
 	var jwtVerifier gateway.JWTVerifier
@@ -230,15 +235,18 @@ func run() error {
 		return err
 	}
 
+	// Cancel root context so background goroutines (e.g. dpopStore) stop.
+	cancel()
+
 	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
 
 	logger.Info("shutting down gracefully", slog.Duration("timeout", shutdownTimeout))
 
 	// Shutdown both servers
-	shutdownErr := srv.Shutdown(ctx)
-	if err := adminSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if err := adminSrv.Shutdown(shutdownCtx); err != nil && shutdownErr == nil {
 		shutdownErr = err
 	}
 

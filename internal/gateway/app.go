@@ -254,8 +254,9 @@ func (app *App) buildRouter() chi.Router {
 		r.Post("/enforce", app.handleEnforce)
 		r.Post("/validate", app.handleValidate)
 
-		// Audit routes (read-only)
+		// Audit routes (read-only) — auth enforced by auditAuthMiddleware.
 		r.Route("/audit", func(r chi.Router) {
+			r.Use(app.auditAuthMiddleware)
 			r.Get("/records", app.handleAuditRecords)
 			r.Get("/export", app.handleAuditExport)
 			r.Get("/signing-keys", app.handleAuditSigningKeys)
