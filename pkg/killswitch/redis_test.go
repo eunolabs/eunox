@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -175,7 +176,7 @@ func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr:        addr,
 		PoolSize:    1,
-		DialTimeout: 100, // 100 ns — fail fast
+		DialTimeout: 100 * time.Millisecond,
 	})
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -184,9 +185,7 @@ func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
 
 	r := NewRedis(client).WithLogger(logger)
 
-	ctx, cancel := t.Context(), func() {}
-	_ = cancel // appease vet; t.Context() cancels on test end
-	r.Start(ctx)
+	r.Start(t.Context())
 	defer r.Stop()
 
 	assert.Contains(t, buf.String(), "initial state refresh failed")
