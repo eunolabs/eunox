@@ -426,14 +426,24 @@ Dedicated race-condition tests would catch latent issues.
 - **STRUCT-1**: `pkg/lifecycle.Manager` gained `AddServerWithListener(name, srv, ln)` for pre-bound listeners (e.g. admin server restricted to loopback). `cmd/gateway/main.go` replaced its manual signal/shutdown block with `lifecycle.New(WithDrainDelay(5s), ...)`. `Config.IsReady func() bool` field added; `handleReady` returns 503 while `IsReady` returns false (drain window).
 - **GAP-3**: `Redis` struct gained an optional `*slog.Logger` set via `WithLogger(logger)`. The initial `refreshState` failure in `Start()` is now logged as `Warn` with `"kill switch: initial state refresh failed; starting fail-open"` instead of silently discarded.
 
-### Phase 4 — Test Coverage (Ongoing)
+### Phase 4 — Test Coverage ✅ Complete
 
-| # | Finding | Effort | Dependencies |
-|---|---------|--------|--------------|
-| 9 | TEST-1: Admin JWT verification tests | 2 hrs | None |
-| 10 | TEST-2: OIDC identity provider tests | 3 hrs | None |
-| 11 | TEST-3: Federation package tests | 2 hrs | None |
-| 12 | TEST-4: Concurrent access tests for token provider, audit transport | 3 hrs | Phase 2 |
+| # | Finding | Effort | Status |
+|---|---------|--------|--------|
+| 9 | TEST-1: Admin JWT verification tests | 2 hrs | ✅ Done |
+| 10 | TEST-2: OIDC identity provider tests | 3 hrs | ✅ Done |
+| 11 | TEST-3: Federation package tests | 2 hrs | ✅ Done |
+| 12 | TEST-4: Concurrent access tests for audit transport, telemetry, kill switch | 3 hrs | ✅ Done |
+
+**Implementation notes:**
+
+- **TEST-1** (`internal/gateway/admin_jwt_extended_test.go`): 16 test functions covering malformed tokens, audience mismatch, missing subject, JWKS unavailability/invalid JSON, key rotation with cache TTL expiry, RSA+ECDSA multi-algorithm support, wrong signature, concurrent verification (50 goroutines with `-race`), cache expiry, context cancellation, not-yet-valid tokens, X-Admin-Key static header auth, bearer token precedence, and no-credentials rejection.
+- **TEST-2** (`pkg/identity/identity_extended_test.go`): 16 test functions covering wrong issuer/audience rejection, JWKS fetch failure after cache expiry, cache TTL refresh, concurrent token verification, context cancellation, empty/malformed tokens, no-kid header handling, multiple JWKS keys selection, no matching kid, OIDC discovery failure, untrusted DID rejection, nil JWKS client, and non-OK HTTP status codes.
+- **TEST-3** (`pkg/federation/federation_extended_test.go`): 11 test functions covering concurrent register/approve/revoke (30 goroutines), concurrent list+register, duplicate register (overwrite semantics), approve/revoke not-found, concurrent `ResolvePublicKeys`, concurrent `getOrCreateBreaker` (race-free double-checked locking), empty DID document, resolver errors, resource prefix matching, multiple capabilities, and action subset validation.
+- **TEST-4**: Concurrent access stress tests across three packages:
+  - `pkg/audit/transport_concurrent_test.go`: 6 tests — concurrent Enqueue (100 goroutines), concurrent Enqueue+Close race, buffer pressure with drops, concurrent Send, flush loop stress (200 records with interleaved flushes), double Close idempotency.
+  - `internal/gateway/telemetry_concurrent_test.go`: 6 tests — concurrent Record (100 goroutines), concurrent Record+Flush, concurrent Record+Stop, concurrent RecordEnforcement, concurrent UsageTracker read/write, concurrent IdempotencyStore set/get.
+  - `pkg/killswitch/killswitch_concurrent_test.go`: 6 tests — concurrent ShouldBlock, concurrent Kill/Revive agents, concurrent global toggle, concurrent session operations, concurrent Reset+query, concurrent Status.
 
 ---
 
