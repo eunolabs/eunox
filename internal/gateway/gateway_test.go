@@ -502,7 +502,42 @@ func TestValidate_DenyNoMatch(t *testing.T) {
 	assert.False(t, resp.Allowed)
 }
 
-func newTestAppWithBackend(t *testing.T, verifier gateway.JWTVerifier, backendURL string) (*gateway.App, *killswitch.InMemory) {
+// TestValidate_GlobMatchingCapability verifies that /validate uses the same
+// glob-aware matching semantics as /enforce.  A wildcard resource pattern
+// (e.g. "tools/*") that would be matched by the enforcement engine must also
+// be matched by /validate — the old linear first-match scan with exact
+// equality only handled "*", not real glob patterns.
+func TestValidate_GlobMatchingCapability(t *testing.T) {
+	claims := &capability.TokenPayload{
+		Subject:   "agent-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Capabilities: []capability.Constraint{
+			{Resource: "tools/*", Actions: []string{"call"}},
+		},
+	}
+	verifier := &mockJWTVerifier{claims: claims}
+	app, _, _ := newTestApp(t, verifier)
+
+	payload := map[string]interface{}{
+		"token":    "valid-token",
+		"action":   "call",
+		"resource": "tools/calculator",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp capability.ValidateActionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Allowed, "glob pattern 'tools/*' should match 'tools/calculator'")
+	assert.NotNil(t, resp.MatchedCapability)
+}
+
+
 	t.Helper()
 
 	counter := callcounter.NewInMemory()

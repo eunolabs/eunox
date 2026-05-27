@@ -201,6 +201,12 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleValidate handles POST /api/v1/validate.
+//
+// Capability matching is delegated to the enforcement engine so that glob
+// resource patterns (e.g. "tools/*") and specificity scoring are identical to
+// those used by /api/v1/enforce.  Redis side-effects (kill-switch, revocation,
+// call-counter) are intentionally omitted — this endpoint is a stateless
+// capability pre-flight check only.
 func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
@@ -229,36 +235,30 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if any capability matches the requested action/resource
-	for i := range claims.Capabilities {
-		constraint := &claims.Capabilities[i]
-		resourceMatch := constraint.Resource == "*" || constraint.Resource == req.Resource
-		if !resourceMatch {
-			continue
-		}
+	// Build an EnforceRequest so the engine's glob-aware matching is used.
+	// Resource maps to ToolName; Action maps to Context.Operation.
+	enforceReq := &capability.EnforceRequest{
+		ToolName: req.Resource,
+		Context:  capability.EnforceRequestContext{Operation: req.Action},
+	}
 
-		actionMatch := len(constraint.Actions) == 0
-		for _, a := range constraint.Actions {
-			if a == "*" || a == req.Action {
-				actionMatch = true
-				break
-			}
-		}
-		if !actionMatch {
-			continue
-		}
-
-		writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
-			Allowed:           true,
-			MatchedCapability: constraint,
-		})
+	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), enforceReq, claims.Capabilities)
+	if engineErr != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("validation engine error"))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
-		Allowed: false,
-		Reason:  "no matching capability for requested action",
-	})
+	validateResp := capability.ValidateActionResponse{
+		Allowed: resp.Decision == capability.DecisionAllow,
+	}
+	if resp.Denial != nil {
+		validateResp.Reason = resp.Denial.Message
+	}
+	if validateResp.Allowed {
+		validateResp.MatchedCapability = app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
+	}
+
+	writeJSON(w, http.StatusOK, validateResp)
 }
 
 // handleProxy handles ANY /proxy/* — reverse proxies to backend after enforcement.

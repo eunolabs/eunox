@@ -170,6 +170,15 @@ func (e *Engine) ValidateAction(ctx context.Context, req *capability.EnforceRequ
 	}, nil
 }
 
+// FindMatchingCapability returns the most specific capability that matches the
+// request, or nil if none match.  It uses the same glob semantics and
+// specificity scoring as [ValidateAction], and is exported so that callers
+// that need the matched constraint (e.g. the validate endpoint) can obtain it
+// without re-implementing the selection logic.
+func (e *Engine) FindMatchingCapability(req *capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint {
+	return e.findMatchingCapability(req, capabilities)
+}
+
 // findMatchingCapability finds the most specific capability that matches the request.
 //
 // noMatchScore is the sentinel value for "no matching capability found yet".
