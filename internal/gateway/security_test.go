@@ -9,17 +9,25 @@
 package gateway
 
 import (
+	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"testing"
+	"time"
 
+	"github.com/edgeobs/eunox/pkg/capability"
 	"github.com/stretchr/testify/assert"
 )
 
 // makeAppWithCIDRs builds a minimal App with the given trusted-proxy CIDRs.
 func makeAppWithCIDRs(t *testing.T, cidrs []string) *App {
 	t.Helper()
-	app := &App{}
+	app := &App{
+		deps: Dependencies{},
+	}
 	for _, cidr := range cidrs {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
@@ -136,4 +144,79 @@ func TestIsTrustedProxy_EmptyCIDRs(t *testing.T) {
 	app := makeAppWithCIDRs(t, nil)
 	assert.False(t, app.isTrustedProxy(net.ParseIP("10.0.0.1")))
 	assert.False(t, app.isTrustedProxy(net.ParseIP("127.0.0.1")))
+}
+
+// ─── DPoP enforcement in handleProxy (F-2 fix) ──────────────────────────────
+
+func TestHandleProxy_DPoPRequired_MissingHeader(t *testing.T) {
+	// When a token has a cnf.jkt binding but no DPoP header is present,
+	// handleProxy must reject the request with 401.
+	app := makeAppWithCIDRs(t, nil)
+	
+	// Set up a dummy backend
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	backendURL, _ := url.Parse(backend.URL)
+	app.proxy = httputil.NewSingleHostReverseProxy(backendURL)
+	
+	app.deps.JWTVerifier = &mockProxyJWTVerifier{
+		claims: &capability.TokenPayload{
+			Subject:   "agent-123",
+			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
+			Confirmation: &capability.Confirmation{
+				JKT: "test-thumbprint",
+			},
+		},
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/proxy", http.NoBody)
+	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("X-Tool-Name", "test-tool")
+	req.RemoteAddr = "203.0.113.1:54321"
+	w := httptest.NewRecorder()
+
+	app.handleProxy(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "DPoP proof required")
+}
+
+func TestHandleProxy_NoDPoPBinding_SkipsDPoPCheck(t *testing.T) {
+	// When a token has no cnf.jkt binding, DPoP checks are skipped
+	// and the request proceeds to enforcement.
+	app := makeAppWithCIDRs(t, nil)
+	app.deps.JWTVerifier = &mockProxyJWTVerifier{
+		claims: &capability.TokenPayload{
+			Subject:   "agent-123",
+			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
+			// No Confirmation field - not DPoP-bound
+			Capabilities: []capability.Constraint{
+				{Resource: "test-tool", Actions: []string{"*"}},
+			},
+		},
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/proxy", http.NoBody)
+	req.Header.Set("Authorization", "Bearer fake-token")
+	req.Header.Set("X-Tool-Name", "test-tool")
+	req.RemoteAddr = "203.0.113.1:54321"
+	w := httptest.NewRecorder()
+
+	app.handleProxy(w, req)
+
+	// Should NOT fail with DPoP error - will fail at enforcement since engine is nil,
+	// but that's expected. The key is it didn't fail at DPoP check.
+	assert.NotContains(t, w.Body.String(), "DPoP proof required")
+}
+
+// mockProxyJWTVerifier is a test JWT verifier for handleProxy tests.
+type mockProxyJWTVerifier struct {
+	claims *capability.TokenPayload
+	err    error
+}
+
+func (m *mockProxyJWTVerifier) VerifyToken(_ context.Context, _ string) (*capability.TokenPayload, error) {
+	return m.claims, m.err
 }
