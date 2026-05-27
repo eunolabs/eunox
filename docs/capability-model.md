@@ -103,22 +103,15 @@ The gap between declared and enforced conditions is the most critical security d
 
 **Step 1 — Replace `Record<string, unknown>` with a discriminated union:**
 
-Define a registry of supported condition types with explicit TypeScript interfaces:
+Define a registry of supported condition types with explicit typed shapes:
 
-```typescript
-type CapabilityCondition =
-  | { type: "timeWindow"; notBefore?: string; notAfter?: string }
-  | { type: "ipRange"; cidrs: string[] }
-  | { type: "allowedOperations"; operations: string[] }
-  | { type: "allowedExtensions"; extensions: string[] }
-  | {
-      type: "allowedTables";
-      tables: string[];
-      columns?: Record<string, string[]>;
-    }
-  | { type: "maxCalls"; count: number; windowSeconds: number }
-  | { type: "recipientDomain"; domains: string[] }
-  | { type: "redactFields"; fields: string[] };
+```go
+// CapabilityCondition is a discriminated union of typed constraint shapes.
+// See pkg/capability/condition.go for the full definition.
+type CapabilityCondition struct {
+    Type string `json:"type"` // "timeWindow" | "ipRange" | "allowedOperations" | …
+    // Fields vary by type — see pkg/capability/condition.go
+}
 ```
 
 Each type has a known structure the issuer can validate and the gateway can enforce. Unknown types cause **denial by default** in strict mode.
@@ -152,7 +145,7 @@ This prevents the scenario where a typo or misconfiguration produces a token tha
 
 **Step 4 — Consolidate existing validators:**
 
-Audit `capability-validators.ts` and extract all implicitly supported constraints. Map each to a formal condition type:
+Audit `pkg/capability/validate.go` and extract all implicitly supported constraints. Map each to a formal condition type:
 
 | **Existing Validator**                        | **Proposed Condition Type**                        |
 | --------------------------------------------- | -------------------------------------------------- |
@@ -228,30 +221,13 @@ The split between free-form `conditions` (declared but inert) and hard-coded val
 
 ### Recommendation
 
-Create a **Condition Registry** — a single mapping from condition type names to their validation logic:
-
-```typescript
-const conditionRegistry: Map<string, ConditionHandler> = new Map([
-  ["timeWindow", { validate: validateTimeWindow, enforce: enforceTimeWindow }],
-  [
-    "allowedExtensions",
-    { validate: validateExtensions, enforce: enforceExtensions },
-  ],
-  ["allowedTables", { validate: validateTables, enforce: enforceTables }],
-  ["maxCalls", { validate: validateMaxCalls, enforce: enforceMaxCalls }],
-  // ... additional types
-]);
-```
+Create a **Condition Registry** — a single mapping from condition type names to their validation logic. In the Go implementation this is the `ConditionRegistry` in `pkg/capability/condition.go`, which maps condition type strings to validate/enforce handler functions.
 
 The **issuer** calls `validate` at mint time to confirm structure and logical consistency. The **gateway** calls `enforce` at request time, passing the condition data and the request context. Both components share the same registry, ensuring they agree on what conditions exist and what they mean.
 
 The Capability Interface Isolation design already mandates that **"ALL sandbox interactions with external systems go ONLY through a controlled abstraction layer"** and **"are explicitly allowed, validated, and logged"** and **"cannot be bypassed by sandbox code"**【5003†L35-L39】. The condition registry is the mechanism that makes this mandate concrete for capability constraints: every constraint must be explicitly declared (in the token), validated (at issuance), logged (at enforcement), and non-bypassable (unknown conditions cause denial).
 
-**For forward compatibility:** The registry supports a `custom` condition type for vendor extensions:
-
-```typescript
-| { type: 'custom'; name: string; config: unknown }
-```
+**For forward compatibility:** The registry supports a `custom` condition type for vendor extensions (`type: "custom"`, with `name` and `config` fields).
 
 Custom conditions are treated as **deny by default** unless a corresponding handler is registered. This preserves extensibility while maintaining fail-closed safety — the exact inversion of the current `Record<string, unknown>` approach where unknown keys are silently ignored.
 
@@ -272,7 +248,7 @@ Custom conditions are treated as **deny by default** unless a corresponding hand
 
 The `Action` type change (from a five-value union to an open string or richer structure) should follow the same phasing:
 
-- **Phase 1:** Widen the TypeScript type from `'read' | 'write' | 'execute' | 'delete' | 'admin'` to `string`, preserving the original five as named constants for backward compatibility.
+- **Phase 1:** Widen the `Action` type from a five-value enum to `string`, preserving the original five as named constants for backward compatibility.
 - **Phase 2:** Introduce resource-specific actions (e.g., `db:select`, `s3:putObject`) in `v2` tokens. The gateway validates these against a resource-type registry.
 - **Phase 3:** Deprecate the generic `execute` action for resources where specific verbs are available. Issue deprecation warnings when the issuer mints an `execute` token for a resource type that has a defined verb set.
 
