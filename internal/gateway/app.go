@@ -129,13 +129,13 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 	}
 
 	// Finding 1: Parse trusted proxy CIDRs for X-Forwarded-For handling.
+	// Malformed CIDRs are treated as fatal configuration errors so that a
+	// typo in this security-critical setting causes a clear startup failure
+	// rather than silently disabling XFF handling.
 	for _, cidr := range cfg.TrustedProxyCIDRs {
 		_, ipNet, err := net.ParseCIDR(cidr)
 		if err != nil {
-			if deps.Logger != nil {
-				deps.Logger.Warn("invalid TrustedProxyCIDR ignored", "cidr", cidr, "err", err)
-			}
-			continue
+			return nil, fmt.Errorf("invalid TrustedProxyCIDR %q: %w", cidr, err)
 		}
 		app.trustedProxyNets = append(app.trustedProxyNets, ipNet)
 	}

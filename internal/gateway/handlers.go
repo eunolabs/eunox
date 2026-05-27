@@ -385,12 +385,19 @@ func (app *App) extractClientIP(r *http.Request) string {
 	if len(app.trustedProxyNets) > 0 {
 		if remoteIP := net.ParseIP(remoteHost); remoteIP != nil && app.isTrustedProxy(remoteIP) {
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				// Use the leftmost (original client) IP from the XFF chain.
-				if idx := strings.Index(xff, ","); idx != -1 {
-					xff = xff[:idx]
-				}
-				if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
-					return ip.String()
+				// Walk the XFF chain from right to left, skipping trusted proxies.
+				// The rightmost untrusted address is the real client IP.  This
+				// prevents a client from spoofing the leftmost entry when a trusted
+				// proxy appends to (rather than overwrites) an incoming XFF header.
+				parts := strings.Split(xff, ",")
+				for i := len(parts) - 1; i >= 0; i-- {
+					ip := net.ParseIP(strings.TrimSpace(parts[i]))
+					if ip == nil {
+						continue
+					}
+					if !app.isTrustedProxy(ip) {
+						return ip.String()
+					}
 				}
 			}
 		}

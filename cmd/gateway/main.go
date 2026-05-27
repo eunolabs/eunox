@@ -168,6 +168,7 @@ func run() error {
 		AdminRateLimitPerMinute: cfg.AdminRateLimitPerMinute,
 		MaxRequestBodySize:      int64(cfg.MaxRequestBodySize),
 		Environment:             string(cfg.NodeEnv),
+		TrustedProxyCIDRs:       cfg.TrustedProxyCIDRs,
 	}
 
 	app, err := gateway.New(&appCfg, &deps)
