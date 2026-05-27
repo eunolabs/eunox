@@ -4,10 +4,15 @@
 package issuer
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/crypto"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -219,4 +224,67 @@ func TestRotatingKeyStore_ImplementsKeyStore(t *testing.T) {
 
 	// Ensure it satisfies the KeyStore interface
 	var _ KeyStore = ks
+}
+
+func TestRotatingKeyStore_StartAutoRotation_RotatesAfterInterval(t *testing.T) {
+	signer := generateTestSigner(t, "key-1")
+	ks := NewRotatingKeyStore(signer)
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "issuer_signing_key_age_seconds_test_rotate"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, ks.StartAutoRotation(ctx, 20*time.Millisecond, 50*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), gauge))
+	initialKeyID := ks.CurrentSigner().KeyID()
+	require.Eventually(t, func() bool {
+		return ks.CurrentSigner().KeyID() != initialKeyID
+	}, 300*time.Millisecond, 10*time.Millisecond)
+}
+
+func TestRotatingKeyStore_StartAutoRotation_UpdatesGauge(t *testing.T) {
+	signer := generateTestSigner(t, "key-1")
+	ks := NewRotatingKeyStore(signer)
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "issuer_signing_key_age_seconds_test_gauge"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, ks.StartAutoRotation(ctx, 80*time.Millisecond, 200*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), gauge))
+	require.Eventually(t, func() bool {
+		metric := &dto.Metric{}
+		if err := gauge.Write(metric); err != nil {
+			return false
+		}
+		return metric.GetGauge().GetValue() > 0
+	}, 300*time.Millisecond, 10*time.Millisecond)
+}
+
+func TestRotatingKeyStore_StartAutoRotation_PrunesOldKeys(t *testing.T) {
+	signer := generateTestSigner(t, "key-1")
+	ks := NewRotatingKeyStore(signer)
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "issuer_signing_key_age_seconds_test_prune"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, ks.StartAutoRotation(ctx, 20*time.Millisecond, 25*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), gauge))
+	require.Eventually(t, func() bool {
+		return ks.RetiredKeyCount() > 0
+	}, 300*time.Millisecond, 10*time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
+	assert.LessOrEqual(t, ks.RetiredKeyCount(), 2)
+}
+
+func TestRotatingKeyStore_StartAutoRotation_StopsOnCancel(t *testing.T) {
+	signer := generateTestSigner(t, "key-1")
+	ks := NewRotatingKeyStore(signer)
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "issuer_signing_key_age_seconds_test_cancel"})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	require.NoError(t, ks.StartAutoRotation(ctx, 20*time.Millisecond, 50*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), gauge))
+	require.Eventually(t, func() bool {
+		return ks.CurrentSigner().KeyID() != "key-1"
+	}, 300*time.Millisecond, 10*time.Millisecond)
+
+	cancel()
+	stableKeyID := ks.CurrentSigner().KeyID()
+	time.Sleep(60 * time.Millisecond)
+	assert.Equal(t, stableKeyID, ks.CurrentSigner().KeyID())
 }

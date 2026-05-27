@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 )
 
 // JWKSVerifier verifies capability tokens against a JWKS endpoint.
@@ -32,6 +33,8 @@ type JWKSVerifierConfig struct {
 	Client *http.Client
 	// Logger for operational messages.
 	Logger *slog.Logger
+	// Breaker protects JWKS fetches from repeated upstream failures.
+	Breaker *circuitbreaker.Breaker
 }
 
 // NewJWKSVerifier creates a JWKS-based capability token verifier.
@@ -44,6 +47,7 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) *JWKSVerifier {
 			CacheTTL:   cfg.CacheTTL,
 			Client:     cfg.Client,
 			Logger:     cfg.Logger,
+			Breaker:    cfg.Breaker,
 		}),
 	}
 }

@@ -4,6 +4,7 @@
 package minter
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,6 +29,7 @@ const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 type Config struct {
 	Pepper          *Pepper
 	DefaultTenantID string
+	ReadinessChecks []func(ctx context.Context) error
 
 	// MaxRequestBodySize is the maximum size of request bodies in bytes.
 	// Defaults to 1 MB (1048576) if not set.
@@ -156,7 +159,19 @@ func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleReady returns 200 if the service is ready to accept requests.
-func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
+func (app *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	for _, check := range app.config.ReadinessChecks {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		err := check(ctx)
+		cancel()
+		if err != nil {
+			app.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "not ready",
+				"reason": err.Error(),
+			})
+			return
+		}
+	}
 	app.writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
@@ -321,22 +336,65 @@ func (app *App) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 // handleListKeys lists API keys for a tenant (metadata only, no secrets).
 func (app *App) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	const (
+		defaultLimit = 50
+		maxLimit     = 200
+	)
+
 	tenantID := r.URL.Query().Get("tenantId")
 	if tenantID == "" {
 		tenantID = app.config.DefaultTenantID
 	}
 
-	keys, err := app.deps.Store.ListKeys(r.Context(), tenantID, 100, 0)
+	limit := defaultLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			app.writeError(w, http.StatusBadRequest, "invalid_request", "limit must be an integer between 1 and 200")
+			return
+		}
+		if parsed > maxLimit {
+			parsed = maxLimit
+		}
+		limit = parsed
+	}
+
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			app.writeError(w, http.StatusBadRequest, "invalid_request", "offset must be a non-negative integer")
+			return
+		}
+		offset = parsed
+	}
+
+	total, err := app.deps.Store.CountKeys(r.Context(), tenantID)
+	if err != nil {
+		app.writeError(w, http.StatusInternalServerError, "list_failed", "failed to count keys")
+		return
+	}
+
+	keys, err := app.deps.Store.ListKeys(r.Context(), tenantID, limit, offset)
 	if err != nil {
 		app.writeError(w, http.StatusInternalServerError, "list_failed", "failed to list keys")
 		return
 	}
-
 	if keys == nil {
 		keys = []*APIKey{}
 	}
+
+	var nextOffset interface{}
+	if offset+limit < total {
+		nextOffset = offset + limit
+	}
+
 	app.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"keys": keys,
+		"keys":       keys,
+		"total":      total,
+		"limit":      limit,
+		"offset":     offset,
+		"nextOffset": nextOffset,
 	})
 }
 

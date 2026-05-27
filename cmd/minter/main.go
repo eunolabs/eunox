@@ -15,8 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq"
+
 	"github.com/edgeobs/eunox/internal/minter"
 	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/edgeobs/eunox/pkg/database"
 	"github.com/edgeobs/eunox/pkg/observability"
 	"github.com/edgeobs/eunox/pkg/ratelimit"
 )
@@ -79,10 +82,23 @@ func run() error {
 	// Build metrics.
 	metrics := observability.NewMetricsRegistry("minter", "http")
 
+	var readinessChecks []func(context.Context) error
+	if cfg.APIKeyDBURL != "" {
+		db, err := database.OpenPool("postgres", cfg.APIKeyDBURL, &cfg.DBPool)
+		if err != nil {
+			return fmt.Errorf("open API key database pool: %w", err)
+		}
+		defer func() { _ = db.Close() }()
+		readinessChecks = append(readinessChecks, func(ctx context.Context) error {
+			return db.PingContext(ctx)
+		})
+	}
+
 	// Build app.
 	appCfg := minter.Config{
 		Pepper:             pepper,
 		DefaultTenantID:    "default",
+		ReadinessChecks:    readinessChecks,
 		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
 	}
 

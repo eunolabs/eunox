@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/edgeobs/eunox/internal/gateway"
 	"github.com/edgeobs/eunox/pkg/config"
 )
 
@@ -49,6 +51,28 @@ func TestRun_MissingConfig(t *testing.T) {
 	// config.LoadOrExit calls os.Exit on missing required config, so we
 	// test at a higher level that the binary compiles and is wired correctly.
 	// The unit-testable parts (levelFromEnv, noopVerifier) are tested above.
+}
+
+func TestRun_ProductionRequiresIssuerJWKSURL(t *testing.T) {
+	original := loadGatewayConfig
+	loadGatewayConfig = func() config.GatewayConfig {
+		return config.GatewayConfig{
+			NodeEnv:          config.EnvProduction,
+			DeploymentTier:   config.TierSingleReplica,
+			Port:             3002,
+			AdminPort:        3003,
+			AdminHost:        "127.0.0.1",
+			AdminJWKSURI:     "https://admin.example/jwks.json",
+			AdminJWTAudience: "gateway-admin",
+			TenantID:         "tenant-1",
+		}
+	}
+	defer func() { loadGatewayConfig = original }()
+
+	err := run()
+	if err == nil || !strings.Contains(err.Error(), "GATEWAY_ISSUER_JWKS_URL is required in production") {
+		t.Fatalf("expected missing issuer JWKS error, got %v", err)
+	}
 }
 
 func TestValidateAdminAuth(t *testing.T) {
@@ -225,8 +249,25 @@ func TestValidateRedisConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:      "staging_no_redis_allowed",
-			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging},
+			name:      "staging_no_redis_allowed_single_replica",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierSingleReplica},
+			expectErr: false,
+		},
+		{
+			name:      "staging_multi_replica_requires_some_redis",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierMultiReplica},
+			expectErr: true,
+			errMsg:    "requires Redis",
+		},
+		{
+			name:      "staging_multi_region_partner_did_only_fails",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierMultiRegionActiveActive, PartnerDIDsRedisURL: "redis://localhost:6379"},
+			expectErr: true,
+			errMsg:    "requires Redis",
+		},
+		{
+			name:      "staging_multi_region_allows_when_redis_url_present",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging, DeploymentTier: config.TierMultiRegionActiveActive, RedisURL: "redis://localhost:6379"},
 			expectErr: false,
 		},
 		{
@@ -246,7 +287,7 @@ func TestValidateRedisConfig(t *testing.T) {
 		{
 			name: "production_partial_per_service_urls_fails",
 			cfg: config.GatewayConfig{
-				NodeEnv:           config.EnvProduction,
+				NodeEnv:            config.EnvProduction,
 				KillSwitchRedisURL: "redis://ks:6379",
 				RevocationRedisURL: "redis://rev:6379",
 				// CallCounterRedisURL not set
@@ -309,6 +350,21 @@ func TestBuildGatewayBackends_InMemoryFallback(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayBackends_UsesRedisPartnerDIDStore(t *testing.T) {
+	mr := miniredis.RunT(t)
+	cfg := &config.GatewayConfig{NodeEnv: config.EnvDevelopment, PartnerDIDsRedisURL: mr.Addr()}
+	// Use a redis:// URL so parsing follows production wiring.
+	cfg.PartnerDIDsRedisURL = "redis://" + mr.Addr()
+
+	backends, err := buildGatewayBackends(cfg, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := backends.partnerDIDs.(*gateway.RedisPartnerDIDStore); !ok {
+		t.Fatalf("expected RedisPartnerDIDStore, got %T", backends.partnerDIDs)
+	}
+}
+
 func TestBuildGatewayBackends_InvalidRedisURL(t *testing.T) {
 	t.Parallel()
 
@@ -320,7 +376,7 @@ func TestBuildGatewayBackends_InvalidRedisURL(t *testing.T) {
 		{
 			name: "invalid_kill_switch_url",
 			cfg: config.GatewayConfig{
-				NodeEnv:          config.EnvDevelopment,
+				NodeEnv:            config.EnvDevelopment,
 				KillSwitchRedisURL: "not-a-valid-url://??",
 			},
 			errMsg: "kill-switch redis URL",
@@ -340,6 +396,14 @@ func TestBuildGatewayBackends_InvalidRedisURL(t *testing.T) {
 				CallCounterRedisURL: "not-a-valid-url://??",
 			},
 			errMsg: "call-counter redis URL",
+		},
+		{
+			name: "invalid_partner_dids_url",
+			cfg: config.GatewayConfig{
+				NodeEnv:             config.EnvDevelopment,
+				PartnerDIDsRedisURL: "not-a-valid-url://??",
+			},
+			errMsg: "partner-dids redis URL",
 		},
 	}
 

@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
 )
 
 // Transport errors.
@@ -85,6 +84,7 @@ type HTTPTransport struct {
 	logger          *slog.Logger
 	metrics         *TransportMetrics
 	transportName   string
+	parentCtx       context.Context
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
@@ -102,6 +102,13 @@ type HTTPTransportOption func(*HTTPTransport)
 func WithHTTPTransportMetrics(m *TransportMetrics) HTTPTransportOption {
 	return func(t *HTTPTransport) {
 		t.metrics = m
+	}
+}
+
+// WithLifecycleContext derives the transport lifecycle from the provided parent context.
+func WithLifecycleContext(ctx context.Context) HTTPTransportOption {
+	return func(t *HTTPTransport) {
+		t.parentCtx = ctx
 	}
 }
 
@@ -134,22 +141,22 @@ func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger, opts ...HTT
 		logger = slog.Default()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	t := &HTTPTransport{
-		config:          *cfg,
-		client:          &http.Client{Timeout: defaultDeliveryTimeout},
-		logger:          logger,
-		transportName:   "http",
-		lifecycleCtx:    ctx,
-		lifecycleCancel: cancel,
-		buffer:          make(chan *SignedAuditEvidence, cfg.BufferSize),
-		done:            make(chan struct{}),
+		config:        *cfg,
+		client:        &http.Client{Timeout: defaultDeliveryTimeout},
+		logger:        logger,
+		transportName: "http",
+		buffer:        make(chan *SignedAuditEvidence, cfg.BufferSize),
+		done:          make(chan struct{}),
 	}
 
 	for _, opt := range opts {
 		opt(t)
 	}
+	if t.parentCtx == nil {
+		t.parentCtx = context.Background()
+	}
+	t.lifecycleCtx, t.lifecycleCancel = context.WithCancel(t.parentCtx)
 
 	t.wg.Add(1)
 	go t.flushLoop()
@@ -224,6 +231,8 @@ func (t *HTTPTransport) flushLoop() {
 	for {
 		select {
 		case <-t.done:
+			return
+		case <-t.lifecycleCtx.Done():
 			return
 		case <-ticker.C:
 			t.flushBuffer(t.lifecycleCtx)
@@ -357,6 +366,7 @@ type AzureSentinelTransport struct {
 	logger          *slog.Logger
 	metrics         *TransportMetrics
 	transportName   string
+	parentCtx       context.Context
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
 
@@ -374,6 +384,13 @@ type AzureSentinelTransportOption func(*AzureSentinelTransport)
 func WithAzureSentinelTransportMetrics(m *TransportMetrics) AzureSentinelTransportOption {
 	return func(t *AzureSentinelTransport) {
 		t.metrics = m
+	}
+}
+
+// WithAzureSentinelLifecycleContext derives the transport lifecycle from the provided parent context.
+func WithAzureSentinelLifecycleContext(ctx context.Context) AzureSentinelTransportOption {
+	return func(t *AzureSentinelTransport) {
+		t.parentCtx = ctx
 	}
 }
 
@@ -412,22 +429,22 @@ func NewAzureSentinelTransport(cfg *AzureSentinelConfig, logger *slog.Logger, op
 		logger = slog.Default()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	t := &AzureSentinelTransport{
-		config:          *cfg,
-		client:          &http.Client{Timeout: defaultDeliveryTimeout},
-		logger:          logger,
-		transportName:   "azure_sentinel",
-		lifecycleCtx:    ctx,
-		lifecycleCancel: cancel,
-		buffer:          make(chan *SignedAuditEvidence, cfg.BufferSize),
-		done:            make(chan struct{}),
+		config:        *cfg,
+		client:        &http.Client{Timeout: defaultDeliveryTimeout},
+		logger:        logger,
+		transportName: "azure_sentinel",
+		buffer:        make(chan *SignedAuditEvidence, cfg.BufferSize),
+		done:          make(chan struct{}),
 	}
 
 	for _, opt := range opts {
 		opt(t)
 	}
+	if t.parentCtx == nil {
+		t.parentCtx = context.Background()
+	}
+	t.lifecycleCtx, t.lifecycleCancel = context.WithCancel(t.parentCtx)
 
 	t.wg.Add(1)
 	go t.flushLoop()
@@ -491,6 +508,8 @@ func (t *AzureSentinelTransport) flushLoop() {
 	for {
 		select {
 		case <-t.done:
+			return
+		case <-t.lifecycleCtx.Done():
 			return
 		case <-ticker.C:
 			t.flushBuffer(t.lifecycleCtx)

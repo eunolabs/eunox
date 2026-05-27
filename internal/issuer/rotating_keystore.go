@@ -4,11 +4,14 @@
 package issuer
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/crypto"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // RotatingKeyStore implements KeyStore with support for key rotation.
@@ -24,9 +27,11 @@ import (
 //
 // Thread safety: all methods are safe for concurrent use.
 type RotatingKeyStore struct {
-	mu      sync.RWMutex
-	current *crypto.SoftwareSigner
-	retired []retiredKey
+	mu             sync.RWMutex
+	current        *crypto.SoftwareSigner
+	retired        []retiredKey
+	now            func() time.Time
+	generateSigner func(keyID string, algorithm crypto.Algorithm) (*crypto.SoftwareSigner, error)
 }
 
 // retiredKey tracks a signer that is no longer used for signing
@@ -43,7 +48,9 @@ func NewRotatingKeyStore(current *crypto.SoftwareSigner) *RotatingKeyStore {
 	}
 
 	return &RotatingKeyStore{
-		current: current,
+		current:        current,
+		now:            time.Now,
+		generateSigner: crypto.GenerateECDSASigner,
 	}
 }
 
@@ -120,7 +127,7 @@ func (ks *RotatingKeyStore) Rotate(newSigner *crypto.SoftwareSigner) error {
 	if ks.current != nil {
 		ks.retired = append(ks.retired, retiredKey{
 			signer:    ks.current,
-			retiredAt: time.Now(),
+			retiredAt: ks.now(),
 		})
 	}
 
@@ -159,4 +166,80 @@ func (ks *RotatingKeyStore) RetiredKeyCount() int {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 	return len(ks.retired)
+}
+
+// StartAutoRotation starts a background goroutine that rotates the signing key every interval.
+// It generates a new SoftwareSigner (EC P-256) on each rotation, retires the previous key,
+// and calls Prune with cutoff = now - maxTokenTTL to remove keys older than the max token lifetime.
+// A Prometheus gauge (issuer_signing_key_age_seconds) is updated on each rotation.
+// The goroutine stops when ctx is cancelled.
+func (ks *RotatingKeyStore) StartAutoRotation(ctx context.Context, interval, maxTokenTTL time.Duration, logger *slog.Logger, gauge prometheus.Gauge) error {
+	if ctx == nil {
+		return fmt.Errorf("context must not be nil")
+	}
+	if interval <= 0 {
+		return fmt.Errorf("rotation interval must be greater than zero")
+	}
+	if maxTokenTTL <= 0 {
+		return fmt.Errorf("max token TTL must be greater than zero")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if gauge == nil {
+		gauge = prometheus.NewGauge(prometheus.GaugeOpts{Name: "issuer_signing_key_age_seconds"})
+	}
+
+	startedAt := ks.now()
+	lastRotatedAt := startedAt
+	gauge.Set(0)
+
+	rotateTicker := time.NewTicker(interval)
+	ageTicker := time.NewTicker(rotationAgeUpdateInterval(interval))
+
+	go func() {
+		defer rotateTicker.Stop()
+		defer ageTicker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ageTicker.C:
+				gauge.Set(ks.now().Sub(lastRotatedAt).Seconds())
+			case <-rotateTicker.C:
+				rotatedAt := ks.now()
+				keyID := fmt.Sprintf("issuer-key-%d", rotatedAt.UTC().UnixNano())
+				signer, err := ks.generateSigner(keyID, crypto.ES256)
+				if err != nil {
+					logger.Error("auto rotation failed", slog.String("error", err.Error()))
+					continue
+				}
+				if err := ks.Rotate(signer); err != nil {
+					logger.Error("auto rotation failed", slog.String("error", err.Error()))
+					continue
+				}
+				pruned := ks.Prune(rotatedAt.Add(-maxTokenTTL))
+				lastRotatedAt = rotatedAt
+				gauge.Set(0)
+				logger.Info("rotated issuer signing key",
+					slog.String("key_id", signer.KeyID()),
+					slog.Int("pruned", pruned),
+				)
+			}
+		}
+	}()
+
+	return nil
+}
+
+func rotationAgeUpdateInterval(interval time.Duration) time.Duration {
+	updateInterval := interval / 10
+	if updateInterval <= 0 {
+		updateInterval = 10 * time.Millisecond
+	}
+	if updateInterval > time.Second {
+		updateInterval = time.Second
+	}
+	return updateInterval
 }

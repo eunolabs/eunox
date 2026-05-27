@@ -76,14 +76,15 @@ type Config struct {
 
 // Dependencies holds the injected backends for the gateway.
 type Dependencies struct {
-	Engine      *enforcement.Engine
-	KillSwitch  killswitch.Manager
-	Revocation  revocation.Store
-	JWTVerifier JWTVerifier
-	DPoPStore   DPoPJTIStore
-	Logger      *slog.Logger
-	Metrics     *observability.MetricsRegistry
-	Audit       *AuditDependencies
+	Engine          *enforcement.Engine
+	KillSwitch      killswitch.Manager
+	Revocation      revocation.Store
+	JWTVerifier     JWTVerifier
+	DPoPStore       DPoPJTIStore
+	PartnerDIDStore PartnerDIDStore
+	Logger          *slog.Logger
+	Metrics         *observability.MetricsRegistry
+	Audit           *AuditDependencies
 
 	// Partner federation (Stage 7).
 	PartnerResolver   *federation.PartnerIssuerResolver
@@ -170,8 +171,12 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 	}
 
 	// Initialize partner DID store.
+	partnerDIDStore := deps.PartnerDIDStore
+	if partnerDIDStore == nil {
+		partnerDIDStore = NewInMemoryPartnerDIDStore()
+	}
 	app.adminDeps = AdminDependencies{
-		PartnerDIDs: NewInMemoryPartnerDIDStore(),
+		PartnerDIDs: partnerDIDStore,
 	}
 
 	// Initialize partner token verifier if resolver is configured.

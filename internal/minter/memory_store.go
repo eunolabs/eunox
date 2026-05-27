@@ -5,6 +5,7 @@ package minter
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -43,19 +44,38 @@ func (s *InMemoryStore) GetKey(_ context.Context, keyID string) (*APIKey, error)
 	return k, nil
 }
 
+// CountKeys implements KeyStore.
+func (s *InMemoryStore) CountKeys(_ context.Context, tenantID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, k := range s.keys {
+		if k.TenantID == tenantID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // ListKeys implements KeyStore.
 func (s *InMemoryStore) ListKeys(_ context.Context, tenantID string, limit, offset int) ([]*APIKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []*APIKey
+	result := make([]*APIKey, 0, len(s.keys))
 	for _, k := range s.keys {
 		if k.TenantID == tenantID {
 			result = append(result, k)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].KeyID < result[j].KeyID
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
 
-	// Apply pagination.
 	if offset >= len(result) {
 		return nil, nil
 	}

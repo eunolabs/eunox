@@ -257,3 +257,20 @@ func TestInMemoryStore_UpdatePolicy_NotFound(t *testing.T) {
 		t.Errorf("expected ErrPolicyNotFound, got %v", err)
 	}
 }
+
+func TestInMemoryStore_CountKeys(t *testing.T) {
+	t.Parallel()
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	_ = store.CreateKey(ctx, &APIKey{KeyID: "k1", TenantID: "tenant-1"})
+	_ = store.CreateKey(ctx, &APIKey{KeyID: "k2", TenantID: "tenant-1"})
+	_ = store.CreateKey(ctx, &APIKey{KeyID: "k3", TenantID: "tenant-2"})
+
+	count, err := store.CountKeys(ctx, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 keys, got %d", count)
+	}
+}

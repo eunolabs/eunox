@@ -907,3 +907,15 @@ func TestIntegration_IssueRenewRoundTrip(t *testing.T) {
 	// Renewed token has same capabilities as original
 	assert.NotEmpty(t, claims.Capabilities)
 }
+
+func TestHealth_ReadinessFailure(t *testing.T) {
+	app := testApp(t)
+	app.config.ReadinessChecks = []func(context.Context) error{func(context.Context) error {
+		return errors.New("policy db unavailable")
+	}}
+
+	w := doGet(app, "/health/ready")
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "not ready")
+	assert.Contains(t, w.Body.String(), "policy db unavailable")
+}

@@ -6,18 +6,19 @@ package config
 
 // IssuerConfig holds the Capability Issuer configuration.
 type IssuerConfig struct {
-	NodeEnv          Environment      `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
-	DeploymentTier   DeploymentTier   `env:"EUNO_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
-	Port             int              `env:"PORT" default:"3001" min:"1" max:"65535"`
-	SigningProvider  SigningProvider  `env:"SIGNING_PROVIDER" default:"azure-keyvault" enum:"azure-keyvault,aws-kms,gcp-cloudkms,software"`
-	IdentityProvider IdentityProvider `env:"IDENTITY_PROVIDER" default:"azure-ad" enum:"azure-ad,aws-cognito,gcp-identity,did,oidc"`
-	IssuerDID        string           `env:"ISSUER_DID"`
-	IssuerURL        string           `env:"ISSUER_URL"`
-	Audience         string           `env:"AUDIENCE"`
-	AdminAPIKey      string           `env:"ADMIN_API_KEY" production:"required"`
-	DefaultTokenTTL  int              `env:"DEFAULT_TOKEN_TTL" default:"900" min:"1"`
-	MaxTokenTTL      int              `env:"MAX_TOKEN_TTL" default:"86400" min:"1"`
-	RolePolicyFile   string           `env:"ROLE_POLICY_FILE"`
+	NodeEnv                 Environment      `env:"NODE_ENV" default:"development" enum:"development,staging,production"`
+	DeploymentTier          DeploymentTier   `env:"EUNO_DEPLOYMENT_TIER" default:"single-replica" enum:"single-replica,multi-replica,multi-region-active-active"`
+	Port                    int              `env:"PORT" default:"3001" min:"1" max:"65535"`
+	SigningProvider         SigningProvider  `env:"SIGNING_PROVIDER" default:"azure-keyvault" enum:"azure-keyvault,aws-kms,gcp-cloudkms,software"`
+	IdentityProvider        IdentityProvider `env:"IDENTITY_PROVIDER" default:"azure-ad" enum:"azure-ad,aws-cognito,gcp-identity,did,oidc"`
+	IssuerDID               string           `env:"ISSUER_DID"`
+	IssuerURL               string           `env:"ISSUER_URL"`
+	Audience                string           `env:"AUDIENCE"`
+	AdminAPIKey             string           `env:"ADMIN_API_KEY" production:"required"`
+	DefaultTokenTTL         int              `env:"DEFAULT_TOKEN_TTL" default:"900" min:"1"`
+	MaxTokenTTL             int              `env:"MAX_TOKEN_TTL" default:"86400" min:"1"`
+	KeyRotationIntervalDays int              `env:"ISSUER_KEY_ROTATION_INTERVAL_DAYS" default:"90" min:"1"`
+	RolePolicyFile          string           `env:"ROLE_POLICY_FILE"`
 
 	// Rate limiting
 	RateLimitPerMinute int    `env:"RATE_LIMIT_PER_MINUTE" default:"60" min:"1"`

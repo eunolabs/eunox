@@ -79,7 +79,9 @@ type KeyStore interface {
 	CreateKey(ctx context.Context, key *APIKey) error
 	// GetKey retrieves a key by ID.
 	GetKey(ctx context.Context, keyID string) (*APIKey, error)
-	// ListKeys returns all keys for a tenant.
+	// CountKeys returns the total number of keys for a tenant.
+	CountKeys(ctx context.Context, tenantID string) (int, error)
+	// ListKeys returns keys for a tenant with pagination.
 	ListKeys(ctx context.Context, tenantID string, limit, offset int) ([]*APIKey, error)
 	// RevokeKey marks a key as revoked and returns the revoked key.
 	// The returned key reflects the state after revocation (RevokedAt is set).

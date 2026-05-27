@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,15 +170,40 @@ func (e *Engine) ValidateAction(ctx context.Context, req *capability.EnforceRequ
 	}, nil
 }
 
-// findMatchingCapability finds the first capability that matches the request's tool/action.
+// findMatchingCapability finds the most specific capability that matches the request.
+//
+// noMatchScore is the sentinel value for "no matching capability found yet".
+const noMatchScore = -1 << 30
+
+// resourceScoreWeight weights resource specificity 10× more than action specificity
+// so that a narrower resource pattern always beats a broader one, regardless of
+// how specific the action match is.
+const resourceScoreWeight = 10
+
+// Tie-breaking is stable: if two capabilities have identical resource and action
+// specificity scores, the one that appears first in the list wins.
 func (e *Engine) findMatchingCapability(req *capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint {
+	bestIndex := -1
+	bestScore := noMatchScore
 	for i := range capabilities {
 		constraint := &capabilities[i]
-		if matchesResource(constraint.Resource, req.ToolName) && matchesAction(constraint.Actions, req) {
-			return constraint
+		if !matchesResource(constraint.Resource, req.ToolName) {
+			continue
+		}
+		actionScore, ok := actionMatchScore(constraint.Actions, req)
+		if !ok {
+			continue
+		}
+		score := resourceSpecificity(constraint.Resource, req.ToolName)*resourceScoreWeight + actionScore
+		if score > bestScore {
+			bestIndex = i
+			bestScore = score
 		}
 	}
-	return nil
+	if bestIndex < 0 {
+		return nil
+	}
+	return &capabilities[bestIndex]
 }
 
 // matchesResource reports whether a capability resource pattern matches the tool name.
@@ -219,22 +245,71 @@ func ValidateResourcePattern(resource string) error {
 	return nil
 }
 
-// matchesAction checks if the capability grants the requested action/operation.
-func matchesAction(actions []string, req *capability.EnforceRequest) bool {
+func actionMatchScore(actions []string, req *capability.EnforceRequest) (int, bool) {
 	if len(actions) == 0 {
-		return true
+		return 0, true
 	}
+	// When no specific operation is set, treat toolName as the explicit operation,
+	// consistent with allowedOperations handling.
+	operation := req.Context.Operation
+	if operation == "" {
+		operation = req.ToolName
+	}
+	bestScore := -1
+	hasWildcard := false
 	for _, a := range actions {
 		if a == "*" {
-			return true
+			hasWildcard = true
 		}
-		// Match against context operation or tool name
-		if req.Context.Operation != "" && a == req.Context.Operation {
-			return true
+		score := -1
+		switch {
+		case a == operation:
+			score = 2
+		case a == req.ToolName:
+			score = 1
+		case a == "*":
+			score = 0
 		}
-		if a == req.ToolName {
-			return true
+		if score > bestScore {
+			bestScore = score
 		}
 	}
-	return false
+	if bestScore < 0 {
+		return 0, false
+	}
+	// Apply a breadth penalty so that a narrower action set beats a broader one at
+	// the same score level. Scale by 1000 so that levels remain strictly ordered even
+	// after the maximum possible penalty (≤999) is subtracted, preventing a large
+	// action list from flipping a level-2 match below a level-1 match.
+	penalty := len(actions)
+	if hasWildcard {
+		penalty += 10
+	}
+	if penalty > 999 {
+		penalty = 999
+	}
+	return bestScore*1000 - penalty, true
+}
+
+func resourceSpecificity(resource, toolName string) int {
+	if resource == toolName {
+		return 1000
+	}
+	if !strings.ContainsAny(resource, "*?[") {
+		return 900
+	}
+	prefixLen := 0
+	for _, r := range resource {
+		if strings.ContainsRune("*?[", r) {
+			break
+		}
+		prefixLen++
+	}
+	wildcardCount := 0
+	for _, r := range resource {
+		if strings.ContainsRune("*?[", r) {
+			wildcardCount++
+		}
+	}
+	return prefixLen*10 - wildcardCount
 }

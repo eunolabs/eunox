@@ -758,3 +758,47 @@ func TestIntegration_EnforcementDecision_AuditRecord_ExportVerify(t *testing.T) 
 	assert.Equal(t, "gw-replica-1", exported.ReplicaID)
 	assert.NotNil(t, exported.Record.OCSFEvent)
 }
+
+func TestHTTPTransport_LifecycleContextCancellationStopsFlushLoop(t *testing.T) {
+	parentCtx, cancel := context.WithCancel(context.Background())
+	transport := NewHTTPTransport(&HTTPTransportConfig{
+		TransportConfig: TransportConfig{FlushInterval: 10 * time.Millisecond, BufferSize: 10},
+		Endpoint:        "http://localhost:9999",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), WithLifecycleContext(parentCtx))
+	defer func() { _ = transport.Close() }()
+
+	done := make(chan struct{})
+	go func() {
+		transport.wg.Wait()
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("flush loop did not stop after parent context cancellation")
+	}
+}
+
+func TestAzureSentinelTransport_LifecycleContextCancellationStopsFlushLoop(t *testing.T) {
+	parentCtx, cancel := context.WithCancel(context.Background())
+	transport := NewAzureSentinelTransport(&AzureSentinelConfig{
+		TransportConfig: TransportConfig{FlushInterval: 10 * time.Millisecond, BufferSize: 10},
+		Endpoint:        "http://localhost:9999",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), WithAzureSentinelLifecycleContext(parentCtx))
+	defer func() { _ = transport.Close() }()
+
+	done := make(chan struct{})
+	go func() {
+		transport.wg.Wait()
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("flush loop did not stop after parent context cancellation")
+	}
+}

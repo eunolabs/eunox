@@ -10,11 +10,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
@@ -357,4 +360,75 @@ func TestJWKSClientVerifyTokenMissingClaims(t *testing.T) {
 
 	_, err = client.VerifyToken(context.Background(), token)
 	require.Error(t, err)
+}
+
+func TestJWKSClientBreaker_OpensAfterFailures(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	breaker := circuitbreaker.New(circuitbreaker.Config{FailureThreshold: 2, CooldownDuration: time.Minute, HalfOpenMaxProbes: 1})
+	client := NewJWKSClient(JWKSClientConfig{JWKSURL: server.URL, Client: server.Client(), Breaker: breaker})
+	token := makeCapabilityToken(t, privateKey, "k1", "sub", "", time.Now().Add(time.Hour))
+
+	for range 2 {
+		_, err = client.VerifyToken(context.Background(), token)
+		require.Error(t, err)
+	}
+	assert.Equal(t, int32(2), hits.Load())
+
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, circuitbreaker.ErrOpen)
+	assert.Equal(t, int32(2), hits.Load())
+}
+
+func TestJWKSClientBreaker_HalfOpenAfterCooldown(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	now := time.Now()
+	currentTime := now
+	breaker := circuitbreaker.New(
+		circuitbreaker.Config{FailureThreshold: 1, CooldownDuration: 50 * time.Millisecond, HalfOpenMaxProbes: 1},
+		circuitbreaker.WithClock(func() time.Time { return currentTime }),
+	)
+
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &privateKey.PublicKey, KeyID: "k1", Use: "sig"}}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	}))
+	defer server.Close()
+
+	client := NewJWKSClient(JWKSClientConfig{JWKSURL: server.URL, Client: server.Client(), Breaker: breaker})
+	token := makeCapabilityToken(t, privateKey, "k1", "sub", "", time.Now().Add(time.Hour))
+
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err)
+	assert.Equal(t, int32(1), hits.Load())
+
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, circuitbreaker.ErrOpen))
+	assert.Equal(t, int32(1), hits.Load())
+
+	currentTime = currentTime.Add(60 * time.Millisecond)
+	payload, err := client.VerifyToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "sub", payload.Subject)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, circuitbreaker.StateClosed, breaker.State())
 }

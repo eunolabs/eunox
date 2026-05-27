@@ -23,6 +23,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/identity"
 	"github.com/edgeobs/eunox/pkg/observability"
 	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -45,6 +46,9 @@ func main() {
 }
 
 func run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	cfg := config.LoadOrExit[config.IssuerConfig]("")
 	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
@@ -92,7 +96,34 @@ func run() error {
 	}
 
 	// Build key store
-	keyStore := issuer.NewSingleKeyStore(signer)
+	var keyStore issuer.KeyStore
+	if softwareSigner, ok := signer.(*crypto.SoftwareSigner); ok {
+		rotatingKeyStore := issuer.NewRotatingKeyStore(softwareSigner)
+		keyAgeGauge := prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "issuer_signing_key_age_seconds",
+			Help: "Seconds since the current issuer signing key was last rotated.",
+		})
+		if err := prometheus.DefaultRegisterer.Register(keyAgeGauge); err != nil {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				existing, ok := are.ExistingCollector.(prometheus.Gauge)
+				if !ok {
+					return fmt.Errorf("register signing key age gauge: existing collector is not a Gauge (got %T)", are.ExistingCollector)
+				}
+				keyAgeGauge = existing
+			} else {
+				return fmt.Errorf("register signing key age gauge: %w", err)
+			}
+		}
+		rotationInterval := time.Duration(cfg.KeyRotationIntervalDays) * 24 * time.Hour
+		maxTTL := time.Duration(cfg.MaxTokenTTL) * time.Second
+		if err := rotatingKeyStore.StartAutoRotation(ctx, rotationInterval, maxTTL, logger, keyAgeGauge); err != nil {
+			return fmt.Errorf("start key auto-rotation: %w", err)
+		}
+		keyStore = rotatingKeyStore
+	} else {
+		// KMS-backed providers rotate keys externally; readiness checks should add a DB ping here when a policy DB is introduced.
+		keyStore = issuer.NewSingleKeyStore(signer)
+	}
 
 	// Build metrics
 	metrics := observability.NewMetricsRegistry("issuer", "http")
@@ -111,6 +142,7 @@ func run() error {
 		MaxTokenTTL:        cfg.MaxTokenTTL,
 		Audience:           cfg.Audience,
 		AdminAPIKey:        cfg.AdminAPIKey,
+		ReadinessChecks:    nil, // Add a DB ping here when issuer policy state moves into a database.
 		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
 	}
 
@@ -153,10 +185,11 @@ func run() error {
 	}
 
 	logger.Info("shutting down")
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
 
-	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
+	if shutdownErr := srv.Shutdown(shutdownCtx); shutdownErr != nil {
 		return fmt.Errorf("shutdown: %w", shutdownErr)
 	}
 

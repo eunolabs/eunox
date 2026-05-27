@@ -6,6 +6,7 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/edgeobs/eunox/pkg/circuitbreaker"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 )
@@ -31,6 +33,8 @@ type JWKSClientConfig struct {
 	Client *http.Client
 	// Logger for operational messages.
 	Logger *slog.Logger
+	// Breaker optionally protects JWKS refreshes from repeated upstream failures.
+	Breaker *circuitbreaker.Breaker
 }
 
 // JWKSClient fetches and caches a JWKS and provides capability token verification.
@@ -40,6 +44,7 @@ type JWKSClient struct {
 	requireKID bool
 	client     *http.Client
 	logger     *slog.Logger
+	breaker    *circuitbreaker.Breaker
 
 	mu        sync.RWMutex
 	jwks      *jose.JSONWebKeySet
@@ -64,6 +69,7 @@ func NewJWKSClient(cfg JWKSClientConfig) *JWKSClient {
 		requireKID: cfg.RequireKID,
 		client:     cfg.Client,
 		logger:     cfg.Logger,
+		breaker:    cfg.Breaker,
 		cacheTTL:   cfg.CacheTTL,
 	}
 }
@@ -191,6 +197,36 @@ func (c *JWKSClient) refreshKeys(ctx context.Context) (*jose.JSONWebKeySet, erro
 		return c.jwks, nil
 	}
 
+	fetch := func(fetchCtx context.Context) (*jose.JSONWebKeySet, error) {
+		return c.fetchKeys(fetchCtx)
+	}
+
+	var (
+		jwks *jose.JSONWebKeySet
+		err  error
+	)
+	if c.breaker != nil {
+		jwks, err = circuitbreaker.Do(ctx, c.breaker, fetch)
+		if err != nil {
+			if errors.Is(err, circuitbreaker.ErrOpen) {
+				return nil, fmt.Errorf("JWKS fetch blocked by circuit breaker: %w", err)
+			}
+			return nil, err
+		}
+	} else {
+		jwks, err = fetch(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	c.jwks = jwks
+	c.fetchedAt = time.Now()
+	c.logger.Info("refreshed JWKS", slog.Int("keys", len(jwks.Keys)))
+	return jwks, nil
+}
+
+func (c *JWKSClient) fetchKeys(ctx context.Context) (*jose.JSONWebKeySet, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.jwksURI, http.NoBody)
 	if err != nil {
 		return nil, err
@@ -215,9 +251,5 @@ func (c *JWKSClient) refreshKeys(ctx context.Context) (*jose.JSONWebKeySet, erro
 	if err := json.Unmarshal(body, &jwks); err != nil {
 		return nil, fmt.Errorf("parse JWKS: %w", err)
 	}
-
-	c.jwks = &jwks
-	c.fetchedAt = time.Now()
-	c.logger.Info("refreshed JWKS", slog.Int("keys", len(jwks.Keys)))
 	return &jwks, nil
 }
