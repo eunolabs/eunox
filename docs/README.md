@@ -26,6 +26,9 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [DISTRIBUTED_STATE.md](./DISTRIBUTED_STATE.md) | Redis-backed shared state for multi-agent deployments. |
 | [MULTI_TENANCY.md](./MULTI_TENANCY.md)         | Multi-tenancy isolation model, boundaries, and threat model. |
 | [FEDERATION_TRUST_LIFECYCLE.md](./FEDERATION_TRUST_LIFECYCLE.md) | Partner federation trust lifecycle (onboarding → revocation). |
+| [DB_TOKEN_ARCHITECTURE.md](./DB_TOKEN_ARCHITECTURE.md) | Database credential issuance architecture.       |
+| [STORAGE_GRANT_ARCHITECTURE.md](./STORAGE_GRANT_ARCHITECTURE.md) | Storage-grant issuance architecture.          |
+| [AUDIT_CHAIN_ARCHITECTURE.md](./AUDIT_CHAIN_ARCHITECTURE.md)   | Audit chain architecture, single-writer vs per-replica trade-offs. |
 
 ## 3. Design references
 
@@ -35,15 +38,17 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [CAPABILITY_MANIFEST_GUIDE.md](./CAPABILITY_MANIFEST_GUIDE.md) | Manifest authoring: structure, conditions, anti-patterns.                         |
 | [SCHEMA_VERSIONING.md](./SCHEMA_VERSIONING.md)                 | Schema versioning, deployment ordering.                                           |
 | [SCHEMA_MIGRATIONS.md](./SCHEMA_MIGRATIONS.md)                 | Database schema reference, migration conventions, CI validation.                  |
-| [AUDIT_CHAIN_ARCHITECTURE.md](./AUDIT_CHAIN_ARCHITECTURE.md)   | Audit chain architecture, single-writer vs per-replica trade-offs.                |
 | [AUDIT_RETENTION_COMPLIANCE.md](./AUDIT_RETENTION_COMPLIANCE.md) | Audit retention policy, chain pruning, compliance targets (SOC 2, GDPR, HIPAA). |
 | [POLICY_HOT_RELOAD.md](./POLICY_HOT_RELOAD.md)                 | Policy lifecycle, hot-reload mechanism, safe update procedures.                   |
+| [MULTI_REGION_CONSISTENCY.md](./MULTI_REGION_CONSISTENCY.md)   | Multi-region consistency model and trade-offs.                                    |
+| [POSTURE_SCALING.md](./POSTURE_SCALING.md)                     | Posture emitter scaling and CSPM plugin delivery.                                 |
 | [sandboxing.md](./sandboxing.md)                               | Sandbox reference architecture.                                                   |
 
 ## 4. Deployment and operations
 
 | Doc                                                        | What it is                                                               |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [DEPLOYMENT.md](./DEPLOYMENT.md)                           | Build, configuration, and production requirements reference.             |
 | [self-host.md](./self-host.md)                             | BYO-GW guide: running the full gateway stack on your own infrastructure. |
 | [deploy-eks.md](./deploy-eks.md)                           | Amazon EKS deployment guide.                                             |
 | [deploy-gke.md](./deploy-gke.md)                           | Google GKE deployment guide.                                             |
@@ -55,15 +60,27 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [ADMIN_API_CURL_RECIPES.md](./ADMIN_API_CURL_RECIPES.md)   | Admin API cURL recipes.                                                  |
 | [upgrade-to-hosted.md](./upgrade-to-hosted.md)             | Migration from local to hosted enforcement.                              |
 
-## 5. Security
+## 5. Hosted service
 
-| Doc                      | What it is                                             |
-| ------------------------ | ------------------------------------------------------ |
-| [security/](./security/) | Threat models, SOC2 mapping, sandbox architecture.     |
-| [HEALTH_CHECKS.md](./HEALTH_CHECKS.md) | Health check conventions, Kubernetes probes.  |
-| [runbooks/](./runbooks/) | Operational runbooks (DR, key rotation, HMAC rotation). |
+| Doc                                            | What it is                                                                        |
+| ---------------------------------------------- | --------------------------------------------------------------------------------- |
+| [hosted-service.md](./hosted-service.md)       | Hosted service architecture, subscription model, payment components, and execution plan. |
+| [pricing.md](./pricing.md)                     | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).          |
 
-## 8. API specifications
+## 6. Security
+
+| Doc                                              | What it is                                              |
+| ------------------------------------------------ | ------------------------------------------------------- |
+| [security/](./security/)                         | Threat models, SOC2 mapping, sandbox architecture.      |
+| [HEALTH_CHECKS.md](./HEALTH_CHECKS.md)           | Health check conventions, Kubernetes probes.            |
+| [AGENT_RUNTIME_SECURITY.md](./AGENT_RUNTIME_SECURITY.md) | Agent runtime security model and controls.       |
+| [REDIS_FAILURE_MODES.md](./REDIS_FAILURE_MODES.md) | Redis failure modes and gateway behaviour.            |
+| [SECURITY-AUDIT.md](./SECURITY-AUDIT.md)         | External security audit findings and resolutions.       |
+| [AUDIT_REPORT.md](./AUDIT_REPORT.md)             | Audit log format, chain properties, compliance notes.   |
+| [CHAOS_TESTING_STRATEGY.md](./CHAOS_TESTING_STRATEGY.md) | Chaos engineering strategy and failure injection scenarios. |
+| [runbooks/](./runbooks/)                         | Operational runbooks (DR, key rotation, HMAC rotation). |
+
+## 7. API specifications
 
 | Doc                    | What it is                                        |
 | ---------------------- | ------------------------------------------------- |
