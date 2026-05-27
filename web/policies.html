@@ -205,7 +205,7 @@ requiredCapabilities:
         windowSeconds: 60</code></pre>
 
         <div class="callout warn">
-            <strong>Reminder.</strong> <code>eunox-mcp</code> allows tool calls that match no constraint in the manifest — policies <em>restrict</em> only the tools they list. To make denial the default, enumerate every tool the upstream exposes. For tools you can't enumerate, rely on additional controls (network ACLs, the upstream's own auth).
+            <strong>Reminder.</strong> <code>eunox-mcp</code> <em>denies</em> any tool call that matches no capability in the manifest (default-deny). To intentionally allow broader access, add a wildcard capability — for example <code>resource: "*"</code> with <code>actions: [call]</code> — and layer conditions on top of it.
         </div>
 
         <p style="margin-top:32px"><a href="./quickstart.html" class="btn-primary" style="text-decoration:none">Try one in 60 seconds →</a> &nbsp; <a href="https://github.com/edgeobs/eunox/blob/main/blogs/22-reference-policies.md" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="text-decoration:none;color:#6d28d9;border-color:#a78bfa">Browse the reference notes</a></p>

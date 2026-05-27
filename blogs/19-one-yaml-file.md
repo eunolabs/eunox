@@ -26,7 +26,7 @@ A YAML file that says `allowedOperations: [SELECT, EXPLAIN, SHOW]` communicates 
 
 ## The manifest structure
 
-The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in the `pkg/manifest` Go package. The required fields at the top level are:
+The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in the `internal/agentruntime` Go package. The required fields at the top level are:
 
 ```yaml
 agentId: "sales-research-bot" # stable, kebab-case, machine-readable identifier
