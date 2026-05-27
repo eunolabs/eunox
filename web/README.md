@@ -47,8 +47,8 @@ authoritative source changes, the website should be updated:
 | Page               | Source of truth                                        |
 |--------------------|--------------------------------------------------------|
 | Quick start        | `README.md`, `docs/upgrade-to-hosted.md`               |
-| Features           | `docs/CAPABILITY_MANIFEST_GUIDE.md`, `docs/agent-sdk.md` |
-| How it works       | `docs/ARCHITECTURE.md`, `docs/enforcement.md`          |
+| Features           | `docs/capability-manifest-guide.md`, `docs/agent-sdk.md` |
+| How it works       | `docs/architecture.md`, `docs/enforcement.md`          |
 | Reference policies | `blogs/22-reference-policies.md`                       |
 | Docs hub / links   | `docs/README.md`                                       |
 

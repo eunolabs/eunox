@@ -8,7 +8,7 @@
 > **Related documents:**
 >
 > - [`docs/deploy-eks.md`](./deploy-eks.md) — full EKS deployment guide
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — environment-variable reference
+> - [`docs/deployment.md`](./deployment.md) — environment-variable reference
 
 ---
 

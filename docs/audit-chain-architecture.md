@@ -240,4 +240,4 @@ For cross-replica verification, verify each replica's chain independently, then 
 
 ---
 
-*See also: [ARCHITECTURE.md](./ARCHITECTURE.md), [SCHEMA_MIGRATIONS.md](./SCHEMA_MIGRATIONS.md)*
+*See also: [architecture.md](./architecture.md), [schema-migrations.md](./schema-migrations.md)*

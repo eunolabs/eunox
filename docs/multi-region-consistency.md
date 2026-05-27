@@ -3,7 +3,7 @@
 This document describes the consistency guarantees, partition tolerance behavior,
 and multi-region deployment model for the Euno platform. It answers the
 questions posed in OQ-5 of the
-[Technical Architecture Review](TECHNICAL_REVIEW_2026_05_26.md).
+[Technical Architecture Review](technical-review-2026-05-26.md).
 
 ---
 
@@ -256,7 +256,7 @@ When the audit transport's buffer is full, events are **dropped** (not blocked):
 - The enforcement hot path is never blocked by audit backpressure
 - Dropped events are logged with context for manual reconciliation
 
-See [Audit Chain Architecture](AUDIT_CHAIN_ARCHITECTURE.md) for full details.
+See [Audit Chain Architecture](audit-chain-architecture.md) for full details.
 
 ---
 
@@ -390,10 +390,10 @@ The DPoP JTI replay cache is **intentionally per-region** (not replicated):
 
 ## 12. Related Documents
 
-- [Distributed State](DISTRIBUTED_STATE.md) — Kill switch and revocation architecture details
-- [Redis Failure Modes](REDIS_FAILURE_MODES.md) — Fail-open vs. fail-closed policies
-- [Deployment Guide](DEPLOYMENT.md) — Production deployment patterns
+- [Distributed State](distributed-state.md) — Kill switch and revocation architecture details
+- [Redis Failure Modes](redis-failure-modes.md) — Fail-open vs. fail-closed policies
+- [Deployment Guide](deployment.md) — Production deployment patterns
 - [Deploy on EKS](deploy-eks.md) — AWS-specific multi-region guidance
 - [Deploy on GKE](deploy-gke.md) — GCP-specific multi-region guidance
 - [Multi-Cloud](multi-cloud.md) — Cross-cloud deployment patterns
-- [Audit Chain Architecture](AUDIT_CHAIN_ARCHITECTURE.md) — Audit consistency model
+- [Audit Chain Architecture](audit-chain-architecture.md) — Audit consistency model

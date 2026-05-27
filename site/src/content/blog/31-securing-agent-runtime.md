@@ -598,6 +598,6 @@ The gateway handles policy enforcement and produces your audit evidence. The OS 
 
 ---
 
-*The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/euno umbrella chart. For deployment-specific guidance, see [`docs/DEPLOYMENT.md`](../DEPLOYMENT.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md)).*
+*The companion technical reference for the concepts described here is [`docs/sandboxing.md`](../sandboxing.md), which covers the detailed reference architecture including the Kubernetes RBAC configuration, SPIFFE/SPIRE integration patterns, and the Helm chart configuration for the k8s/helm/euno umbrella chart. For deployment-specific guidance, see [`docs/deployment.md`](../deployment.md) and the cloud-specific guides ([`docs/deploy-eks.md`](../deploy-eks.md), [`docs/deploy-gke.md`](../deploy-gke.md)).*
 
 *Previous post in the architecture series: [post 14 (AGT: defense in depth)](./14-agt-defense-in-depth.md). See [`docs/blog-articles.md`](../blog-articles.md) for the full index.*

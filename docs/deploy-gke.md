@@ -7,7 +7,7 @@
 >
 > **Related documents:**
 >
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
+> - [`docs/deployment.md`](./deployment.md) — full environment-variable reference
 > - [`docs/secrets-gcp.md`](./secrets-gcp.md) — GCP Secret Manager integration
 > - [`docs/issuer-idp-setup.md`](./issuer-idp-setup.md) — IdP setup (Google Workspace SCIM §11)
 > - [`docs/self-host.md`](./self-host.md) — self-host overview

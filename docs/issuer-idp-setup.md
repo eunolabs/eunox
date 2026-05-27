@@ -9,7 +9,7 @@
 > **Related documents:**
 >
 > - [`docs/self-host.md`](./self-host.md) — self-host overview and deployment topology
-> - [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) — full environment-variable reference
+> - [`docs/deployment.md`](./deployment.md) — full environment-variable reference
 > - [`docs/security/issuer-threat-model.md`](./security/issuer-threat-model.md) — threat model (IdP-token replay, nonce binding, aud/iss enforcement)
 
 ---

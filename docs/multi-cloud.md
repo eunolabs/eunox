@@ -34,7 +34,7 @@ multi-cloud architecture.
 | ------------------------------------------------------------------------- | --------------------------------------------------------- |
 | [`infra/bicep/main.bicep`](../infra/bicep/main.bicep)                     | Azure Bicep template — AKS, Key Vault, ACR, Log Analytics |
 | [`k8s/helm/eunox/values-azure.yaml`](../k8s/helm/eunox/values-azure.yaml) | Helm overrides for AKS                                    |
-| [`docs/DEPLOYMENT.md`](DEPLOYMENT.md)                                     | Full on-premises and AKS deployment guide                 |
+| [`docs/deployment.md`](deployment.md)                                     | Full on-premises and AKS deployment guide                 |
 | [`docs/issuer-idp-setup.md §1`](issuer-idp-setup.md)                      | Azure AD / Entra ID setup                                 |
 | [`docs/issuer-idp-setup.md §9`](issuer-idp-setup.md)                      | Entra ID SCIM bridge                                      |
 
@@ -70,8 +70,8 @@ The following components are provider-agnostic and work across all three clouds:
 
 | Component               | Description                                                                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `SecretStore` interface | Abstraction over Key Vault / Secrets Manager / Secret Manager (see [`docs/ADAPTERS.md §Secret Store`](ADAPTERS.md))           |
-| `ObjectStore` interface | Abstraction over Azure Blob / S3 / GCS for the cross-chain anchor (see [`docs/ADAPTERS.md §Object Store`](ADAPTERS.md))       |
+| `SecretStore` interface | Abstraction over Key Vault / Secrets Manager / Secret Manager (see [`docs/adapters.md §Secret Store`](adapters.md))           |
+| `ObjectStore` interface | Abstraction over Azure Blob / S3 / GCS for the cross-chain anchor (see [`docs/adapters.md §Object Store`](adapters.md))       |
 | Helm umbrella chart     | [`k8s/helm/eunox/`](../k8s/helm/eunox/) with provider-specific values files                                                   |
 | Air-gap image bundle    | [`k8s/air-gap-images.txt`](../k8s/air-gap-images.txt) + [`scripts/pull-air-gap-images.sh`](../scripts/pull-air-gap-images.sh) |
 
@@ -123,7 +123,7 @@ gateway:
 4. Remove `secretEnv:` entries one at a time, verifying the pod restarts
    cleanly after each removal.
 
-See [`docs/ADAPTERS.md §Secret Store`](ADAPTERS.md) for the full `SecretStore`
+See [`docs/adapters.md §Secret Store`](adapters.md) for the full `SecretStore`
 interface documentation and supported providers.
 
 ---
@@ -147,6 +147,6 @@ guide (`docs/deploy-eks.md §7`, `docs/deploy-gke.md §7`).
 
 ## See also
 
-- [`docs/ADAPTERS.md`](ADAPTERS.md) — adapter interface documentation
-- [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — on-premises and self-hosted guide
+- [`docs/adapters.md`](adapters.md) — adapter interface documentation
+- [`docs/deployment.md`](deployment.md) — on-premises and self-hosted guide
 - [`docs/self-host.md`](self-host.md) — self-hosted deployment guide

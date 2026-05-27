@@ -120,7 +120,7 @@ helm install euno k8s/helm/euno/ \
   -f k8s/helm/euno/values.yaml
 ```
 
-See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the full configuration
+See [`docs/deployment.md`](./docs/deployment.md) for the full configuration
 reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
 [`docs/deploy-gke.md`](./docs/deploy-gke.md) for GKE.
 
@@ -133,8 +133,8 @@ reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
 ## Documentation
 
 - 🌐 **Website:** [`web/`](./web/) — landing page, quick start, features
-- 🏗 **Architecture:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
-- 🚀 **Deployment:** [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
+- 🏗 **Architecture:** [`docs/architecture.md`](./docs/architecture.md)
+- 🚀 **Deployment:** [`docs/deployment.md`](./docs/deployment.md)
 - 🔧 **Self-hosting:** [`docs/self-host.md`](./docs/self-host.md)
 
 ## License

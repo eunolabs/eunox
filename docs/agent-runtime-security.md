@@ -3,7 +3,7 @@
 This document describes the security model, sandbox isolation boundaries, and
 blast radius containment mechanisms for the Euno agent runtime
 (`internal/agentruntime/`). It answers the questions posed in OQ-1 of the
-[Technical Architecture Review](TECHNICAL_REVIEW_2026_05_26.md).
+[Technical Architecture Review](technical-review-2026-05-26.md).
 
 ---
 
@@ -363,7 +363,7 @@ The platform detects agent misbehavior through:
 ## 10. Related Documents
 
 - [Sandboxing Reference Architecture](sandboxing.md) — Full sandbox implementation guide
-- [Distributed State](DISTRIBUTED_STATE.md) — Kill switch and revocation architecture
-- [Architecture Overview](ARCHITECTURE.md) — System-wide component interactions
-- [Deployment Guide](DEPLOYMENT.md) — Production deployment patterns
-- [Redis Failure Modes](REDIS_FAILURE_MODES.md) — Failure mode policies for Redis-dependent components
+- [Distributed State](distributed-state.md) — Kill switch and revocation architecture
+- [Architecture Overview](architecture.md) — System-wide component interactions
+- [Deployment Guide](deployment.md) — Production deployment patterns
+- [Redis Failure Modes](redis-failure-modes.md) — Failure mode policies for Redis-dependent components

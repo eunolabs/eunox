@@ -417,7 +417,7 @@ func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
 
 	// Production and staging both require JWT auth (CR-3).
 	if adminJWKSURI == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %q; static admin key alone is insecure (see CR-3 in ARCHITECTURE_REVIEW.md)", cfg.NodeEnv)
+		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %q; static admin key alone is insecure (see CR-3 in docs/architecture-review.md)", cfg.NodeEnv)
 	}
 	if adminJWTAudience == "" {
 		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in %q when admin JWT auth is enabled", cfg.NodeEnv)

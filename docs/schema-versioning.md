@@ -85,15 +85,15 @@ The capability issuer populates `schemaVersion` in all token creation paths:
 
 The tool gateway verifier validates `schemaVersion` on every token verification:
 
-```typescript
-// Pseudo-code
-if (!token.schemaVersion) {
-  throw INVALID_TOKEN("Token missing required schemaVersion field");
+```go
+// Pseudocode
+if token.SchemaVersion == "" {
+    return ErrInvalidToken("Token missing required schemaVersion field")
 }
-if (!SUPPORTED_SCHEMA_VERSIONS.has(token.schemaVersion)) {
-  throw INVALID_TOKEN(
-    `Unsupported token schema version: ${token.schemaVersion}`,
-  );
+if !SupportedSchemaVersions[token.SchemaVersion] {
+    return ErrInvalidToken(
+        fmt.Sprintf("Unsupported token schema version: %s", token.SchemaVersion),
+    )
 }
 ```
 
