@@ -76,7 +76,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [agent-runtime-security.md](./agent-runtime-security.md) | Agent runtime security model and controls.       |
 | [redis-failure-modes.md](./redis-failure-modes.md) | Redis failure modes and gateway behaviour.            |
 | [security-audit.md](./security-audit.md)         | External security audit findings and resolutions.       |
-| [AUDIT_REPORT.md](./AUDIT_REPORT.md)             | Audit log format, chain properties, compliance notes.   |
+| [audit-retention-compliance.md](./audit-retention-compliance.md) | Audit retention policy, chain pruning, and compliance targets (SOC 2, GDPR, HIPAA). |
 | [chaos-testing-strategy.md](./chaos-testing-strategy.md) | Chaos engineering strategy and failure injection scenarios. |
 | [runbooks/](./runbooks/)                         | Operational runbooks (DR, key rotation, HMAC rotation). |
 
