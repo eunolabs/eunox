@@ -81,8 +81,10 @@ type KeyStore interface {
 	GetKey(ctx context.Context, keyID string) (*APIKey, error)
 	// ListKeys returns all keys for a tenant.
 	ListKeys(ctx context.Context, tenantID string, limit, offset int) ([]*APIKey, error)
-	// RevokeKey marks a key as revoked.
-	RevokeKey(ctx context.Context, keyID string, revokedAt time.Time) error
+	// RevokeKey marks a key as revoked and returns the revoked key.
+	// The returned key reflects the state after revocation (RevokedAt is set).
+	// Returns ErrKeyNotFound if the key does not exist, ErrKeyRevoked if already revoked.
+	RevokeKey(ctx context.Context, keyID string, revokedAt time.Time) (*APIKey, error)
 
 	// CreatePolicy persists a new policy.
 	CreatePolicy(ctx context.Context, p *Policy) error

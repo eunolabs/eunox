@@ -23,6 +23,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/killswitch"
 	"github.com/edgeobs/eunox/pkg/lifecycle"
 	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/edgeobs/eunox/pkg/revocation"
 )
 
@@ -74,7 +75,7 @@ func run() error {
 		slog.String("env", string(cfg.NodeEnv)),
 	)
 
-	// Production Redis HA validation
+	// Production Redis HA validation (requires Sentinel/Cluster URLs; single-node is rejected).
 	if cfg.NodeEnv == config.EnvProduction {
 		if err := config.CheckGatewayRedisHA(&cfg); err != nil {
 			return fmt.Errorf("redis HA validation: %w", err)
@@ -82,15 +83,31 @@ func run() error {
 		logger.Info("redis HA validation passed")
 	}
 
+	// Production requires Redis to be configured for stateful security components (CR-1).
+	if err := validateRedisConfig(&cfg); err != nil {
+		return err
+	}
+
 	// Initialize metrics
 	metrics := observability.NewMetricsRegistry("euno", "gateway")
 
-	// Initialize backends (in-memory for Stage 2)
-	counter := callcounter.NewInMemory()
-	engine := enforcement.New(enforcement.WithCallCounter(counter))
-	ks := killswitch.NewInMemory()
-	revStore := revocation.NewInMemory()
+	// Build stateful backends (Redis-backed when URLs are configured; in-memory fallback for dev).
+	backends, err := buildGatewayBackends(&cfg, logger)
+	if err != nil {
+		return fmt.Errorf("build gateway backends: %w", err)
+	}
+
+	// Start the kill switch (connects to Redis and performs initial state load).
+	// The type assertion handles both ResilientRedis (Redis-backed) and InMemory (no Start needed).
+	if starter, ok := backends.killSwitch.(interface{ Start(context.Context) }); ok {
+		starter.Start(ctx)
+	}
+
+	engine := enforcement.New(enforcement.WithCallCounter(backends.counter))
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	if cfg.NodeEnv == config.EnvProduction {
+		logger.Warn("DPoP replay protection: using in-memory store; DPoP nonces are not shared across replicas — deploy a single gateway replica or add a Redis-backed DPoP store")
+	}
 	dpopStore.Start(ctx)
 
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
@@ -111,8 +128,8 @@ func run() error {
 	// Build gateway app
 	deps := gateway.Dependencies{
 		Engine:      engine,
-		KillSwitch:  ks,
-		Revocation:  revStore,
+		KillSwitch:  backends.killSwitch,
+		Revocation:  backends.revocation,
 		JWTVerifier: jwtVerifier,
 		DPoPStore:   dpopStore,
 		Logger:      logger,
@@ -184,7 +201,11 @@ func run() error {
 		TrustedProxyCIDRs:       cfg.TrustedProxyCIDRs,
 		// IsReady lets handleReady reflect the lifecycle drain state so that load
 		// balancers remove this instance from rotation before connections drain.
-		IsReady: lm.IsReady,
+		// It also incorporates Redis health: a degraded backend marks the instance
+		// as not-ready so that load balancers avoid routing to a degraded gateway.
+		IsReady: func() bool {
+			return lm.IsReady() && backends.monitor.IsReady()
+		},
 	}
 
 	app, err := gateway.New(&appCfg, &deps)
@@ -235,6 +256,8 @@ func run() error {
 	// Cancel the root context (stopping background goroutines like dpopStore)
 	// when the lifecycle manager shuts down.
 	lm.OnStop(cancel)
+	// Close the in-memory rate limiters to stop their background cleanup goroutines.
+	lm.OnStop(app.Close)
 
 	return lm.Run(context.Background())
 }
@@ -257,28 +280,150 @@ func (v *noopVerifier) VerifyToken(_ context.Context, _ string) (*capability.Tok
 	return nil, fmt.Errorf("JWT verification not configured (set GATEWAY_ISSUER_JWKS_URL)")
 }
 
+// resolveRedisURL returns specificURL if non-empty, otherwise fallbackURL.
+// Use this to let per-service Redis URLs override the shared REDIS_URL.
+func resolveRedisURL(specificURL, fallbackURL string) string {
+	if specificURL != "" {
+		return specificURL
+	}
+	return fallbackURL
+}
+
+// validateRedisConfig returns an error if the gateway is starting in production
+// without any Redis configured.
+//
+// In production, stateful security components (kill-switch, revocation,
+// call counter) must be backed by Redis so that security state is not lost on
+// restart or scale-out (CR-1 in ARCHITECTURE_REVIEW.md).
+//
+// Either REDIS_URL (shared fallback) must be set, or all three per-service URLs
+// (KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must
+// be set so that every component has a URL to connect to.
+func validateRedisConfig(cfg *config.GatewayConfig) error {
+	if cfg.NodeEnv != config.EnvProduction {
+		return nil
+	}
+	// Shared URL covers every service.
+	if cfg.RedisURL != "" {
+		return nil
+	}
+	// All per-service URLs cover every service without requiring REDIS_URL.
+	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" {
+		return nil
+	}
+	return fmt.Errorf(
+		"in production, either REDIS_URL (shared fallback) or all per-service Redis URLs " +
+			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must be set; " +
+			"kill-switch and revocation state is lost on restart without Redis (CR-1 in ARCHITECTURE_REVIEW.md)",
+	)
+}
+
+// gatewayBackends holds the stateful backends for the gateway.
+type gatewayBackends struct {
+	killSwitch killswitch.Manager
+	revocation revocation.Store
+	counter    callcounter.Store
+	monitor    *redisfailover.Monitor
+}
+
+// buildGatewayBackends creates stateful backends for the gateway.
+//
+// When per-service Redis URLs (e.g. KILL_SWITCH_REDIS_URL) or the shared
+// REDIS_URL are set, resilient Redis-backed implementations are returned with
+// proper fail-closed (kill-switch, revocation) or fail-open (call counter)
+// semantics. When no Redis URL is configured the function falls back to
+// in-memory stores (suitable for development only).
+func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gatewayBackends, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	monitor := redisfailover.NewMonitor()
+
+	// Kill-switch — fail-closed: block all requests when Redis state is unknown.
+	var ks killswitch.Manager
+	ksURL := resolveRedisURL(cfg.KillSwitchRedisURL, cfg.RedisURL)
+	if ksURL != "" {
+		client, err := newRedisClientFromURL(ksURL)
+		if err != nil {
+			return nil, fmt.Errorf("kill-switch redis URL: %w", err)
+		}
+		inner := killswitch.NewRedis(client).WithLogger(logger)
+		ks = killswitch.NewResilientRedis(inner, monitor.Register("kill-switch"))
+		logger.Info("kill-switch: using Redis-backed store")
+	} else {
+		logger.Warn("kill-switch: using in-memory store; kill-switch state will be lost on restart or scale-out")
+		ks = killswitch.NewInMemory()
+	}
+
+	// Revocation — fail-closed: treat tokens as revoked when Redis is unreachable.
+	var rev revocation.Store
+	revURL := resolveRedisURL(cfg.RevocationRedisURL, cfg.RedisURL)
+	if revURL != "" {
+		client, err := newRedisClientFromURL(revURL)
+		if err != nil {
+			return nil, fmt.Errorf("revocation redis URL: %w", err)
+		}
+		inner := revocation.NewRedis(client)
+		rev = revocation.NewResilientRedis(inner, monitor.Register("revocation"), nil)
+		logger.Info("revocation: using Redis-backed store")
+	} else {
+		logger.Warn("revocation: using in-memory store; revoked tokens will be re-accepted after restart")
+		rev = revocation.NewInMemory()
+	}
+
+	// Call counter — fail-open: return 0 count when Redis is unreachable.
+	var cc callcounter.Store
+	ccURL := resolveRedisURL(cfg.CallCounterRedisURL, cfg.RedisURL)
+	if ccURL != "" {
+		client, err := newRedisClientFromURL(ccURL)
+		if err != nil {
+			return nil, fmt.Errorf("call-counter redis URL: %w", err)
+		}
+		cc = callcounter.NewResilientRedis(callcounter.NewRedis(client), monitor.Register("call-counter"))
+		logger.Info("call-counter: using Redis-backed store")
+	} else {
+		cc = callcounter.NewInMemory()
+	}
+
+	return &gatewayBackends{
+		killSwitch: ks,
+		revocation: rev,
+		counter:    cc,
+		monitor:    monitor,
+	}, nil
+}
+
 // validateAdminAuth checks that admin authentication is properly configured for the
-// deployment environment. In production, JWT auth via JWKS is required (CR-3).
+// deployment environment.
+//
+// JWT auth via JWKS is required in production AND staging (CR-3): staging often
+// shares infrastructure with production data, so a stolen static admin key grants
+// the same kill-switch and revocation powers.  Only the development environment
+// may omit GATEWAY_ADMIN_JWKS_URI and fall back to a static API key.
 func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
 	adminJWKSURI := strings.TrimSpace(cfg.AdminJWKSURI)
 	adminJWTAudience := strings.TrimSpace(cfg.AdminJWTAudience)
 	tenantID = strings.TrimSpace(tenantID)
 
-	if adminJWKSURI != "" && tenantID == "" {
-		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled")
-	}
-
-	if cfg.NodeEnv != config.EnvProduction {
+	// Development is the only environment exempt from JWT admin auth.
+	// In development, a static admin key is acceptable; but if a JWKS URI is
+	// provided, the tenant ID is still required for routing.
+	if cfg.NodeEnv == config.EnvDevelopment {
+		if adminJWKSURI != "" && tenantID == "" {
+			return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required when admin JWT auth is enabled")
+		}
 		return nil
 	}
+
+	// Production and staging both require JWT auth (CR-3).
 	if adminJWKSURI == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in production; static admin key alone is insecure (see CR-3 in docs/architecture-review.md)")
+		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %q; static admin key alone is insecure (see CR-3 in docs/architecture-review.md)", cfg.NodeEnv)
 	}
 	if adminJWTAudience == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in production when admin JWT auth is enabled")
+		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in %q when admin JWT auth is enabled", cfg.NodeEnv)
 	}
 	if tenantID == "" {
-		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required in production when admin JWT auth is enabled")
+		return fmt.Errorf("TENANT_ID (or GATEWAY_TENANT_ID) is required in %q when admin JWT auth is enabled", cfg.NodeEnv)
 	}
 	return nil
 }

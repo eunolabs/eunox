@@ -35,27 +35,19 @@ priority and a concrete remediation path.
 **Severity:** Critical — data-plane security property loss under restart  
 **Files:** `cmd/gateway/main.go:93-99`, `cmd/minter/main.go:68,73,78`
 
-All four stateful components — `killswitch`, `revocation`, `callcounter`, and
-`DPoPStore` — are constructed with their in-memory implementations unconditionally
-in `cmd/gateway/main.go`. The minter's `KeyStore` is also `InMemoryStore`. These
-in-memory variants lose all state on pod restart or scale-out:
+**Status: ✅ Implemented** — `cmd/gateway/main.go` (2026-05-27).
 
-- A kill-switched agent is un-killed on gateway restart.
-- A revoked token becomes valid again after pod restart.
-- DPoP replay protection resets, enabling immediate token replay.
-- Call counters reset, undermining `maxCalls` conditions.
-- API keys stored in the minter are lost on restart.
+`buildGatewayBackends()` now wires resilient Redis-backed implementations for
+kill-switch, revocation, and call-counter when `REDIS_URL` (or per-service
+overrides `KILL_SWITCH_REDIS_URL`, `REVOCATION_REDIS_URL`, `CALL_COUNTER_REDIS_URL`)
+is set. Production startup fails with a fatal error when `REDIS_URL` is absent.
+In-memory fallbacks remain for development only and emit `WARN` logs.
 
-The code comments acknowledge "in-memory for Stage 2" but there is no compile-time
-gate, no `IsPersistent() bool` check, and no startup warning for production.
-
-**Remediation:**
-1. Add a check in `cmd/gateway/main.go` that rejects startup if
-   `NODE_ENV=production` and `REDIS_URL` is empty (the kill-switch and revocation
-   already have Redis implementations; wire them).
-2. Add a check in `cmd/minter/main.go` that refuses startup without
-   `MINTER_API_KEY_DB_URL` in production and wire the PostgreSQL `KeyStore`.
-3. Document the in-memory fallback as development-only.
+- Kill-switch + revocation: **fail-closed** (`ResilientRedis` wrappers).
+- Call counter: **fail-open** (temporary under-counting acceptable; reconcilable).
+- DPoP store: no Redis implementation yet — `WARN` log emitted in production.
+- Minter `KeyStore`: `MINTER_API_KEY_DB_URL production:"required"` config tag
+  already enforces this at config load time.
 
 ---
 
@@ -634,29 +626,29 @@ to reflect the Go implementation?
 
 Ordered by impact and dependency:
 
-| Priority | Item | Dependency | Effort |
-|----------|------|------------|--------|
-| 1 | **CR-1** Wire Redis backends for kill-switch, revocation, DPoP in production | None | Medium |
-| 2 | **CR-2** Add public-API rate limiting middleware to `/api/v1` | None | Small |
-| 3 | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth) | None | Small |
-| 4 | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix | None | Small |
-| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small |
-| 6 | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set | CR-1 done first | Small |
-| 7 | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern | None | Small |
-| 8 | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore` | None | Small |
-| 9 | **CR-3** Extend JWT admin auth requirement to staging | None | Trivial |
-| 10 | **CI-2** Validate `X-Tool-Name` header before enforcement | None | Small |
-| 11 | **DI-4** Add pagination parameters to `handleListKeys` | OQ-1 context | Small |
-| 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small |
-| 13 | **CI-9** Propagate `X-Request-Id` to proxied backend requests | None | Trivial |
-| 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium |
-| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small |
-| 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium |
-| 17 | **CI-4** Separate audit HMAC chain key from signing key | None | Medium |
-| 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium |
-| 19 | **CI-8** Anchor regex patterns unconditionally in config validation | None | Small |
-| 20 | **DI-6** Fix audit transport lifecycle context | None | Small |
-| 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small |
-| 22 | **OQ-5** Reconcile architecture docs with Go implementation | None | Small |
-| 23 | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None | Small |
-| 24 | **CI-11** Set `lock_timeout` on audit DB connection | None | Small |
+| Priority | Item | Dependency | Effort | Status |
+|----------|------|------------|--------|--------|
+| 1 | **CR-1** Wire Redis backends for kill-switch, revocation, DPoP in production | None | Medium | ✅ Done |
+| 2 | **CR-2** Add public-API rate limiting middleware to `/api/v1` | None | Small | ✅ Done |
+| 3 | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth) | None | Small | ✅ Done |
+| 4 | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix | None | Small | ✅ Done |
+| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small | |
+| 6 | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set | CR-1 done first | Small | ✅ Done (part of CR-1) |
+| 7 | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern | None | Small | |
+| 8 | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore` | None | Small | |
+| 9 | **CR-3** Extend JWT admin auth requirement to staging | None | Trivial | ✅ Done |
+| 10 | **CI-2** Validate `X-Tool-Name` header before enforcement | None | Small | ✅ Done |
+| 11 | **DI-4** Add pagination parameters to `handleListKeys` | OQ-1 context | Small | |
+| 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small | |
+| 13 | **CI-9** Propagate `X-Request-Id` to proxied backend requests | None | Trivial | ✅ Done |
+| 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium | |
+| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small | |
+| 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium | |
+| 17 | **CI-4** Separate audit HMAC chain key from signing key | None | Medium | ✅ Done |
+| 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium | |
+| 19 | **CI-8** Anchor regex patterns unconditionally in config validation | None | Small | ✅ Done |
+| 20 | **DI-6** Fix audit transport lifecycle context | None | Small | |
+| 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small | |
+| 22 | **OQ-5** Reconcile architecture docs with Go implementation | None | Small | |
+| 23 | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None | Small | |
+| 24 | **CI-11** Set `lock_timeout` on audit DB connection | None | Small | ✅ Done |

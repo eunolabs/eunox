@@ -345,7 +345,9 @@ func (app *App) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	keyID := chi.URLParam(r, "keyId")
 	operatorID := getOperatorID(r.Context())
 
-	err := app.deps.Store.RevokeKey(r.Context(), keyID, time.Now())
+	// RevokeKey returns the revoked key atomically, eliminating the TOCTOU race
+	// that would arise from a separate GetKey call after revocation (CR-5).
+	key, err := app.deps.Store.RevokeKey(r.Context(), keyID, time.Now())
 	if err != nil {
 		if errors.Is(err, ErrKeyNotFound) {
 			app.writeError(w, http.StatusNotFound, "not_found", "key not found")
@@ -359,20 +361,14 @@ func (app *App) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get key for tenant ID metric.
-	key, _ := app.deps.Store.GetKey(r.Context(), keyID)
-	tenantID := ""
-	if key != nil {
-		tenantID = key.TenantID
-	}
-
-	if app.metrics != nil && tenantID != "" {
-		app.metrics.keysRevoked.WithLabelValues(tenantID).Inc()
+	if app.metrics != nil && key.TenantID != "" {
+		app.metrics.keysRevoked.WithLabelValues(key.TenantID).Inc()
 	}
 
 	if app.deps.Logger != nil {
 		app.deps.Logger.InfoContext(r.Context(), "API key revoked",
 			"keyId", keyID,
+			"tenantId", key.TenantID,
 			"operatorId", operatorID,
 		)
 	}
