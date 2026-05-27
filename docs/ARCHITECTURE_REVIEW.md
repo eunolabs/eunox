@@ -178,7 +178,7 @@ and every `/enforce` call returns 200 with a denial — silently breaking agent
 operations with no boot-time alarm.
 
 **Recommendation:**  
-Add a startup check: if `NODE_ENV=production` and `ISSUER_JWKS_URL` is empty, exit
+Add a startup check: if `NODE_ENV=production` and `GATEWAY_ISSUER_JWKS_URL` is empty, exit
 with a fatal error (consistent with how `GATEWAY_ADMIN_JWKS_URI` is treated).
 
 ---
@@ -271,14 +271,16 @@ explicitly in `pkg/enforcement/engine.go`.
 
 The `JWKSClient` fetches JWKS on cache miss. If the issuer's JWKS endpoint becomes
 slow or unavailable, every cache miss on the enforcement hot path will block for
-the HTTP client timeout (not explicitly set; defaults to `http.DefaultClient` which
-has no timeout). A flapping JWKS endpoint can degrade gateway latency significantly.
+the HTTP client timeout. `pkg/capability/jwks.go` already defaults the client to
+`&http.Client{Timeout: 10 * time.Second}` when no client is provided, so the
+gateway will not hang indefinitely. However, there is no circuit breaker: repeated
+cache misses during a prolonged JWKS outage will each wait the full 10 s, degrading
+gateway latency significantly.
 
 **Recommendation:**  
-Configure an explicit `http.Client` timeout (e.g., 5 s) in `JWKSVerifierConfig`
-(the field already exists). Wrap the JWKS fetch with `pkg/circuitbreaker` to
-fast-fail after repeated JWKS errors, returning a clear `503` to callers rather
-than hanging.
+Wrap the JWKS fetch with `pkg/circuitbreaker` to fast-fail after repeated JWKS
+errors, returning a clear `503` to callers rather than serially exhausting the
+per-request timeout budget.
 
 ---
 
@@ -408,19 +410,24 @@ to the service lifecycle context, matching the pattern used in
 
 ---
 
-### CI-7 — `handleAuditRecords` and `handleAuditExport` reachable without authentication
+### CI-7 — Audit read routes are authenticated per-handler rather than via middleware
 
-**Files:** `internal/gateway/app.go:250-261`
+**Files:** `internal/gateway/app.go:250-261`, `internal/gateway/audit_routes.go`
 
-The audit read endpoints are mounted under `/api/v1/audit/` on the _public_ router
-with no authentication middleware. An unauthenticated caller can read the full audit
-log, including actor IDs, resource UIDs, and decision details. The admin router is
-the correct mounting point for audit access, or at minimum a JWT verification
-middleware should guard these routes.
+The audit read endpoints (`/records`, `/export`, `/signing-keys`, `/chain-proof`) are
+mounted under `/api/v1/audit/` on the _public_ router. Each handler immediately calls
+`authenticateAuditRequest`, which requires either a valid `X-Admin-Api-Key` header or
+a tenant-scoped JWT before returning any records. Unauthenticated requests are
+rejected by the handler.
+
+The concern is defence-in-depth and middleware placement: authentication logic is
+duplicated across four handlers rather than enforced once at the router boundary. A
+future handler added to this group might omit the `authenticateAuditRequest` call.
 
 **Recommendation:**  
-Move audit routes to the admin router (`buildAdminRouter()`), or apply
-`app.deps.JWTVerifier` as middleware with scope/claim validation.
+Extract the `authenticateAuditRequest` check into a chi middleware and apply it to
+the `/api/v1/audit` sub-router, so protection is structural and cannot be bypassed
+by accidentally omitting an inline call.
 
 ---
 
@@ -461,18 +468,21 @@ r.Header.Set("X-Request-Id", requestID)
 
 ### CI-10 — Posture emitter is SQLite-backed and cannot scale beyond one replica
 
-**Files:** `cmd/posture-emitter/main.go`, `migrations/posture/`
+**Files:** `cmd/posture-emitter/main.go`, `migrations/posture/`, `k8s/helm/euno/templates/posture-emitter.yaml`
 
 The posture emitter uses a SQLite database on a local named volume and relies on
-PostgreSQL advisory locks for single-writer semantics. This is documented in config
-comments but the deployment manifests (`k8s/helm/euno/charts/posture-emitter/`)
-do not enforce `replicas: 1`. A misconfigured second replica would produce split
-audit sequences with undefined HMAC chain behaviour.
+PostgreSQL advisory locks for single-writer semantics. The single-replica constraint
+is already enforced at the Helm chart level: `k8s/helm/euno/templates/posture-emitter.yaml`
+contains a render-time `fail` that aborts `helm install`/`upgrade` if
+`postureEmitter.replicaCount` is not exactly 1, along with a comment documenting the
+SQLite single-writer constraint.
+
+The remaining concern is the lack of a migration path when horizontal scaling of
+posture emission becomes necessary.
 
 **Recommendation:**  
-Set `replicas: 1` hard in the Helm chart (`values.yaml`) and add a `NOTES.txt`
-warning. Alternatively, document a migration path to a PostgreSQL backend when
-horizontal scaling of posture emission is required.
+Document a migration path to a PostgreSQL backend when horizontal scaling of posture
+emission is required.
 
 ---
 
@@ -568,9 +578,9 @@ Ordered by impact and dependency:
 |----------|------|------------|--------|
 | 1 | **CR-1** Wire Redis backends for kill-switch, revocation, DPoP in production | None | Medium |
 | 2 | **CR-2** Add public-API rate limiting middleware to `/api/v1` | None | Small |
-| 3 | **CI-7** Move audit read routes behind authentication | None | Small |
+| 3 | **CI-7** Refactor audit route auth into a chi middleware (defence-in-depth) | None | Small |
 | 4 | **CR-4** Add `GATEWAY_TRUSTED_PROXIES` config + IP extraction fix | None | Small |
-| 5 | **DI-2** Fatal startup check for missing `ISSUER_JWKS_URL` in production | None | Small |
+| 5 | **DI-2** Fatal startup check for missing `GATEWAY_ISSUER_JWKS_URL` in production | None | Small |
 | 6 | **DI-3** Wire `revocation.NewRedis` when `REDIS_URL` is set | CR-1 done first | Small |
 | 7 | **CI-1** Replace `os.Exit(1)` from goroutines with `errCh` pattern | None | Small |
 | 8 | **CI-6** Add background cleanup goroutine to `InMemoryDPoPStore` | None | Small |
@@ -580,7 +590,7 @@ Ordered by impact and dependency:
 | 12 | **DI-5** Add `db.PingContext` to readiness handler | None | Small |
 | 13 | **CI-9** Propagate `X-Request-Id` to proxied backend requests | None | Trivial |
 | 14 | **DI-7** Change `findMatchingCapability` to most-specific-match semantics | None | Medium |
-| 15 | **DI-8** Add HTTP timeout + circuit breaker to JWKS client | None | Small |
+| 15 | **DI-8** Add circuit breaker to JWKS client (10 s timeout already set) | None | Small |
 | 16 | **DI-1** Persist partner DID registrations in Redis or PostgreSQL | CR-1 done first | Medium |
 | 17 | **CI-4** Separate audit HMAC chain key from signing key | None | Medium |
 | 18 | **DI-9** Automate key rotation scheduling in issuer | None | Medium |
@@ -588,5 +598,5 @@ Ordered by impact and dependency:
 | 20 | **DI-6** Fix audit transport lifecycle context | None | Small |
 | 21 | **OQ-3** Decide fate of `EUNO_DEPLOYMENT_TIER` (integrate or remove) | None | Small |
 | 22 | **OQ-5** Reconcile architecture docs with Go implementation | None | Small |
-| 23 | **CI-10** Add `replicas: 1` enforcement to posture-emitter Helm chart | None | Trivial |
+| 23 | **CI-10** Document PostgreSQL migration path for posture-emitter horizontal scaling | None | Small |
 | 24 | **CI-11** Set `lock_timeout` on audit DB connection | None | Small |
