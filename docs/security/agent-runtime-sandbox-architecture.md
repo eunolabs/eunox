@@ -97,7 +97,8 @@ token) and supplied through `AgentRuntimeConfig.authTokenProvider`.
   `cmd/agent-runtime/main.go` entrypoint in this repository.
 - `k8s/agent-runtime.yaml` carries a commented `sa-token` projected volume block
   (kubelet-managed, audience-bound, 1-hour expiry) and a `AUTH_TOKEN_FILE` env
-  var commented with enablement instructions.
+  var commented with enablement instructions; this is deployment scaffolding and
+  still requires custom `IdentityTokenProvider` callback wiring.
 - The agent-runtime `ServiceAccount` carries a commented Azure Workload Identity
   annotation block.
 
@@ -199,6 +200,8 @@ In Kubernetes manifests, enabling this still requires:
 1. Azure Workload Identity or SPIRE configured on the cluster.
 2. The ServiceAccount annotated with `azure.workload.identity/client-id`.
 3. Three comment blocks in `k8s/agent-runtime.yaml` uncommented.
+4. A runtime host implementation that maps `AUTH_TOKEN_FILE` (or equivalent)
+   into `Config.IdentityTokenProvider`.
 
 ### 4.6 cert-manager TLS certificate scaffolding (Gap 6 — awaiting operator activation)
 

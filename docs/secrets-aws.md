@@ -408,6 +408,7 @@ The current Go repository does **not** yet ship a native
 `AwsSecretsManagerSecretStore` implementation in `pkg/config`.
 This section documents the planned Phase 2 design for direct
 Secrets Manager fetch at startup.
+All examples in §9 are forward-looking until that implementation lands.
 
 ### 9.1 ARN-based fallback pattern
 
