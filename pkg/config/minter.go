@@ -23,7 +23,7 @@ type MinterConfig struct {
 	RateLimitMax        int         `env:"MINTER_RATE_LIMIT_MAX" default:"100" min:"1"`
 	RateLimitWindowSecs int         `env:"MINTER_RATE_LIMIT_WINDOW_SECONDS" default:"60" min:"1"`
 
-	// Database connection pool (DI-1)
+	// Database connection pool
 	DBPool DatabasePoolConfig
 
 	// Request body limits

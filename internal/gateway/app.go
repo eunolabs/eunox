@@ -192,7 +192,7 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 		app.ionHealthChecker = NewIONHealthChecker(deps.IONResolver)
 	}
 
-	// Initialize admin rate limiter (CR-4).
+	// Initialize admin rate limiter.
 	adminRateLimit := cfg.AdminRateLimitPerMinute
 	if adminRateLimit <= 0 {
 		adminRateLimit = defaultAdminRateLimitPerMinute
@@ -203,7 +203,7 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 		Burst:  adminRateLimit,
 	})
 
-	// Initialize public API rate limiter (CR-2).
+	// Initialize public API rate limiter.
 	// Keyed on client IP (respects trusted proxy CIDRs for XFF) to defend
 	// against unauthenticated callers hammering /api/v1/enforce or /validate.
 	publicRateLimit := cfg.RateLimitRequests

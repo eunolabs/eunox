@@ -45,8 +45,6 @@
 #
 # Run as a Deployment (not StatefulSet) — the router is stateless.  Scale
 # independently of the gateway replicas.
-#
-# See docs/HORIZONTAL_SHARDING.md for the full architecture.
 
 ---
 # ConfigMap with the Envoy bootstrap configuration.

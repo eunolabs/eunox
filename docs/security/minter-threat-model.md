@@ -491,14 +491,14 @@ that deletes rows creates a detectable gap in the Merkle chain.
 The minter exposes the following Prometheus metrics (consistent with the naming convention
 in `pkg//src/metrics.ts`):
 
-| Metric                                 | Type      | Labels                                     | Description                                                                                |
-| -------------------------------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `euno_minter_mint_total`               | Counter   | `tenant`, `result` (`ok`/`denied`/`error`) | Total mint calls                                                                           |
-| `euno_minter_mint_latency_seconds`     | Histogram | `tenant`                                   | End-to-end mint latency                                                                    |
-| `euno_minter_kms_sign_latency_seconds` | Histogram | `provider`                                 | HSM sign latency                                                                           |
-| `euno_minter_kms_error_total`          | Counter   | `provider`, `error_class`                  | KMS errors                                                                                 |
-| `euno_minter_anomaly_alerts_total`     | Counter   | `tenant`, `rule`, `replica`                | Times an anomaly rule fired (CR-4: `replica` label for per-instance discrepancy detection) |
-| `euno_minter_key_rotation_total`       | Counter   | `kid`, `reason`                            | Key rotations (scheduled / emergency)                                                      |
+| Metric                                 | Type      | Labels                                     | Description                                                                          |
+| -------------------------------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `euno_minter_mint_total`               | Counter   | `tenant`, `result` (`ok`/`denied`/`error`) | Total mint calls                                                                     |
+| `euno_minter_mint_latency_seconds`     | Histogram | `tenant`                                   | End-to-end mint latency                                                              |
+| `euno_minter_kms_sign_latency_seconds` | Histogram | `provider`                                 | HSM sign latency                                                                     |
+| `euno_minter_kms_error_total`          | Counter   | `provider`, `error_class`                  | KMS errors                                                                           |
+| `euno_minter_anomaly_alerts_total`     | Counter   | `tenant`, `rule`, `replica`                | Times an anomaly rule fired (`replica` label for per-instance discrepancy detection) |
+| `euno_minter_key_rotation_total`       | Counter   | `kid`, `reason`                            | Key rotations (scheduled / emergency)                                                |
 
 ### Alerting rules
 
@@ -590,7 +590,7 @@ annotations:
   runbook: "https://docs.eunox.example/runbooks/minter-key-rotation"
 ```
 
-#### Rule 6 — Per-replica anomaly discrepancy (CR-4)
+#### Rule 6 — Per-replica anomaly discrepancy
 
 ```yaml
 # Fires when one replica's anomaly alert rate is less than 50% of the fleet
@@ -615,7 +615,7 @@ annotations:
   runbook: "https://docs.eunox.example/runbooks/minter-anomaly-replica-skew"
 ```
 
-> **CR-4 per-replica limitation:** The in-process `AnomalyDetector` maintains
+> **per-replica limitation:** The in-process `AnomalyDetector` maintains
 > completely independent per-tenant state on each minter replica. An attacker
 > distributing mint requests across N replicas via the load balancer appears at
 > only 1/N of the actual mint rate on each replica, potentially evading all
@@ -691,12 +691,12 @@ Until all four rows are filled, the minter is **blocked from merging**.
 
 ## Cross-references
 
-| Document                                                                                         | Relevant section                                                             |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [`docs/enforcement.md`](../enforcement.md)                                                       | Cryptographic-token invariant                                                |
-| [`docs/capability-model.md`](../capability-model.md)                                             | §6 — unknown types are denied by default                                     |
-| [`pkg/audit/audit.go`](../../pkg/audit/audit.go)                                                 | Per-row HMAC ledger pattern reused for mint-audit                            |
-| [`pkg/revocation/revocation.go`](../../pkg/revocation/revocation.go)                             | Token revocation used in key rotation (§3)                                   |
-| [`pkg/crypto/kms_azure.go`](../../pkg/crypto/kms_azure.go)                                       | Azure Key Vault signing driver                                               |
-| [`pkg/crypto/kms_aws.go`](../../pkg/crypto/kms_aws.go)                                           | AWS KMS signing driver                                                       |
-| [`pkg/crypto/kms_gcp.go`](../../pkg/crypto/kms_gcp.go)                                           | GCP Cloud KMS signing driver                                                 |
+| Document                                                             | Relevant section                                  |
+| -------------------------------------------------------------------- | ------------------------------------------------- |
+| [`docs/enforcement.md`](../enforcement.md)                           | Cryptographic-token invariant                     |
+| [`docs/capability-model.md`](../capability-model.md)                 | §6 — unknown types are denied by default          |
+| [`pkg/audit/audit.go`](../../pkg/audit/audit.go)                     | Per-row HMAC ledger pattern reused for mint-audit |
+| [`pkg/revocation/revocation.go`](../../pkg/revocation/revocation.go) | Token revocation used in key rotation (§3)        |
+| [`pkg/crypto/kms_azure.go`](../../pkg/crypto/kms_azure.go)           | Azure Key Vault signing driver                    |
+| [`pkg/crypto/kms_aws.go`](../../pkg/crypto/kms_aws.go)               | AWS KMS signing driver                            |
+| [`pkg/crypto/kms_gcp.go`](../../pkg/crypto/kms_gcp.go)               | GCP Cloud KMS signing driver                      |

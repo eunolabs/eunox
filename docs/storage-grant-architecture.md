@@ -2,8 +2,7 @@
 
 This document describes the architecture, trust model, and audit integration
 for the Storage Grant Service (`cmd/storage-grant-svc`,
-`internal/storagegrantsvc`). It answers the questions posed in OQ-2 of the
-[Technical Architecture Review](technical-review-2026-05-26.md).
+`internal/storagegrantsvc`).
 
 ---
 
@@ -103,11 +102,11 @@ Cloud Storage (verifies signature, grants access)
 
 ### 3.2 What Each Party Trusts
 
-| Party | Trusts | Verifies |
-|-------|--------|----------|
-| Agent | Issuer (to issue tokens), Storage Grant Service (to mint URLs) | Nothing (cannot verify) |
-| Storage Grant Service | Issuer's JWKS (JWT signatures), Cloud provider credentials | Token signature, expiry, capability scope |
-| Cloud Storage | The signing key (AWS access key, Azure delegation key, GCP service account) | URL signature, expiry timestamp |
+| Party                 | Trusts                                                                      | Verifies                                  |
+| --------------------- | --------------------------------------------------------------------------- | ----------------------------------------- |
+| Agent                 | Issuer (to issue tokens), Storage Grant Service (to mint URLs)              | Nothing (cannot verify)                   |
+| Storage Grant Service | Issuer's JWKS (JWT signatures), Cloud provider credentials                  | Token signature, expiry, capability scope |
+| Cloud Storage         | The signing key (AWS access key, Azure delegation key, GCP service account) | URL signature, expiry timestamp           |
 
 ### 3.3 Security Invariants
 
@@ -131,12 +130,12 @@ Cloud Storage (verifies signature, grants access)
 
 ### 4.1 Time-Limited (TTL)
 
-| Parameter | Default | Maximum | Enforcement |
-|-----------|---------|---------|-------------|
-| `ttlSeconds` (request body) | 15 min | 60 min | Hard cap in service config |
-| AWS presigned URL | 15 min | 7 days (AWS limit) | Service enforces MaxTTL |
-| Azure SAS token | 15 min | User-delegation key expiry | Service enforces MaxTTL |
-| GCP V4 signed URL | 15 min | 7 days (GCP limit) | Service enforces MaxTTL |
+| Parameter                   | Default | Maximum                    | Enforcement                |
+| --------------------------- | ------- | -------------------------- | -------------------------- |
+| `ttlSeconds` (request body) | 15 min  | 60 min                     | Hard cap in service config |
+| AWS presigned URL           | 15 min  | 7 days (AWS limit)         | Service enforces MaxTTL    |
+| Azure SAS token             | 15 min  | User-delegation key expiry | Service enforces MaxTTL    |
+| GCP V4 signed URL           | 15 min  | 7 days (GCP limit)         | Service enforces MaxTTL    |
 
 If the capability token expires before the requested TTL, the grant TTL is
 capped to the token's remaining lifetime.
@@ -144,6 +143,7 @@ capped to the token's remaining lifetime.
 ### 4.2 Resource-Limited
 
 Grants are scoped to:
+
 - **Specific bucket**: Cannot access other buckets
 - **Specific path prefix**: Cannot access other prefixes (when configured)
 - **Specific permission**: Read only (write and delete are planned for a future release)
@@ -227,6 +227,7 @@ The Storage Grant Service integrates with the platform's audit infrastructure:
 ### 6.3 Forensic Queries
 
 Operators can answer:
+
 - "Which agent accessed bucket X in the last hour?" — Filter by agent_did + bucket
 - "Was this presigned URL legitimately issued?" — Match URL parameters against grant log
 - "What was the blast radius of a compromised token?" — Query by token_jti
@@ -283,19 +284,19 @@ Agent → Storage Grant Service → IAM signBlob API → V4 Signed URL
 
 ## 8. Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STORAGE_GRANT_SVC_PORT` | 3006 | HTTP listen port |
-| `STORAGE_GRANT_SVC_ADAPTER` | aws-s3 | Cloud adapter: `aws-s3`, `azure-blob`, `gcp-gcs` |
-| `ISSUER_JWKS_URL` | (required) | Issuer's JWKS endpoint for token verification |
-| `ISSUER_JWT_AUDIENCE` | — | Expected audience claim (optional) |
-| `NODE_ENV` | — | Set to `production` to reject stub adapters |
-| `AWS_REGION` | — | AWS region for S3 presigning |
-| `STORAGE_GRANT_SVC_BUCKET` | — | Default bucket name |
-| `STORAGE_GRANT_SVC_AZURE_ACCOUNT` | — | Azure storage account name |
-| `STORAGE_GRANT_SVC_AZURE_CONTAINER` | — | Azure blob container name |
-| `GCP_PROJECT_ID` | — | GCP project for GCS signing |
-| `STORAGE_GRANT_SVC_GCP_BUCKET` | — | GCS bucket name |
+| Variable                            | Default    | Description                                      |
+| ----------------------------------- | ---------- | ------------------------------------------------ |
+| `STORAGE_GRANT_SVC_PORT`            | 3006       | HTTP listen port                                 |
+| `STORAGE_GRANT_SVC_ADAPTER`         | aws-s3     | Cloud adapter: `aws-s3`, `azure-blob`, `gcp-gcs` |
+| `ISSUER_JWKS_URL`                   | (required) | Issuer's JWKS endpoint for token verification    |
+| `ISSUER_JWT_AUDIENCE`               | —          | Expected audience claim (optional)               |
+| `NODE_ENV`                          | —          | Set to `production` to reject stub adapters      |
+| `AWS_REGION`                        | —          | AWS region for S3 presigning                     |
+| `STORAGE_GRANT_SVC_BUCKET`          | —          | Default bucket name                              |
+| `STORAGE_GRANT_SVC_AZURE_ACCOUNT`   | —          | Azure storage account name                       |
+| `STORAGE_GRANT_SVC_AZURE_CONTAINER` | —          | Azure blob container name                        |
+| `GCP_PROJECT_ID`                    | —          | GCP project for GCS signing                      |
+| `STORAGE_GRANT_SVC_GCP_BUCKET`      | —          | GCS bucket name                                  |
 
 ---
 
@@ -309,16 +310,17 @@ provider's signing infrastructure (external).
 
 ### 9.2 Failure Modes
 
-| Failure | Impact | Behavior |
-|---------|--------|----------|
-| Issuer JWKS unreachable | Cannot verify tokens | Returns 401 (`invalid_token`); JWKS cache (5 min TTL) provides grace |
-| Cloud credentials expired | Cannot sign URLs | Returns 500; relies on IMDS/workload identity refresh |
-| Invalid token | No grant issued | Returns 401 with reason |
-| Requested resource out of scope | No grant issued | Returns 403 with denial reason |
+| Failure                         | Impact               | Behavior                                                             |
+| ------------------------------- | -------------------- | -------------------------------------------------------------------- |
+| Issuer JWKS unreachable         | Cannot verify tokens | Returns 401 (`invalid_token`); JWKS cache (5 min TTL) provides grace |
+| Cloud credentials expired       | Cannot sign URLs     | Returns 500; relies on IMDS/workload identity refresh                |
+| Invalid token                   | No grant issued      | Returns 401 with reason                                              |
+| Requested resource out of scope | No grant issued      | Returns 403 with denial reason                                       |
 
 ### 9.3 Monitoring
 
 Key metrics to alert on:
+
 - `storage_grants_minted_total{status="error"}` — Grant failures
 - `storage_grant_mint_duration_seconds` p99 > 1s — Signing latency
 - `storage_grants_minted_total{status="error"}` rate > 0 for 5 min — Sustained failures

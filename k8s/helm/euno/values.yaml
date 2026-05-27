@@ -38,7 +38,7 @@
 #       ISSUER_DB_URL: "postgres://euno:secret@db.internal:5432/euno"
 #       ISSUER_SCIM_BEARER_TOKEN: "<scim-token>"
 #
-# See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" for the full
+# See docs/deployment.md §"Stage-5 on-prem deployment" for the full
 # production installation guide.
 
 # ── gateway ─────────────────────────────────────────────────────────────

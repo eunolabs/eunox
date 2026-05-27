@@ -41,13 +41,13 @@ managing audit data through its lifecycle.
 
 ### Default Retention Periods
 
-| Data Category | Retention Period | Justification |
-|---------------|-----------------|---------------|
-| Enforcement decisions | 90 days (hot) + 2 years (archive) | Incident investigation + compliance |
-| Token issuance events | 90 days (hot) + 2 years (archive) | Security audit trail |
-| Administrative actions | 90 days (hot) + 7 years (archive) | SOC 2 + regulatory |
-| Partner federation events | 90 days (hot) + 7 years (archive) | Cross-org accountability |
-| Kill switch activations | Permanent | Critical security events |
+| Data Category             | Retention Period                  | Justification                       |
+| ------------------------- | --------------------------------- | ----------------------------------- |
+| Enforcement decisions     | 90 days (hot) + 2 years (archive) | Incident investigation + compliance |
+| Token issuance events     | 90 days (hot) + 2 years (archive) | Security audit trail                |
+| Administrative actions    | 90 days (hot) + 7 years (archive) | SOC 2 + regulatory                  |
+| Partner federation events | 90 days (hot) + 7 years (archive) | Cross-org accountability            |
+| Kill switch activations   | Permanent                         | Critical security events            |
 
 ### Storage Tiers
 
@@ -95,12 +95,12 @@ removing N makes N+1's hash unverifiable against its `previous_hash` field.
 
 ### Why Direct Deletion Is Unsafe
 
-| Operation | Impact |
-|-----------|--------|
-| Delete middle record | Breaks chain from that point forward |
-| Modify any field | Changes `chain_hash`, invalidating successors |
-| Delete from beginning | Entire chain becomes unverifiable |
-| Delete from end | Only affects future appends (safe for pruning) |
+| Operation             | Impact                                         |
+| --------------------- | ---------------------------------------------- |
+| Delete middle record  | Breaks chain from that point forward           |
+| Modify any field      | Changes `chain_hash`, invalidating successors  |
+| Delete from beginning | Entire chain becomes unverifiable              |
+| Delete from end       | Only affects future appends (safe for pruning) |
 
 ---
 
@@ -120,6 +120,7 @@ Records: [1] ← [2] ← [3] ← [4] ← [5] ← [6] ← [7] ← [8] ← [9] ←
 **Steps:**
 
 1. **Create anchor at prune boundary:**
+
    ```sql
    -- Anchor captures: replica_id, sequence range, chain_hash at boundary,
    -- and Merkle root of all records in the segment
@@ -138,6 +139,7 @@ Records: [1] ← [2] ← [3] ← [4] ← [5] ← [6] ← [7] ← [8] ← [9] ←
    - Verify each record's digital signature independently
 
 4. **Delete pruned records from hot tier:**
+
    ```sql
    DELETE FROM audit_records
    WHERE replica_id = 'replica-1' AND sequence_num <= 4;
@@ -150,12 +152,12 @@ Records: [1] ← [2] ← [3] ← [4] ← [5] ← [6] ← [7] ← [8] ← [9] ←
 
 ### External Anchoring Backends
 
-| Backend | Immutability Guarantee | Use Case |
-|---------|------------------------|----------|
-| AWS S3 Object Lock | Compliance mode (WORM) | Standard deployments |
-| Azure Confidential Ledger | Blockchain-backed | High-assurance |
-| Azure Blob (immutable) | Time-based retention lock | Azure deployments |
-| GCS (retention policy) | Bucket-level lock | GCP deployments |
+| Backend                   | Immutability Guarantee    | Use Case             |
+| ------------------------- | ------------------------- | -------------------- |
+| AWS S3 Object Lock        | Compliance mode (WORM)    | Standard deployments |
+| Azure Confidential Ledger | Blockchain-backed         | High-assurance       |
+| Azure Blob (immutable)    | Time-based retention lock | Azure deployments    |
+| GCS (retention policy)    | Bucket-level lock         | GCP deployments      |
 
 ---
 
@@ -182,11 +184,11 @@ archive-segment-{replica_id}-{start_seq}-{end_seq}.jsonl.gz
 
 ### Archive Lifecycle
 
-| Cloud | Hot → Warm | Warm → Cold | Cold → Delete |
-|-------|------------|-------------|---------------|
-| AWS | S3 Lifecycle: Standard → IA (90 days) | IA → Glacier (2 years) | Glacier expiry (7 years) |
-| Azure | Blob: Hot → Cool (90 days) | Cool → Archive (2 years) | Archive expiry (7 years) |
-| GCP | GCS: Standard → Nearline (90 days) | Nearline → Coldline (2 years) | Coldline expiry (7 years) |
+| Cloud | Hot → Warm                            | Warm → Cold                   | Cold → Delete             |
+| ----- | ------------------------------------- | ----------------------------- | ------------------------- |
+| AWS   | S3 Lifecycle: Standard → IA (90 days) | IA → Glacier (2 years)        | Glacier expiry (7 years)  |
+| Azure | Blob: Hot → Cool (90 days)            | Cool → Archive (2 years)      | Archive expiry (7 years)  |
+| GCP   | GCS: Standard → Nearline (90 days)    | Nearline → Coldline (2 years) | Coldline expiry (7 years) |
 
 ### Backup Integration
 
@@ -205,33 +207,33 @@ The archive strategy integrates with database backup:
 
 ### SOC 2 Type II
 
-| Control | Requirement | Eunox Implementation |
-|---------|-------------|---------------------|
-| CC6.1 | Logical access controls logged | All enforcement decisions audited |
-| CC6.2 | Access provisioning tracked | Token issuance and revocation recorded |
-| CC7.1 | System operations monitored | Admin actions with operator attribution |
-| CC7.2 | Anomaly detection supported | Audit export in OCSF v1.1 for SIEM |
-| CC8.1 | Change management tracked | Policy changes audited |
+| Control | Requirement                    | Eunox Implementation                    |
+| ------- | ------------------------------ | --------------------------------------- |
+| CC6.1   | Logical access controls logged | All enforcement decisions audited       |
+| CC6.2   | Access provisioning tracked    | Token issuance and revocation recorded  |
+| CC7.1   | System operations monitored    | Admin actions with operator attribution |
+| CC7.2   | Anomaly detection supported    | Audit export in OCSF v1.1 for SIEM      |
+| CC8.1   | Change management tracked      | Policy changes audited                  |
 
 **Retention requirement:** Minimum 1 year for SOC 2 audit evidence.
 
 ### HIPAA
 
-| Requirement | Implementation |
-|-------------|---------------|
+| Requirement         | Implementation                       |
+| ------------------- | ------------------------------------ |
 | 45 CFR § 164.312(b) | Audit trail for PHI access (6 years) |
-| 45 CFR § 164.530(j) | Documentation retention (6 years) |
-| Integrity controls | HMAC chain + digital signatures |
-| Access controls | Tenant-scoped queries |
+| 45 CFR § 164.530(j) | Documentation retention (6 years)    |
+| Integrity controls  | HMAC chain + digital signatures      |
+| Access controls     | Tenant-scoped queries                |
 
 ### PCI DSS v4.0
 
-| Requirement | Implementation |
-|-------------|---------------|
-| 10.2 | All access to cardholder data logged |
-| 10.3 | Sufficient detail in audit entries |
-| 10.5 | Audit trail integrity (HMAC chain) |
-| 10.7 | Retain for at least 12 months (3 months immediately available) |
+| Requirement | Implementation                                                 |
+| ----------- | -------------------------------------------------------------- |
+| 10.2        | All access to cardholder data logged                           |
+| 10.3        | Sufficient detail in audit entries                             |
+| 10.5        | Audit trail integrity (HMAC chain)                             |
+| 10.7        | Retain for at least 12 months (3 months immediately available) |
 
 ### GDPR
 
@@ -252,7 +254,7 @@ Store pseudonymized identifiers in audit records instead of PII:
 
 ```json
 {
-  "actor": "sha256:a1b2c3...",  // Hash of user identifier
+  "actor": "sha256:a1b2c3...", // Hash of user identifier
   "tenant_id": "acme"
 }
 ```
@@ -311,22 +313,18 @@ Retention is managed via object storage lifecycle policies. Example for AWS:
   "Rules": [
     {
       "ID": "audit-hot-to-warm",
-      "Filter": {"Prefix": "audit/hot/"},
-      "Transitions": [
-        {"Days": 90, "StorageClass": "STANDARD_IA"}
-      ]
+      "Filter": { "Prefix": "audit/hot/" },
+      "Transitions": [{ "Days": 90, "StorageClass": "STANDARD_IA" }]
     },
     {
       "ID": "audit-warm-to-cold",
-      "Filter": {"Prefix": "audit/warm/"},
-      "Transitions": [
-        {"Days": 730, "StorageClass": "GLACIER"}
-      ]
+      "Filter": { "Prefix": "audit/warm/" },
+      "Transitions": [{ "Days": 730, "StorageClass": "GLACIER" }]
     },
     {
       "ID": "audit-cold-expiry",
-      "Filter": {"Prefix": "audit/cold/"},
-      "Expiration": {"Days": 2555}
+      "Filter": { "Prefix": "audit/cold/" },
+      "Expiration": { "Days": 2555 }
     }
   ]
 }
@@ -382,11 +380,11 @@ curl "https://gateway:3002/api/v1/audit/chain-proof?replica_id=replica-1&from_se
 
 The gateway exposes chain verification endpoints:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /api/v1/audit/chain-proof` | Verify hot-tier chain integrity |
+| Endpoint                         | Purpose                                     |
+| -------------------------------- | ------------------------------------------- |
+| `GET /api/v1/audit/chain-proof`  | Verify hot-tier chain integrity             |
 | `GET /api/v1/audit/signing-keys` | Export public keys for offline verification |
-| `GET /api/v1/audit/export` | Export records in OCSF v1.1 format |
+| `GET /api/v1/audit/export`       | Export records in OCSF v1.1 format          |
 
 ### Offline Verification
 
@@ -400,13 +398,13 @@ Archived segments can be verified independently:
 
 ### Tamper Detection
 
-| Modification | Detection Method |
-|-------------|------------------|
-| Record content changed | Signature verification fails |
-| Record deleted (middle) | Chain hash mismatch on successor |
-| Record inserted | Sequence number gap or chain break |
-| Record reordered | Timestamp / sequence monotonicity violation |
-| Anchor modified | External storage integrity (Object Lock) |
+| Modification            | Detection Method                            |
+| ----------------------- | ------------------------------------------- |
+| Record content changed  | Signature verification fails                |
+| Record deleted (middle) | Chain hash mismatch on successor            |
+| Record inserted         | Sequence number gap or chain break          |
+| Record reordered        | Timestamp / sequence monotonicity violation |
+| Anchor modified         | External storage integrity (Object Lock)    |
 
 ---
 
@@ -415,16 +413,12 @@ Archived segments can be verified independently:
 > The following variables describe a proposed automation surface. They are
 > not currently wired in the Go runtime configuration.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AUDIT_HOT_RETENTION_DAYS` | 90 | Days before records are eligible for archival |
-| `AUDIT_ARCHIVE_BACKEND` | `s3` | Archive storage backend (s3, azure-blob, gcs) |
-| `AUDIT_ARCHIVE_BUCKET` | — | Object storage bucket for archives |
-| `AUDIT_ANCHOR_BACKEND` | `s3` | Anchor storage backend |
-| `AUDIT_PRUNE_ENABLED` | `false` | Enable automated pruning (requires archive backend) |
-| `AUDIT_PRUNE_SCHEDULE` | `0 2 * * 0` | Cron schedule for prune cycles (weekly default) |
-| `AUDIT_MERKLE_VERIFY_ON_PRUNE` | `true` | Verify Merkle root before deleting records |
-
----
-
-*Document created as part of Phase 4 (OQ-3) of the architecture review.*
+| Variable                       | Default     | Description                                         |
+| ------------------------------ | ----------- | --------------------------------------------------- |
+| `AUDIT_HOT_RETENTION_DAYS`     | 90          | Days before records are eligible for archival       |
+| `AUDIT_ARCHIVE_BACKEND`        | `s3`        | Archive storage backend (s3, azure-blob, gcs)       |
+| `AUDIT_ARCHIVE_BUCKET`         | —           | Object storage bucket for archives                  |
+| `AUDIT_ANCHOR_BACKEND`         | `s3`        | Anchor storage backend                              |
+| `AUDIT_PRUNE_ENABLED`          | `false`     | Enable automated pruning (requires archive backend) |
+| `AUDIT_PRUNE_SCHEDULE`         | `0 2 * * 0` | Cron schedule for prune cycles (weekly default)     |
+| `AUDIT_MERKLE_VERIFY_ON_PRUNE` | `true`      | Verify Merkle root before deleting records          |

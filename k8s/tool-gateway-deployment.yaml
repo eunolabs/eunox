@@ -118,7 +118,7 @@ spec:
         # below, not via the public LoadBalancer. The gateway config
         # schema rejects production rollouts that leave ADMIN_HOST as a
         # wildcard (0.0.0.0 / ::) — defence in depth on top of the
-        # ClusterIP-only Service. See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md
+        # ClusterIP-only Service.
         # § 1.5 "Admin Surface".
         - name: ADMIN_HOST
           valueFrom:
@@ -126,11 +126,10 @@ spec:
               fieldPath: status.podIP
         # Declare the deployment availability tier so the gateway's
         # config schema enforces the matching infrastructure (REDIS_URL
-        # is required for multi-replica). See
-        # docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md § "Redis availability tiers".
+        # is required for multi-replica).
         - name: EUNO_DEPLOYMENT_TIER
           value: "multi-replica"
-        # R-6: read keys from the issuer JWKS endpoint, not the
+        # read keys from the issuer JWKS endpoint, not the
         # deprecated single-key endpoint. Schema rejects production
         # rollouts that point at ISSUER_PUBLIC_KEY_URL alone.
         - name: ISSUER_JWKS_URL
@@ -145,7 +144,7 @@ spec:
         - name: ENABLE_DETAILED_LOGGING
           value: "false"
 
-        # F-2: DPoP / RFC 9449 sender-constrained tokens. After the
+        # DPoP / RFC 9449 sender-constrained tokens. After the
         # documented DPoP migration `true` is the production default and
         # the schema rejects production rollouts that disable it.
         - name: DPOP_REQUIRED

@@ -1,8 +1,7 @@
 # Chaos Testing Strategy
 
 This document describes the chaos testing strategy, coverage matrix, and release
-gates for the Euno platform. It answers the questions posed in OQ-4 of the
-[Technical Architecture Review](technical-review-2026-05-26.md).
+gates for the Euno platform.
 
 ---
 
@@ -37,12 +36,12 @@ degradation paths work correctly before production deployment.
 
 ### 2.2 Fault Types
 
-| Type | Constant | Behavior | Use Case |
-|------|----------|----------|----------|
-| **Latency** | `FaultLatency` | Adds configurable delay; respects context cancellation | Simulating slow network, saturated services |
-| **Error** | `FaultError` | Returns configured error immediately | Simulating service failures, permission denials |
-| **Timeout** | `FaultTimeout` | Returns `ErrTimeout` immediately | Simulating deadline exceeded on upstream calls |
-| **Partition** | `FaultPartition` | Returns `ErrPartition` immediately | Simulating network partition, connection refused |
+| Type          | Constant         | Behavior                                               | Use Case                                         |
+| ------------- | ---------------- | ------------------------------------------------------ | ------------------------------------------------ |
+| **Latency**   | `FaultLatency`   | Adds configurable delay; respects context cancellation | Simulating slow network, saturated services      |
+| **Error**     | `FaultError`     | Returns configured error immediately                   | Simulating service failures, permission denials  |
+| **Timeout**   | `FaultTimeout`   | Returns `ErrTimeout` immediately                       | Simulating deadline exceeded on upstream calls   |
+| **Partition** | `FaultPartition` | Returns `ErrPartition` immediately                     | Simulating network partition, connection refused |
 
 ### 2.3 Integration Pattern
 
@@ -74,21 +73,21 @@ inj.SetFault("token_refresh", chaos.Fault{
 
 ### 3.1 Coverage Matrix
 
-| Failure Mode | Fault Type | Component Under Test | Verified Behavior |
-|-------------|-----------|---------------------|-------------------|
-| Token issuer unreachable | Timeout | `AuthTokenProvider` | Circuit breaker opens; stale token served for grace period |
-| Token issuer returns errors | Error | `AuthTokenProvider` | Retry with backoff; circuit breaker after threshold |
-| Token issuer slow response | Latency | `AuthTokenProvider` | Context deadline cancels request; no goroutine leak |
-| Gateway network partition | Partition | `ToolInvoker` | Returns error; agent handles denial gracefully |
-| Redis partition (kill switch) | Partition | `KillSwitchManager` | Fail-closed (blocks all requests) |
-| Redis partition (revocation) | Partition | `RevocationStore` | Fail-closed (treats tokens as revoked) |
-| Redis partition (rate limiter) | Partition | `RateLimiter` | Fail-open (allows with in-memory fallback) |
-| Redis partition (call counter) | Partition | `CallCounter` | Fail-open (degrades gracefully) |
-| Cascading failures | Error chain | Circuit breaker chain | Cascading circuit breaker activation |
-| Service restart during operation | Timeout + Recovery | Token provider | Reconnection with backoff; fresh token acquisition |
-| Split-brain (concurrent state) | Latency + Partition | Distributed state | Eventual consistency via safety-net refresh |
-| Retry storms | Error at threshold | Retry with backoff | Exponential backoff prevents amplification |
-| Rate limit under load | Latency | Rate limiter | Graceful degradation; 429 responses |
+| Failure Mode                     | Fault Type          | Component Under Test  | Verified Behavior                                          |
+| -------------------------------- | ------------------- | --------------------- | ---------------------------------------------------------- |
+| Token issuer unreachable         | Timeout             | `AuthTokenProvider`   | Circuit breaker opens; stale token served for grace period |
+| Token issuer returns errors      | Error               | `AuthTokenProvider`   | Retry with backoff; circuit breaker after threshold        |
+| Token issuer slow response       | Latency             | `AuthTokenProvider`   | Context deadline cancels request; no goroutine leak        |
+| Gateway network partition        | Partition           | `ToolInvoker`         | Returns error; agent handles denial gracefully             |
+| Redis partition (kill switch)    | Partition           | `KillSwitchManager`   | Fail-closed (blocks all requests)                          |
+| Redis partition (revocation)     | Partition           | `RevocationStore`     | Fail-closed (treats tokens as revoked)                     |
+| Redis partition (rate limiter)   | Partition           | `RateLimiter`         | Fail-open (allows with in-memory fallback)                 |
+| Redis partition (call counter)   | Partition           | `CallCounter`         | Fail-open (degrades gracefully)                            |
+| Cascading failures               | Error chain         | Circuit breaker chain | Cascading circuit breaker activation                       |
+| Service restart during operation | Timeout + Recovery  | Token provider        | Reconnection with backoff; fresh token acquisition         |
+| Split-brain (concurrent state)   | Latency + Partition | Distributed state     | Eventual consistency via safety-net refresh                |
+| Retry storms                     | Error at threshold  | Retry with backoff    | Exponential backoff prevents amplification                 |
+| Rate limit under load            | Latency             | Rate limiter          | Graceful degradation; 429 responses                        |
 
 ### 3.2 Scenarios Covered in Tests
 
@@ -118,16 +117,16 @@ resilience scenarios:
 
 ### 4.1 Current Injection Points
 
-| Component | Operation Name | Location | Fault Types Used |
-|-----------|---------------|----------|-----------------|
-| Token provider | `token_refresh` | `internal/agentruntime/token_provider.go` | Timeout, Error, Latency |
-| HTTP client | `http_request` | `internal/agentruntime/httpclient.go` | Timeout, Partition, Latency |
-| Kill switch | `killswitch_check` | `pkg/killswitch/` | Partition, Error |
-| Revocation store | `revocation_check` | `pkg/revocation/` | Partition, Error |
-| Rate limiter | `ratelimit_check` | `pkg/ratelimit/` | Partition, Error |
-| Call counter | `callcounter_increment` | `pkg/callcounter/` | Partition, Error |
-| Audit transport | `audit_enqueue` | `pkg/audit/transport.go` | Error, Latency |
-| Posture delivery | `posture_deliver` | `internal/posture/delivery.go` | Timeout, Partition |
+| Component        | Operation Name          | Location                                  | Fault Types Used            |
+| ---------------- | ----------------------- | ----------------------------------------- | --------------------------- |
+| Token provider   | `token_refresh`         | `internal/agentruntime/token_provider.go` | Timeout, Error, Latency     |
+| HTTP client      | `http_request`          | `internal/agentruntime/httpclient.go`     | Timeout, Partition, Latency |
+| Kill switch      | `killswitch_check`      | `pkg/killswitch/`                         | Partition, Error            |
+| Revocation store | `revocation_check`      | `pkg/revocation/`                         | Partition, Error            |
+| Rate limiter     | `ratelimit_check`       | `pkg/ratelimit/`                          | Partition, Error            |
+| Call counter     | `callcounter_increment` | `pkg/callcounter/`                        | Partition, Error            |
+| Audit transport  | `audit_enqueue`         | `pkg/audit/transport.go`                  | Error, Latency              |
+| Posture delivery | `posture_deliver`       | `internal/posture/delivery.go`            | Timeout, Partition          |
 
 ### 4.2 Adding New Injection Points
 
@@ -184,19 +183,20 @@ databases) — all dependencies are mocked or stubbed.
 
 All chaos tests run with `-race` flag enabled (configured in the Makefile),
 which is critical because:
+
 - Fault injection involves concurrent goroutines
 - The injector uses `sync.RWMutex` for thread safety
 - Race conditions in chaos handling would be particularly dangerous
 
 ### 5.3 Test Characteristics
 
-| Property | Value |
-|----------|-------|
-| **External dependencies** | None (all mocked) |
-| **Determinism** | Fully deterministic (`Probability: 1.0` in tests) |
-| **Execution time** | < 2 seconds (no real network calls) |
-| **Parallelism** | Safe for parallel execution (`t.Parallel()`) |
-| **Coverage** | Covers all four fault types + combinations |
+| Property                  | Value                                             |
+| ------------------------- | ------------------------------------------------- |
+| **External dependencies** | None (all mocked)                                 |
+| **Determinism**           | Fully deterministic (`Probability: 1.0` in tests) |
+| **Execution time**        | < 2 seconds (no real network calls)               |
+| **Parallelism**           | Safe for parallel execution (`t.Parallel()`)      |
+| **Coverage**              | Covers all four fault types + combinations        |
 
 ---
 
@@ -206,14 +206,14 @@ which is critical because:
 
 All of the following must pass before a release:
 
-| Gate | Tool | Threshold |
-|------|------|-----------|
-| Unit tests (including chaos) | `go test -race` | 100% pass |
-| Lint | `golangci-lint` | 0 issues |
-| Coverage (pkg/) | `go test -coverprofile` | ≥ 80% average |
-| License headers | `make check-license` | All files compliant |
-| Vulnerability scan | Trivy | 0 CRITICAL/HIGH |
-| Build matrix | `go build` | linux/windows × amd64/arm64 |
+| Gate                         | Tool                    | Threshold                   |
+| ---------------------------- | ----------------------- | --------------------------- |
+| Unit tests (including chaos) | `go test -race`         | 100% pass                   |
+| Lint                         | `golangci-lint`         | 0 issues                    |
+| Coverage (pkg/)              | `go test -coverprofile` | ≥ 80% average               |
+| License headers              | `make check-license`    | All files compliant         |
+| Vulnerability scan           | Trivy                   | 0 CRITICAL/HIGH             |
+| Build matrix                 | `go build`              | linux/windows × amd64/arm64 |
 
 ### 6.2 Chaos Test Acceptance Criteria
 
@@ -249,13 +249,13 @@ Before tagging a release:
 
 ### 7.1 Current Limitations
 
-| Limitation | Impact | Mitigation |
-|-----------|--------|------------|
-| No real infrastructure chaos | Cannot test actual Redis failover | Use testcontainers for integration-level chaos |
-| No clock skew simulation | Cannot test time-dependent logic under clock drift | Use `time.Now` injection for time-sensitive tests |
-| No disk-full simulation | Cannot test SQLite/PostgreSQL under disk pressure | Monitor disk usage in production; alert at 80% |
-| No OOM simulation | Cannot test behavior under memory pressure | Set memory limits in K8s; test with `GOMEMLIMIT` |
-| Chaos is opt-in per component | New components may lack chaos coverage | Code review checklist includes chaos coverage |
+| Limitation                    | Impact                                             | Mitigation                                        |
+| ----------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| No real infrastructure chaos  | Cannot test actual Redis failover                  | Use testcontainers for integration-level chaos    |
+| No clock skew simulation      | Cannot test time-dependent logic under clock drift | Use `time.Now` injection for time-sensitive tests |
+| No disk-full simulation       | Cannot test SQLite/PostgreSQL under disk pressure  | Monitor disk usage in production; alert at 80%    |
+| No OOM simulation             | Cannot test behavior under memory pressure         | Set memory limits in K8s; test with `GOMEMLIMIT`  |
+| Chaos is opt-in per component | New components may lack chaos coverage             | Code review checklist includes chaos coverage     |
 
 ### 7.2 Recommended Future Enhancements
 

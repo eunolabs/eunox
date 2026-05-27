@@ -18,7 +18,7 @@ import (
 // AuthTokenProvider acquires and refreshes capability tokens from the issuer.
 // It implements proactive token refresh before expiry and caches the current token.
 //
-// Resilience features (CR-3):
+// Resilience features:
 //   - Circuit breaker protection against failing token endpoints
 //   - Jitter on refresh intervals to prevent thundering herd on restart
 //   - Stale-token grace period: serves last-known-good token during transient refresh failures
@@ -33,7 +33,7 @@ type AuthTokenProvider struct {
 	refreshBefore time.Duration
 	logger        *slog.Logger
 
-	// Circuit breaker for token refresh (CR-3).
+	// Circuit breaker for token refresh.
 	breaker *circuitbreaker.Breaker
 	// StaleGracePeriod is how long to serve a cached token after refresh failure.
 	// Default: 60s.
@@ -49,7 +49,7 @@ type AuthTokenProvider struct {
 	lifecycleCtx          context.Context
 	lifecycleCancel       context.CancelFunc
 
-	// Metrics counters (CR-3).
+	// Metrics counters.
 	refreshFailures int64
 	refreshSuccess  int64
 
@@ -155,7 +155,7 @@ func (p *AuthTokenProvider) CircuitBreakerState() circuitbreaker.State {
 // GetToken returns a valid capability token, acquiring or refreshing as needed.
 // It returns a cached token if still valid, or acquires a new one.
 // If refresh fails but a cached token exists within the stale grace period,
-// the stale token is returned to provide graceful degradation (CR-3).
+// the stale token is returned to provide graceful degradation.
 func (p *AuthTokenProvider) GetToken(ctx context.Context) (*TokenResponse, error) {
 	p.mu.RLock()
 	cached := p.cachedToken
@@ -226,7 +226,7 @@ func (p *AuthTokenProvider) refreshToken(ctx context.Context) (*TokenResponse, e
 		return p.cachedToken, nil
 	}
 
-	// Wrap token acquisition in circuit breaker (CR-3).
+	// Wrap token acquisition in circuit breaker.
 	token, err := circuitbreaker.Do(ctx, p.breaker, func(ctx context.Context) (*TokenResponse, error) {
 		return RetryFunc(ctx, p.retryConfig, func(ctx context.Context) (*TokenResponse, error) {
 			return p.acquireToken(ctx)
@@ -259,7 +259,7 @@ func (p *AuthTokenProvider) scheduleRefreshLocked(token *TokenResponse) {
 		return // Already needs refresh
 	}
 
-	// Add jitter to prevent thundering herd on synchronized restarts (CR-3).
+	// Add jitter to prevent thundering herd on synchronized restarts.
 	// Cap the total delay to stay before token expiry: positive jitter that
 	// exceeds refreshBefore would push the timer past expiresAt, causing a
 	// background refresh to arrive after the token has already expired.

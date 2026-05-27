@@ -268,7 +268,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract and validate X-Request-Id for distributed tracing (CI-9).
+	// Extract and validate X-Request-Id for distributed tracing.
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
 	if requestID == "" {
 		requestID = uuid.NewString()
@@ -321,7 +321,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate X-Tool-Name against a strict allowlist (CI-2).
+	// Validate X-Tool-Name against a strict allowlist.
 	// Rejects empty, oversized, or path-traversal-style tool names before they
 	// reach the enforcement engine or are written into audit records.
 	toolName := r.Header.Get("X-Tool-Name")
@@ -353,7 +353,7 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inject the gateway-assigned request ID into the upstream request so that
-	// logs and traces across gateway → backend can be correlated (CI-9).
+	// logs and traces across gateway → backend can be correlated.
 	r.Header.Set("X-Request-Id", requestID)
 
 	// Proxy the request to backend

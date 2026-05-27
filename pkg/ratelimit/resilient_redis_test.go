@@ -79,7 +79,7 @@ func TestResilientRedisLimiter_Check_FallsBack(t *testing.T) {
 	_ = monitor // suppress unused
 }
 
-// CI-5: Prometheus gauge for degradation state.
+// Prometheus gauge for degradation state.
 
 func TestResilientRedisLimiter_PrometheusGauge_DegradedWhenRedisDown(t *testing.T) {
 	monitor := redisfailover.NewMonitor()

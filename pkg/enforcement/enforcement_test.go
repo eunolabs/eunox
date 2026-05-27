@@ -931,7 +931,7 @@ func TestEngine_AllowedValues_Deny(t *testing.T) {
 	assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
 }
 
-// CI-3: path.Match glob semantics tests.
+// path.Match glob semantics tests.
 
 func TestEngine_ValidateAction_GlobQuestionMark(t *testing.T) {
 	engine := enforcement.New()

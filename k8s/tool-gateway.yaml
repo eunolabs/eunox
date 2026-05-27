@@ -10,8 +10,6 @@
 # eliminates Redis INCR hot-keys for `maxCalls` conditions: all traffic for
 # a given agent consistently reaches the same pod, so that pod tracks the
 # counter in its local memory instead of making a Redis round-trip.
-#
-# See docs/HORIZONTAL_SHARDING.md for the full architecture.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

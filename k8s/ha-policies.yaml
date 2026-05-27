@@ -27,9 +27,6 @@
 # GATEWAY_SHARD_COUNT, fail config validation, and crash-loop — and the Envoy
 # router would have no route for the higher ordinal anyway.
 #
-# To scale the sharded gateway, follow the manual procedure in
-# docs/HORIZONTAL_SHARDING.md (§ "Add a shard").
-#
 # If you are using the non-sharded Deployment variant (gateway-deployment.yaml)
 # you can safely add an HPA like this:
 #

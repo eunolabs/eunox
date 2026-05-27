@@ -2,8 +2,7 @@
 
 This document describes the architecture, trust model, and relationship to the
 Minter for the DB Token Service (`cmd/db-token-svc`,
-`internal/dbtokensvc`). It answers the questions posed in OQ-3 of the
-[Technical Architecture Review](technical-review-2026-05-26.md).
+`internal/dbtokensvc`).
 
 ---
 
@@ -90,28 +89,28 @@ and lifecycle models.
 
 ### 3.1 Capability Tokens vs. Database Tokens
 
-| Dimension | Capability Token (JWT) | Database Token |
-|-----------|----------------------|----------------|
-| **Issuer** | Euno Capability Issuer | Cloud provider (AWS/Azure/GCP) |
-| **Format** | JWT (signed with KMS) | Provider-specific (presigned URL, OAuth2 token) |
-| **Lifetime** | 5–15 min (configurable) | 15 min – 1 hour (provider-determined) |
-| **Scope** | Tools, resources, conditions | Single database + username |
-| **Audience** | Gateway / services | Database endpoint |
-| **Verification** | JWKS endpoint | Cloud IAM infrastructure |
-| **Revocation** | Gateway revocation list (Redis) | Not individually revocable (TTL-based) |
-| **Binding** | DPoP proof-of-possession | IP-based (database firewall) |
+| Dimension        | Capability Token (JWT)          | Database Token                                  |
+| ---------------- | ------------------------------- | ----------------------------------------------- |
+| **Issuer**       | Euno Capability Issuer          | Cloud provider (AWS/Azure/GCP)                  |
+| **Format**       | JWT (signed with KMS)           | Provider-specific (presigned URL, OAuth2 token) |
+| **Lifetime**     | 5–15 min (configurable)         | 15 min – 1 hour (provider-determined)           |
+| **Scope**        | Tools, resources, conditions    | Single database + username                      |
+| **Audience**     | Gateway / services              | Database endpoint                               |
+| **Verification** | JWKS endpoint                   | Cloud IAM infrastructure                        |
+| **Revocation**   | Gateway revocation list (Redis) | Not individually revocable (TTL-based)          |
+| **Binding**      | DPoP proof-of-possession        | IP-based (database firewall)                    |
 
 ### 3.2 Database Tokens vs. Minter API Keys
 
-| Dimension | Database Token | Minter API Key |
-|-----------|---------------|----------------|
-| **Purpose** | Ephemeral DB access for agents | Persistent app-to-app auth |
-| **Lifetime** | Minutes (auto-expires) | Long-lived (explicit revocation) |
-| **Rotation** | Not needed (ephemeral) | Pepper-based rotation with old-pepper grace |
-| **Storage** | Never stored (generated on-demand) | HMAC hash stored in PostgreSQL |
-| **Format** | Cloud-native token | `sk-{keyId}.{secret}` |
-| **Trust root** | Capability token → cloud IAM | Admin API key → minter database |
-| **Revocation** | TTL expiry only | Explicit DELETE via admin API |
+| Dimension      | Database Token                     | Minter API Key                              |
+| -------------- | ---------------------------------- | ------------------------------------------- |
+| **Purpose**    | Ephemeral DB access for agents     | Persistent app-to-app auth                  |
+| **Lifetime**   | Minutes (auto-expires)             | Long-lived (explicit revocation)            |
+| **Rotation**   | Not needed (ephemeral)             | Pepper-based rotation with old-pepper grace |
+| **Storage**    | Never stored (generated on-demand) | HMAC hash stored in PostgreSQL              |
+| **Format**     | Cloud-native token                 | `sk-{keyId}.{secret}`                       |
+| **Trust root** | Capability token → cloud IAM       | Admin API key → minter database             |
+| **Revocation** | TTL expiry only                    | Explicit DELETE via admin API               |
 
 ---
 
@@ -148,6 +147,7 @@ type CapabilityMapping struct {
 ```
 
 This ensures:
+
 1. **Least privilege**: Each capability maps to a specific DB role
 2. **No escalation**: Agents cannot request a higher-privilege username
 3. **Audit trail**: The mapping is deterministic and auditable
@@ -189,15 +189,16 @@ authorization validation.
 
 ### 5.2 Revocation Model
 
-| Level | Mechanism | Latency |
-|-------|-----------|---------|
-| **Capability token** | Gateway revocation list (Redis) | <1s (pub/sub) |
-| **Database token** | TTL expiry (no early revocation) | Up to 15 min (AWS) / 1 hour (Azure/GCP) |
-| **Agent session** | Kill switch (session scope) | <1s (pub/sub) |
-| **Agent identity** | Kill switch (agent scope) | <1s (pub/sub) |
+| Level                | Mechanism                        | Latency                                 |
+| -------------------- | -------------------------------- | --------------------------------------- |
+| **Capability token** | Gateway revocation list (Redis)  | <1s (pub/sub)                           |
+| **Database token**   | TTL expiry (no early revocation) | Up to 15 min (AWS) / 1 hour (Azure/GCP) |
+| **Agent session**    | Kill switch (session scope)      | <1s (pub/sub)                           |
+| **Agent identity**   | Kill switch (agent scope)        | <1s (pub/sub)                           |
 
 **Important:** Cloud database tokens cannot be individually revoked before
 expiry. Mitigation:
+
 - Short TTLs (15 min default for AWS, capped by service MaxTTL)
 - Kill switch prevents new token issuance immediately
 - Database firewall rules can block the agent's IP if needed
@@ -253,37 +254,38 @@ expiry. Mitigation:
 
 ## 7. Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_TOKEN_SVC_PORT` | 3005 | HTTP listen port |
-| `DB_TOKEN_SVC_ADAPTER` | aws-rds | Cloud adapter: `aws-rds`, `azure-sql`, `gcp-cloudsql` |
-| `ISSUER_JWKS_URL` | (required) | Issuer's JWKS endpoint |
-| `ISSUER_JWT_AUDIENCE` | — | Expected audience claim |
-| `NODE_ENV` | — | Set to `production` to reject stub adapters |
-| `AWS_REGION` | — | AWS region for RDS token generation |
-| `DB_TOKEN_SVC_RDS_ENDPOINT` | — | RDS cluster endpoint |
-| `DB_TOKEN_SVC_AZURE_SERVER` | — | Azure SQL server FQDN |
-| `DB_TOKEN_SVC_GCP_INSTANCE` | — | GCP instance connection name |
+| Variable                    | Default    | Description                                           |
+| --------------------------- | ---------- | ----------------------------------------------------- |
+| `DB_TOKEN_SVC_PORT`         | 3005       | HTTP listen port                                      |
+| `DB_TOKEN_SVC_ADAPTER`      | aws-rds    | Cloud adapter: `aws-rds`, `azure-sql`, `gcp-cloudsql` |
+| `ISSUER_JWKS_URL`           | (required) | Issuer's JWKS endpoint                                |
+| `ISSUER_JWT_AUDIENCE`       | —          | Expected audience claim                               |
+| `NODE_ENV`                  | —          | Set to `production` to reject stub adapters           |
+| `AWS_REGION`                | —          | AWS region for RDS token generation                   |
+| `DB_TOKEN_SVC_RDS_ENDPOINT` | —          | RDS cluster endpoint                                  |
+| `DB_TOKEN_SVC_AZURE_SERVER` | —          | Azure SQL server FQDN                                 |
+| `DB_TOKEN_SVC_GCP_INSTANCE` | —          | GCP instance connection name                          |
 
 ---
 
 ## 8. Health Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health/live` | GET | Liveness probe — service process is running |
-| `/health/ready` | GET | Readiness probe — service process is running (always returns 200) |
+| Endpoint        | Method | Purpose                                                           |
+| --------------- | ------ | ----------------------------------------------------------------- |
+| `/health/live`  | GET    | Liveness probe — service process is running                       |
+| `/health/ready` | GET    | Readiness probe — service process is running (always returns 200) |
 
 ---
 
 ## 9. Monitoring
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `db_tokens_minted_total` | Counter | `adapter`, `status` | Total credential mints |
-| `db_token_mint_duration_seconds` | Histogram | `adapter` | Minting latency |
+| Metric                           | Type      | Labels              | Description            |
+| -------------------------------- | --------- | ------------------- | ---------------------- |
+| `db_tokens_minted_total`         | Counter   | `adapter`, `status` | Total credential mints |
+| `db_token_mint_duration_seconds` | Histogram | `adapter`           | Minting latency        |
 
 Alert recommendations:
+
 - `db_tokens_minted_total{status="error"}` rate > 0 for 5 min
 - `db_token_mint_duration_seconds` p99 > 2s (SigV4/OAuth2 should be fast)
 - Health ready endpoint returning non-200
@@ -319,6 +321,7 @@ Alert recommendations:
 ```
 
 These services operate in **different trust domains**:
+
 - The Minter serves operators/apps that need persistent API keys
 - The DB Token Service serves agents that need temporary database access
 

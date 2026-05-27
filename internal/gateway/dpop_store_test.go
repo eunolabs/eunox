@@ -49,7 +49,7 @@ func TestInMemoryDPoPStore_MarkUsed_AllowsAfterExpiry(t *testing.T) {
 	assert.False(t, seen, "JTI should be accepted again after TTL expiry")
 }
 
-// CI-6: background cleanup goroutine test.
+// background cleanup goroutine test.
 
 func TestInMemoryDPoPStore_Start_CleansUpExpiredEntries(t *testing.T) {
 	now := time.Now()

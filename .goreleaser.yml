@@ -120,7 +120,7 @@ archives:
       - LICENSE
       - NOTICE
       - README.md
-      - docs/DEPLOYMENT.md
+      - docs/deployment.md
 
 dockers:
   # Gateway

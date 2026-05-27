@@ -2,7 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Cross-org trust harness — partner issuer simulator.
-# See `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`.
 #
 # This kustomization bundles all manifests for the partner-issuer-sim test
 # harness.  Apply with:

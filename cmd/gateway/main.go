@@ -83,7 +83,7 @@ func run() error {
 		logger.Info("redis HA validation passed")
 	}
 
-	// Production requires Redis to be configured for stateful security components (CR-1).
+	// Production requires Redis to be configured for stateful security components.
 	if err := validateRedisConfig(&cfg); err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func run() error {
 		}
 	}
 
-	// Production admin auth validation: JWT must be configured in production (CR-3).
+	// Production admin auth validation: JWT must be configured in production.
 	if err := validateAdminAuth(&cfg, tenantID); err != nil {
 		return err
 	}
@@ -294,7 +294,7 @@ func resolveRedisURL(specificURL, fallbackURL string) string {
 //
 // In production, stateful security components (kill-switch, revocation,
 // call counter) must be backed by Redis so that security state is not lost on
-// restart or scale-out (CR-1 in ARCHITECTURE_REVIEW.md).
+// restart or scale-out.
 //
 // Either REDIS_URL (shared fallback) must be set, or all three per-service URLs
 // (KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must
@@ -314,7 +314,7 @@ func validateRedisConfig(cfg *config.GatewayConfig) error {
 	return fmt.Errorf(
 		"in production, either REDIS_URL (shared fallback) or all per-service Redis URLs " +
 			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must be set; " +
-			"kill-switch and revocation state is lost on restart without Redis (CR-1 in ARCHITECTURE_REVIEW.md)",
+			"kill-switch and revocation state is lost on restart without Redis",
 	)
 }
 
@@ -396,7 +396,7 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 // validateAdminAuth checks that admin authentication is properly configured for the
 // deployment environment.
 //
-// JWT auth via JWKS is required in production AND staging (CR-3): staging often
+// JWT auth via JWKS is required in production AND staging: staging often
 // shares infrastructure with production data, so a stolen static admin key grants
 // the same kill-switch and revocation powers.  Only the development environment
 // may omit GATEWAY_ADMIN_JWKS_URI and fall back to a static API key.
@@ -415,9 +415,9 @@ func validateAdminAuth(cfg *config.GatewayConfig, tenantID string) error {
 		return nil
 	}
 
-	// Production and staging both require JWT auth (CR-3).
+	// Production and staging both require JWT auth.
 	if adminJWKSURI == "" {
-		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %q; static admin key alone is insecure (see CR-3 in docs/architecture-review.md)", cfg.NodeEnv)
+		return fmt.Errorf("GATEWAY_ADMIN_JWKS_URI is required in %q; static admin key alone is insecure", cfg.NodeEnv)
 	}
 	if adminJWTAudience == "" {
 		return fmt.Errorf("GATEWAY_ADMIN_JWT_AUDIENCE is required in %q when admin JWT auth is enabled", cfg.NodeEnv)

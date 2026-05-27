@@ -477,7 +477,7 @@ func TestAuditChainProof_BrokenLinkage(t *testing.T) {
 	assert.Equal(t, float64(2), result["broken_at_seq"])
 }
 
-// CI-7: audit auth middleware tests.
+// audit auth middleware tests.
 
 func TestAuditMiddleware_UnauthenticatedReturns401(t *testing.T) {
 	t.Parallel()

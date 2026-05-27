@@ -14,7 +14,7 @@
         },
         "EUNO_DEPLOYMENT_TIER": {
           "type": "string",
-          "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover. See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md and docs/MULTI_REGION_ISSUER.md."
+          "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover."
         },
         "PORT": {
           "type": "string",
@@ -182,7 +182,7 @@
         },
         "ACTION_RESOLVER_FILE": {
           "type": "string",
-          "description": "Optional path to a JSON file describing the ActionResolver (R-7) used to (a) derive capability actions from incoming HTTP / tool invocations and (b) map actions to Conditional-Access tiers. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. `db:select`, `acknowledge_alert`). The same file should be configured on the capability-issuer AND the tool-gateway so mint-time CA tiering and enforcement-time action derivation share a single vocabulary."
+          "description": "Optional path to a JSON file describing the ActionResolver used to (a) derive capability actions from incoming HTTP / tool invocations and (b) map actions to Conditional-Access tiers. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. `db:select`, `acknowledge_alert`). The same file should be configured on the capability-issuer AND the tool-gateway so mint-time CA tiering and enforcement-time action derivation share a single vocabulary."
         },
         "ENABLE_DETAILED_LOGGING": {
           "type": "string",
@@ -190,7 +190,7 @@
         },
         "STORAGE_GRANTS_ENABLED": {
           "type": "string",
-          "description": "Mint cloud-storage credentials alongside capability tokens. See docs/sprint-3-4-gaps/07-storage-grants.md."
+          "description": "Mint cloud-storage credentials alongside capability tokens."
         },
         "STORAGE_GRANT_MAX_TTL_SECONDS": {
           "type": "string",
@@ -222,7 +222,7 @@
         },
         "DB_TOKENS_ENABLED": {
           "type": "string",
-          "description": "Mint short-lived database credentials alongside capability tokens. See docs/sprint-3-4-gaps/08-db-token-issuance.md."
+          "description": "Mint short-lived database credentials alongside capability tokens."
         },
         "DB_TOKEN_MAX_TTL_SECONDS": {
           "type": "string",
@@ -266,7 +266,7 @@
         },
         "ISSUANCE_RATE_LIMIT_ENABLED": {
           "type": "string",
-          "description": "Enable the per-(tenant, user, agent) issuance rate limit (F-1, addresses I-1). Default true. Disable only in development; in production this is the primary defence against a compromised user/agent flooding /api/v1/issue."
+          "description": "Enable the per-(tenant, user, agent) issuance rate limit. Default true. Disable only in development; in production this is the primary defence against a compromised user/agent flooding /api/v1/issue."
         },
         "ISSUANCE_RATE_LIMIT_MAX": {
           "type": "string",
@@ -286,11 +286,11 @@
         },
         "REDIS_URL": {
           "type": "string",
-          "description": "Optional shared Redis URL. When set, issuance rate-limit counters propagate across issuer replicas / regions (required for multi-replica or multi-region active/active deployments — F-7)."
+          "description": "Optional shared Redis URL. When set, issuance rate-limit counters propagate across issuer replicas / regions (required for multi-replica or multi-region active/active deployments)."
         },
         "ISSUER_REGION": {
           "type": "string",
-          "description": "Logical region tag for this issuer instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md."
+          "description": "Logical region tag for this issuer instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on issued tokens (`region` claim), audit events, posture records, request span attributes (`euno.region`), and the /.well-known/capability-issuer metadata endpoint. Recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
         },
         "GATEWAY_AUDIENCE": {
           "type": "string",

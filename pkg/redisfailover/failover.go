@@ -6,7 +6,7 @@
 // local fallback caches with TTL, and tracks Redis health state for
 // readiness probe degradation.
 //
-// Failure mode policies per component (DI-2):
+// Failure mode policies per component:
 //   - Kill switch: fail-closed (block if Redis state is unknown)
 //   - Revocation: fail-closed (treat token as revoked if lookup fails)
 //   - Rate limiter: fail-open with in-memory fallback

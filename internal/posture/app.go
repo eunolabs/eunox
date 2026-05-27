@@ -102,7 +102,7 @@ func New(cfg *Config, plugins []Plugin, deps *Dependencies) (*App, error) {
 	//
 	// Current implementation: SQLite-backed queue stored at cfg.QueuePath.
 	//
-	// PostgreSQL migration path (CI-10):
+	// PostgreSQL migration path:
 	// The Queue interface (Push/Pop/Ack/Nack/Depth/DeadLetterDepth/ListDeadLetters/Close)
 	// is the only dependency the App has on the queue storage technology.
 	// To migrate to a PostgreSQL-backed queue without data loss:
