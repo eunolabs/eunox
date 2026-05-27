@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/edgeobs/eunox/internal/gateway"
 	"github.com/edgeobs/eunox/pkg/callcounter"
 	"github.com/edgeobs/eunox/pkg/capability"
@@ -23,6 +25,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/killswitch"
 	"github.com/edgeobs/eunox/pkg/lifecycle"
 	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/edgeobs/eunox/pkg/revocation"
 )
 
@@ -74,7 +77,7 @@ func run() error {
 		slog.String("env", string(cfg.NodeEnv)),
 	)
 
-	// Production Redis HA validation
+	// Production Redis HA validation (requires Sentinel/Cluster URLs; single-node is rejected).
 	if cfg.NodeEnv == config.EnvProduction {
 		if err := config.CheckGatewayRedisHA(&cfg); err != nil {
 			return fmt.Errorf("redis HA validation: %w", err)
@@ -82,15 +85,31 @@ func run() error {
 		logger.Info("redis HA validation passed")
 	}
 
+	// Production requires Redis to be configured for stateful security components (CR-1).
+	if err := validateRedisConfig(&cfg); err != nil {
+		return err
+	}
+
 	// Initialize metrics
 	metrics := observability.NewMetricsRegistry("euno", "gateway")
 
-	// Initialize backends (in-memory for Stage 2)
-	counter := callcounter.NewInMemory()
-	engine := enforcement.New(enforcement.WithCallCounter(counter))
-	ks := killswitch.NewInMemory()
-	revStore := revocation.NewInMemory()
+	// Build stateful backends (Redis-backed when URLs are configured; in-memory fallback for dev).
+	backends, err := buildGatewayBackends(&cfg, logger)
+	if err != nil {
+		return fmt.Errorf("build gateway backends: %w", err)
+	}
+
+	// Start the kill switch (connects to Redis and performs initial state load).
+	// The type assertion handles both ResilientRedis (Redis-backed) and InMemory (no Start needed).
+	if starter, ok := backends.killSwitch.(interface{ Start(context.Context) }); ok {
+		starter.Start(ctx)
+	}
+
+	engine := enforcement.New(enforcement.WithCallCounter(backends.counter))
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	if cfg.NodeEnv == config.EnvProduction {
+		logger.Warn("DPoP replay protection: using in-memory store; DPoP nonces are not shared across replicas — deploy a single gateway replica or add a Redis-backed DPoP store")
+	}
 	dpopStore.Start(ctx)
 
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
@@ -111,8 +130,8 @@ func run() error {
 	// Build gateway app
 	deps := gateway.Dependencies{
 		Engine:      engine,
-		KillSwitch:  ks,
-		Revocation:  revStore,
+		KillSwitch:  backends.killSwitch,
+		Revocation:  backends.revocation,
 		JWTVerifier: jwtVerifier,
 		DPoPStore:   dpopStore,
 		Logger:      logger,
@@ -255,6 +274,109 @@ type noopVerifier struct{}
 
 func (v *noopVerifier) VerifyToken(_ context.Context, _ string) (*capability.TokenPayload, error) {
 	return nil, fmt.Errorf("JWT verification not configured (set GATEWAY_ISSUER_JWKS_URL)")
+}
+
+// resolveRedisURL returns specificURL if non-empty, otherwise fallbackURL.
+// Use this to let per-service Redis URLs override the shared REDIS_URL.
+func resolveRedisURL(specificURL, fallbackURL string) string {
+	if specificURL != "" {
+		return specificURL
+	}
+	return fallbackURL
+}
+
+// validateRedisConfig returns an error if the gateway is starting in production
+// without REDIS_URL configured.
+//
+// In production, stateful security components (kill-switch, revocation,
+// call counter) must be backed by Redis so that security state is not lost on
+// restart or scale-out (CR-1 in ARCHITECTURE_REVIEW.md).
+func validateRedisConfig(cfg *config.GatewayConfig) error {
+	if cfg.NodeEnv != config.EnvProduction {
+		return nil
+	}
+	if cfg.RedisURL == "" {
+		return fmt.Errorf(
+			"REDIS_URL is required in production: kill-switch and revocation state is lost on restart without Redis (CR-1 in ARCHITECTURE_REVIEW.md). " +
+				"Per-service overrides KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, and CALL_COUNTER_REDIS_URL are also accepted but require REDIS_URL as the shared fallback",
+		)
+	}
+	return nil
+}
+
+// gatewayBackends holds the stateful backends for the gateway.
+type gatewayBackends struct {
+	killSwitch killswitch.Manager
+	revocation revocation.Store
+	counter    callcounter.Store
+	monitor    *redisfailover.Monitor
+}
+
+// buildGatewayBackends creates stateful backends for the gateway.
+//
+// When per-service Redis URLs (e.g. KILL_SWITCH_REDIS_URL) or the shared
+// REDIS_URL are set, resilient Redis-backed implementations are returned with
+// proper fail-closed (kill-switch, revocation) or fail-open (call counter)
+// semantics. When no Redis URL is configured the function falls back to
+// in-memory stores (suitable for development only).
+func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gatewayBackends, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	monitor := redisfailover.NewMonitor()
+
+	// Kill-switch — fail-closed: block all requests when Redis state is unknown.
+	var ks killswitch.Manager
+	ksURL := resolveRedisURL(cfg.KillSwitchRedisURL, cfg.RedisURL)
+	if ksURL != "" {
+		opts, err := goredis.ParseURL(ksURL)
+		if err != nil {
+			return nil, fmt.Errorf("kill-switch redis URL: %w", err)
+		}
+		inner := killswitch.NewRedis(goredis.NewClient(opts)).WithLogger(logger)
+		ks = killswitch.NewResilientRedis(inner, monitor.Register("kill-switch"))
+		logger.Info("kill-switch: using Redis-backed store")
+	} else {
+		logger.Warn("kill-switch: using in-memory store; kill-switch state will be lost on restart or scale-out")
+		ks = killswitch.NewInMemory()
+	}
+
+	// Revocation — fail-closed: treat tokens as revoked when Redis is unreachable.
+	var rev revocation.Store
+	revURL := resolveRedisURL(cfg.RevocationRedisURL, cfg.RedisURL)
+	if revURL != "" {
+		opts, err := goredis.ParseURL(revURL)
+		if err != nil {
+			return nil, fmt.Errorf("revocation redis URL: %w", err)
+		}
+		inner := revocation.NewRedis(goredis.NewClient(opts))
+		rev = revocation.NewResilientRedis(inner, monitor.Register("revocation"), nil)
+		logger.Info("revocation: using Redis-backed store")
+	} else {
+		logger.Warn("revocation: using in-memory store; revoked tokens will be re-accepted after restart")
+		rev = revocation.NewInMemory()
+	}
+
+	// Call counter — fail-open: return 0 count when Redis is unreachable.
+	var cc callcounter.Store
+	ccURL := resolveRedisURL(cfg.CallCounterRedisURL, cfg.RedisURL)
+	if ccURL != "" {
+		opts, err := goredis.ParseURL(ccURL)
+		if err != nil {
+			return nil, fmt.Errorf("call-counter redis URL: %w", err)
+		}
+		cc = callcounter.NewResilientRedis(callcounter.NewRedis(goredis.NewClient(opts)), monitor.Register("call-counter"))
+		logger.Info("call-counter: using Redis-backed store")
+	} else {
+		cc = callcounter.NewInMemory()
+	}
+
+	return &gatewayBackends{
+		killSwitch: ks,
+		revocation: rev,
+		counter:    cc,
+		monitor:    monitor,
+	}, nil
 }
 
 // validateAdminAuth checks that admin authentication is properly configured for the

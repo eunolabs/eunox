@@ -183,3 +183,155 @@ func TestValidateAdminAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveRedisURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		specific string
+		fallback string
+		want     string
+	}{
+		{"specific_wins", "redis://specific:6379", "redis://fallback:6379", "redis://specific:6379"},
+		{"fallback_used_when_specific_empty", "", "redis://fallback:6379", "redis://fallback:6379"},
+		{"both_empty", "", "", ""},
+		{"specific_empty_string_uses_fallback", "", "redis://only:6379", "redis://only:6379"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := resolveRedisURL(tt.specific, tt.fallback)
+			if got != tt.want {
+				t.Errorf("resolveRedisURL(%q, %q) = %q, want %q", tt.specific, tt.fallback, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRedisConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		cfg       config.GatewayConfig
+		expectErr bool
+		errMsg    string
+	}{
+		{
+			name:      "development_no_redis_allowed",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvDevelopment},
+			expectErr: false,
+		},
+		{
+			name:      "staging_no_redis_allowed",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvStaging},
+			expectErr: false,
+		},
+		{
+			name:      "production_missing_redis_url_fails",
+			cfg:       config.GatewayConfig{NodeEnv: config.EnvProduction},
+			expectErr: true,
+			errMsg:    "REDIS_URL is required in production",
+		},
+		{
+			name: "production_with_redis_url_ok",
+			cfg: config.GatewayConfig{
+				NodeEnv:  config.EnvProduction,
+				RedisURL: "redis://localhost:6379",
+			},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRedisConfig(&tt.cfg)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errMsg)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildGatewayBackends_InMemoryFallback(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.GatewayConfig{NodeEnv: config.EnvDevelopment}
+	backends, err := buildGatewayBackends(cfg, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if backends == nil {
+		t.Fatal("expected non-nil backends")
+	}
+	if backends.killSwitch == nil {
+		t.Error("killSwitch should not be nil")
+	}
+	if backends.revocation == nil {
+		t.Error("revocation should not be nil")
+	}
+	if backends.counter == nil {
+		t.Error("counter should not be nil")
+	}
+	if backends.monitor == nil {
+		t.Error("monitor should not be nil")
+	}
+}
+
+func TestBuildGatewayBackends_InvalidRedisURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		cfg    config.GatewayConfig
+		errMsg string
+	}{
+		{
+			name: "invalid_kill_switch_url",
+			cfg: config.GatewayConfig{
+				NodeEnv:          config.EnvDevelopment,
+				KillSwitchRedisURL: "not-a-valid-url://??",
+			},
+			errMsg: "kill-switch redis URL",
+		},
+		{
+			name: "invalid_revocation_url",
+			cfg: config.GatewayConfig{
+				NodeEnv:            config.EnvDevelopment,
+				RevocationRedisURL: "not-a-valid-url://??",
+			},
+			errMsg: "revocation redis URL",
+		},
+		{
+			name: "invalid_call_counter_url",
+			cfg: config.GatewayConfig{
+				NodeEnv:             config.EnvDevelopment,
+				CallCounterRedisURL: "not-a-valid-url://??",
+			},
+			errMsg: "call-counter redis URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := buildGatewayBackends(&tt.cfg, nil)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.errMsg)
+			}
+			if !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+			}
+		})
+	}
+}
