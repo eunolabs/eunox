@@ -42,4 +42,9 @@ type GatewayConfig struct {
 
 	// Request body limits
 	MaxRequestBodySize int `env:"MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
+
+	// TrustedProxyCIDRs is a comma-separated list of CIDR blocks (e.g. "10.0.0.0/8,172.16.0.0/12")
+	// whose requests are permitted to set the X-Forwarded-For header.  When this list is non-empty
+	// and the immediate peer matches one of the CIDRs, the real client IP is extracted from XFF.
+	TrustedProxyCIDRs []string `env:"TRUSTED_PROXY_CIDRS"`
 }

@@ -99,7 +99,8 @@ func newAuditTestAppWithConfig(t *testing.T, auditDeps *gateway.AuditDependencie
 		Audit:       auditDeps,
 	}
 
-	app := gateway.New(cfg, &deps)
+	app, err := gateway.New(cfg, &deps)
+	require.NoError(t, err)
 	return app
 }
 

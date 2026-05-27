@@ -354,3 +354,45 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	clone.URL.Host = t.baseURL.Host
 	return t.base.RoundTrip(clone)
 }
+
+// ─── Finding 2: http.DefaultClient replaced with timeout-configured client ───
+
+// TestNewHTTPJWKSClient_NilClientUsesTimeout verifies that passing a nil
+// httpClient to NewHTTPJWKSClient results in a client with a non-zero timeout,
+// not the global http.DefaultClient (which has no timeout).
+func TestNewHTTPJWKSClient_NilClientUsesTimeout(t *testing.T) {
+	jwksClient := NewHTTPJWKSClient(nil, 0)
+	require.NotNil(t, jwksClient)
+	assert.Equal(t, defaultHTTPTimeout, jwksClient.httpClient.Timeout,
+		"nil httpClient must be replaced with a timeout-configured client")
+	assert.NotSame(t, http.DefaultClient, jwksClient.httpClient,
+		"must not fall back to the global http.DefaultClient")
+}
+
+// TestNewHTTPJWKSClient_ExplicitClientPreserved verifies that a caller-supplied
+// http.Client is used as-is (its timeout is not overridden).
+func TestNewHTTPJWKSClient_ExplicitClientPreserved(t *testing.T) {
+	custom := &http.Client{Timeout: 42 * time.Second}
+	jwksClient := NewHTTPJWKSClient(custom, 0)
+	require.NotNil(t, jwksClient)
+	assert.Equal(t, 42*time.Second, jwksClient.httpClient.Timeout,
+		"caller-supplied client timeout must not be overridden")
+}
+
+// TestNewOIDCProvider_NilClientUsesDefaultTimeout verifies that NewOIDCProvider
+// with a nil httpClient successfully creates a provider by using the internal
+// timeout-configured client (Finding 2: no more http.DefaultClient fallback).
+func TestNewOIDCProvider_NilClientUsesDefaultTimeout(t *testing.T) {
+	privateKey, publicJWK := mustRSAJWK(t, "nil-client-key")
+	server, issuerURL, _ := newOIDCServer(t, "", &publicJWK)
+	defer server.Close()
+
+	_ = privateKey // key only needed to set up the test server
+
+	provider, err := NewOIDCProvider(&OIDCConfig{
+		IssuerURL: issuerURL,
+		Audience:  "api://test",
+	}, nil)
+	require.NoError(t, err, "nil httpClient must not cause an error")
+	assert.NotNil(t, provider)
+}

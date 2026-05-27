@@ -52,6 +52,7 @@ type Engine struct {
 	pollInterval  time.Duration
 	stopCh        chan struct{}
 	stopOnce      sync.Once
+	startOnce     sync.Once
 	defaultMaxTTL int
 	onReloadError func(error)
 }
@@ -105,7 +106,9 @@ func (e *Engine) StartHotReload() {
 	if e.filePath == "" {
 		return
 	}
-	go e.pollLoop()
+	e.startOnce.Do(func() {
+		go e.pollLoop()
+	})
 }
 
 // Stop stops the hot-reload polling loop.

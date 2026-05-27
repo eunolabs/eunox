@@ -47,7 +47,9 @@ func newRateLimitTestApp(t *testing.T, ratePerMin int) *gateway.App {
 		AdminRateLimitPerMinute: ratePerMin,
 	}
 
-	return gateway.New(&cfg, &deps)
+	app, err := gateway.New(&cfg, &deps)
+	require.NoError(t, err)
+	return app
 }
 
 func TestAdminRateLimitMiddleware_AllowsWithinLimit(t *testing.T) {

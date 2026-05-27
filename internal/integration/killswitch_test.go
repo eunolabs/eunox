@@ -36,7 +36,7 @@ func TestKillSwitch_GlobalActivation(t *testing.T) {
 	}
 
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -46,6 +46,7 @@ func TestKillSwitch_GlobalActivation(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	handler := app.Handler()
 
@@ -63,7 +64,7 @@ func TestKillSwitch_GlobalActivation(t *testing.T) {
 	assert.Equal(t, "allow", resp["decision"])
 
 	// Activate global kill switch
-	err := ks.ActivateGlobal(context.Background())
+	err = ks.ActivateGlobal(context.Background())
 	require.NoError(t, err)
 
 	// Request blocked after activation
@@ -111,7 +112,7 @@ func TestKillSwitch_PerAgent(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -121,6 +122,7 @@ func TestKillSwitch_PerAgent(t *testing.T) {
 		JWTVerifier: verifier,
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	handler := app.Handler()
 
@@ -148,7 +150,7 @@ func TestKillSwitch_PerAgent(t *testing.T) {
 	assert.Equal(t, "allow", resp["decision"])
 
 	// Kill agent-1
-	err := ks.KillAgent(context.Background(), "agent-1")
+	err = ks.KillAgent(context.Background(), "agent-1")
 	require.NoError(t, err)
 
 	// Agent-1 blocked, agent-2 still allowed
@@ -180,7 +182,7 @@ func TestKillSwitch_PerSession(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -190,6 +192,7 @@ func TestKillSwitch_PerSession(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	handler := app.Handler()
 
@@ -211,7 +214,7 @@ func TestKillSwitch_PerSession(t *testing.T) {
 	}
 
 	// Kill specific session
-	err := ks.KillSession(context.Background(), "session-compromised")
+	err = ks.KillSession(context.Background(), "session-compromised")
 	require.NoError(t, err)
 
 	// Good session still works
@@ -273,7 +276,7 @@ func TestRevocation_TokenLifecycle(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -283,6 +286,7 @@ func TestRevocation_TokenLifecycle(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	handler := app.Handler()
 
@@ -300,7 +304,7 @@ func TestRevocation_TokenLifecycle(t *testing.T) {
 	assert.Equal(t, "allow", resp["decision"])
 
 	// Revoke the token
-	err := revStore.Revoke(context.Background(), "revokable-jti", 1*time.Hour)
+	err = revStore.Revoke(context.Background(), "revokable-jti", 1*time.Hour)
 	require.NoError(t, err)
 
 	// Token is now rejected
@@ -328,7 +332,7 @@ func TestRevocation_UnrevokedTokenStillWorks(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 	}, &gateway.Dependencies{
@@ -338,6 +342,7 @@ func TestRevocation_UnrevokedTokenStillWorks(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	payload := map[string]any{
 		"token": "test-token",
@@ -378,7 +383,7 @@ func TestKillSwitch_AdminEndpoint_GlobalActivate(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 		TenantID:        "test-tenant",
@@ -389,6 +394,7 @@ func TestKillSwitch_AdminEndpoint_GlobalActivate(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	adminHandler := app.AdminHandler()
 
@@ -422,7 +428,7 @@ func TestKillSwitch_AdminEndpoint_AgentKill(t *testing.T) {
 		},
 	}
 
-	app := gateway.New(&gateway.Config{
+	app, err := gateway.New(&gateway.Config{
 		GatewayAudience: "test-gateway",
 		AdminAPIKey:     testAdminKey,
 		TenantID:        "test-tenant",
@@ -433,6 +439,7 @@ func TestKillSwitch_AdminEndpoint_AgentKill(t *testing.T) {
 		JWTVerifier: &staticClaimsVerifier{claims: claims},
 		DPoPStore:   dpopStore,
 	})
+	require.NoError(t, err)
 
 	adminHandler := app.AdminHandler()
 
