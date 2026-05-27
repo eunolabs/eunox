@@ -12,7 +12,7 @@
 
 eunox is a Go monorepo implementing a capability-based zero-trust governance system for AI agents. The system enforces fine-grained access control via JWT capability tokens with conditions, maintains cryptographic audit trails, and supports pluggable identity/signing backends across AWS, Azure, and GCP.
 
-The architecture demonstrates strong engineering discipline: interface-driven dependency injection, comprehensive documentation (34+ docs, ~500 KB), production-grade observability (slog/Prometheus/OpenTelemetry), and a healthy test-to-source ratio (89 test files / 150 source files = 59%). Prior review items (Phases 1–4) have been addressed and verified.
+The architecture demonstrates strong engineering discipline: interface-driven dependency injection, comprehensive documentation (39+ docs, ~500 KB), production-grade observability (slog/Prometheus/OpenTelemetry), and a healthy test-to-source ratio (89 test files / 150 source files = 59%). Prior review items (Phases 1–4) have been addressed and verified.
 
 **Overall Rating: 8.5/10** — Production-ready with identified hardening opportunities below.
 
@@ -384,7 +384,7 @@ Ordered by priority and dependency:
 | Scalability | 8/10 | Stateless services, HPA ready; audit chain + SQLite are scaling limits |
 | Maintainability | 9.5/10 | Interface-driven, consistent patterns, 59% test file ratio |
 | Observability | 8.5/10 | Full slog/Prometheus/OTLP; needs request ID correlation |
-| Documentation | 10/10 | 34+ files, comprehensive architecture/deployment/operations guides |
+| Documentation | 10/10 | 39+ files, comprehensive architecture/deployment/operations guides |
 | Code Quality | 9/10 | Race detector, linter enforced, strong error handling patterns |
 | Deployment Readiness | 9/10 | Helm, K8s, air-gap, multi-cloud; production-ready with ops prerequisites |
 

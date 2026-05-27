@@ -190,7 +190,7 @@ Cross-region rate limiting with strong consistency would require:
 When Redis is unavailable, the rate limiter falls back to an in-memory limiter:
 
 ```go
-// From pkg/ratelimit/resilient.go (simplified)
+// From pkg/ratelimit/resilient_redis.go (simplified)
 result, err := redisLimiter.Allow(ctx, key)
 if err != nil {
     // Redis unavailable — use in-memory fallback

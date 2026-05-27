@@ -30,7 +30,7 @@ time-limited, scope-limited URLs that expire automatically.
 │  ├── Holds capability token with storage:// claims                  │
 │  └── Calls POST /api/v1/storage-grants                             │
 └─────────────────────┬───────────────────────────────────────────────┘
-                      │ HTTPS (******
+                      │ HTTPS (Bearer token)
                       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Storage Grant Service (port 3006) — Trusted Zone                   │
@@ -57,10 +57,10 @@ time-limited, scope-limited URLs that expire automatically.
 
 ```
 1. Agent → POST /api/v1/storage-grants
-   Headers: Authorization: ******
-   Body: { "bucket": "...", "path": "...", "permission": "read|write|delete", "ttl": 900 }
+   Headers: Authorization: Bearer <capability-jwt>
+   Body: { "bucket": "...", "path": "...", "permission": "read", "ttlSeconds": 900 }
 
-2. Service extracts ******
+2. Service extracts the capability JWT from the Authorization header
 
 3. Token Verifier:
    a. Fetches JWKS from issuer (cached 5 min)
@@ -133,7 +133,7 @@ Cloud Storage (verifies signature, grants access)
 
 | Parameter | Default | Maximum | Enforcement |
 |-----------|---------|---------|-------------|
-| `ttl` (request body) | 15 min | 60 min | Hard cap in service config |
+| `ttlSeconds` (request body) | 15 min | 60 min | Hard cap in service config |
 | AWS presigned URL | 15 min | 7 days (AWS limit) | Service enforces MaxTTL |
 | Azure SAS token | 15 min | User-delegation key expiry | Service enforces MaxTTL |
 | GCP V4 signed URL | 15 min | 7 days (GCP limit) | Service enforces MaxTTL |
@@ -146,7 +146,7 @@ capped to the token's remaining lifetime.
 Grants are scoped to:
 - **Specific bucket**: Cannot access other buckets
 - **Specific path prefix**: Cannot access other prefixes (when configured)
-- **Specific permission**: Read, write, or delete — cannot escalate
+- **Specific permission**: Read only (write and delete are planned for a future release)
 
 ### 4.3 Single-Use vs. Multi-Use
 
@@ -218,8 +218,8 @@ The Storage Grant Service integrates with the platform's audit infrastructure:
 
 1. **Structured logging (slog)**: All grant operations are logged with sufficient
    context for correlation
-2. **Prometheus metrics**: `storage_grant_total{adapter,permission,status}` and
-   `storage_grant_duration_seconds{adapter}` histograms
+2. **Prometheus metrics**: `storage_grants_minted_total{adapter,status}` counter and
+   `storage_grant_mint_duration_seconds{adapter}` histogram
 3. **Request ID propagation**: X-Request-ID header is forwarded for cross-service
    correlation
 4. **Capability token JTI**: Logged with every grant for token→grant traceability
@@ -247,7 +247,7 @@ Agent → Storage Grant Service → AWS STS/IMDS → Presigned URL
 - **Credential source**: IAM Role for Service Account (IRSA on EKS), instance
   profile, or static credentials (dev only)
 - **Signing**: AWS Signature Version 4 with credential scope
-- **Permissions**: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`
+- **Permissions**: `s3:GetObject`, `s3:PutObject`
 - **Bucket policy**: Should restrict to IRSA role ARN for least privilege
 
 ### 7.2 Azure Blob Storage (User-Delegation SAS)
@@ -262,7 +262,7 @@ Agent → Storage Grant Service → Azure AD → User-Delegation Key → SAS Tok
 - **Credential source**: Managed identity or workload identity federation
 - **Signing**: HMAC-SHA256 with user-delegation key (24h validity)
 - **API version**: 2024-11-04
-- **Permissions**: Read (`r`), Write (`w`), Delete (`d`)
+- **Permissions**: Read (`r`), Write (`w`)
 - **Container scoping**: SAS is bound to specific container + blob path
 
 ### 7.3 GCP Cloud Storage (V4 Signed URLs)
@@ -276,7 +276,7 @@ Agent → Storage Grant Service → IAM signBlob API → V4 Signed URL
 
 - **Credential source**: Service account key (local) or IAM `signBlob` API (keyless)
 - **Signing**: RSA-SHA256 (PKCS#1 v1.5)
-- **Permissions**: Mapped to HTTP methods (GET for read, PUT for write, DELETE for delete)
+- **Permissions**: Mapped to HTTP methods (GET for read, PUT for write — currently only read is authorized)
 - **Max TTL**: 7 days (GCP limit, service enforces lower)
 
 ---
@@ -311,7 +311,7 @@ provider's signing infrastructure (external).
 
 | Failure | Impact | Behavior |
 |---------|--------|----------|
-| Issuer JWKS unreachable | Cannot verify tokens | Returns 503; JWKS cache (5 min TTL) provides grace |
+| Issuer JWKS unreachable | Cannot verify tokens | Returns 401 (`invalid_token`); JWKS cache (5 min TTL) provides grace |
 | Cloud credentials expired | Cannot sign URLs | Returns 500; relies on IMDS/workload identity refresh |
 | Invalid token | No grant issued | Returns 401 with reason |
 | Requested resource out of scope | No grant issued | Returns 403 with denial reason |
@@ -319,9 +319,9 @@ provider's signing infrastructure (external).
 ### 9.3 Monitoring
 
 Key metrics to alert on:
-- `storage_grant_total{status="error"}` — Grant failures
-- `storage_grant_duration_seconds` p99 > 1s — Signing latency
-- `http_requests_total{path="/health/ready",status="503"}` — Service unhealthy
+- `storage_grants_minted_total{status="error"}` — Grant failures
+- `storage_grant_mint_duration_seconds` p99 > 1s — Signing latency
+- `storage_grants_minted_total{status="error"}` rate > 0 for 5 min — Sustained failures
 
 ---
 

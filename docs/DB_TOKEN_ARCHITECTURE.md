@@ -32,7 +32,7 @@ and lifecycle models.
 │  ├── Holds capability token with db:// claims                        │
 │  └── Calls POST /api/v1/db-tokens                                   │
 └─────────────────────┬────────────────────────────────────────────────┘
-                      │ HTTPS (******
+                      │ HTTPS (Bearer token)
                       ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  DB Token Service (port 3005) — Trusted Zone                         │
@@ -60,8 +60,8 @@ and lifecycle models.
 
 ```
 1. Agent → POST /api/v1/db-tokens
-   Headers: Authorization: ******
-   Body: { "database": "mydb", "ttl": 900 }
+   Headers: Authorization: Bearer <capability-jwt>
+   Body: { "database": "mydb", "ttlSeconds": 900 }
 
 2. Token Verifier:
    a. Fetches JWKS from issuer (cached 5 min)
@@ -167,7 +167,7 @@ Agent ←──── mTLS (optional) ───→ DB Token Service
                                    Cloud IAM ──→ Database
 ```
 
-1. **Agent → Service**: ****** (capability JWT) verified via JWKS
+1. **Agent → Service**: Bearer capability JWT (verified via JWKS)
 2. **Service → Cloud**: IAM role (IRSA, managed identity, workload identity)
 3. **Cloud → Database**: IAM authentication (no shared passwords)
 
@@ -272,7 +272,7 @@ expiry. Mitigation:
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health/live` | GET | Liveness probe — service process is running |
-| `/health/ready` | GET | Readiness probe — JWKS loaded, adapter configured |
+| `/health/ready` | GET | Readiness probe — service process is running (always returns 200) |
 
 ---
 
@@ -280,11 +280,11 @@ expiry. Mitigation:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `db_token_mint_total` | Counter | `adapter`, `status` | Total credential mints |
+| `db_tokens_minted_total` | Counter | `adapter`, `status` | Total credential mints |
 | `db_token_mint_duration_seconds` | Histogram | `adapter` | Minting latency |
 
 Alert recommendations:
-- `db_token_mint_total{status="error"}` rate > 0 for 5 min
+- `db_tokens_minted_total{status="error"}` rate > 0 for 5 min
 - `db_token_mint_duration_seconds` p99 > 2s (SigV4/OAuth2 should be fast)
 - Health ready endpoint returning non-200
 
