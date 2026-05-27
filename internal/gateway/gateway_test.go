@@ -537,7 +537,7 @@ func TestValidate_GlobMatchingCapability(t *testing.T) {
 	assert.NotNil(t, resp.MatchedCapability)
 }
 
-
+func newTestAppWithBackend(t *testing.T, verifier gateway.JWTVerifier, backendURL string) (*gateway.App, *killswitch.InMemory) {
 	t.Helper()
 
 	counter := callcounter.NewInMemory()

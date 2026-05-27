@@ -167,7 +167,13 @@ func (r *CachingResolver) Resolve(ctx context.Context, did string) (*Document, e
 		// Serve a stale entry rather than propagating the error when the
 		// upstream is temporarily unavailable.
 		if staleEntry != nil {
-			return staleEntry.doc, nil
+			// Re-check that the stale entry is still within the stale window.
+			// The upstream call may have been slow, and the entry could have aged
+			// beyond ttl+staleWindow in the meantime.
+			age := r.now().Sub(staleEntry.fetchedAt)
+			if age < r.ttl+r.staleWindow {
+				return staleEntry.doc, nil
+			}
 		}
 		return nil, err
 	}

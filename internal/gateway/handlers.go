@@ -237,25 +237,21 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 
 	// Build an EnforceRequest so the engine's glob-aware matching is used.
 	// Resource maps to ToolName; Action maps to Context.Operation.
+	// NOTE: /validate is a stateless preflight check, so we use FindMatchingCapability
+	// directly to avoid condition evaluation and side effects (e.g. counter increments).
 	enforceReq := &capability.EnforceRequest{
 		ToolName: req.Resource,
 		Context:  capability.EnforceRequestContext{Operation: req.Action},
 	}
 
-	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), enforceReq, claims.Capabilities)
-	if engineErr != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse("validation engine error"))
-		return
-	}
-
+	matched := app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
+	
 	validateResp := capability.ValidateActionResponse{
-		Allowed: resp.Decision == capability.DecisionAllow,
+		Allowed:            matched != nil,
+		MatchedCapability:  matched,
 	}
-	if resp.Denial != nil {
-		validateResp.Reason = resp.Denial.Message
-	}
-	if validateResp.Allowed {
-		validateResp.MatchedCapability = app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
+	if matched == nil {
+		validateResp.Reason = "no matching capability for requested action"
 	}
 
 	writeJSON(w, http.StatusOK, validateResp)
