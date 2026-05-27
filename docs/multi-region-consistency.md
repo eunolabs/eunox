@@ -3,7 +3,7 @@
 This document describes the consistency guarantees, partition tolerance behavior,
 and multi-region deployment model for the Euno platform. It answers the
 questions posed in OQ-5 of the
-[Technical Architecture Review](TECHNICAL_REVIEW_2026_05_26.md).
+[Technical Architecture Review](technical-review-2026-05-26.md).
 
 ---
 

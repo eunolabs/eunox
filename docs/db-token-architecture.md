@@ -3,7 +3,7 @@
 This document describes the architecture, trust model, and relationship to the
 Minter for the DB Token Service (`cmd/db-token-svc`,
 `internal/dbtokensvc`). It answers the questions posed in OQ-3 of the
-[Technical Architecture Review](TECHNICAL_REVIEW_2026_05_26.md).
+[Technical Architecture Review](technical-review-2026-05-26.md).
 
 ---
 
