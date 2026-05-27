@@ -9,8 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // dbQuerier is the minimal database interface required by PostgresKeyStore.
@@ -429,18 +430,13 @@ func scanPolicyRow(rows *sql.Rows) (*Policy, error) {
 }
 
 // isUniqueViolation detects PostgreSQL unique-constraint violations (SQLSTATE 23505)
-// without a hard dependency on the pq driver's error type.
+// using a typed assertion against *pq.Error (B-7 fix).  The previous string-
+// match on err.Error() could produce false positives when a row value happened
+// to contain the digit sequence "23505".
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	// pq.Error.Code is a string type; check the SQLSTATE substring.
-	return containsSQLState(err.Error(), "23505")
-}
-
-func containsSQLState(msg, code string) bool {
-	// pq wraps the error as "pq: ERROR: ... (SQLSTATE 23505)"
-	// or "ERROR: duplicate key value ... (SQLSTATE 23505)".
-	// A simple string search is vendor-neutral and avoids a direct pq import.
-	return strings.Contains(msg, code)
+	var pgErr *pq.Error
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

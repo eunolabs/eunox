@@ -150,6 +150,11 @@ func doGet(app *App, path string) *httptest.ResponseRecorder {
 	return w
 }
 
+// defaultTestCaps provides standard capabilities for test issue requests (F-1 fix).
+var defaultTestCaps = []capability.Constraint{
+	{Resource: "tool:*", Actions: []string{"invoke", "read", "write"}},
+}
+
 // --- Health Tests ---
 
 func TestHealth(t *testing.T) {
@@ -172,8 +177,9 @@ func TestIssue_Success(t *testing.T) {
 	app := testApp(t)
 
 	w := doPost(app, "/api/v1/issue", IssueRequest{
-		Token: "valid-id-token",
-		TTL:   600,
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		TTL:          600,
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -225,8 +231,9 @@ func TestIssue_IgnoresRequestedAudienceOverride(t *testing.T) {
 	app := testApp(t)
 
 	w := doPost(app, "/api/v1/issue", IssueRequest{
-		Token:    "valid-id-token",
-		Audience: "https://attacker.example.com",
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		Audience:     "https://attacker.example.com",
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -259,7 +266,7 @@ func TestIssue_RateLimited(t *testing.T) {
 		return false, nil
 	}))
 
-	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token"})
+	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token", Capabilities: defaultTestCaps})
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
@@ -268,7 +275,7 @@ func TestIssue_RateLimiterError(t *testing.T) {
 		return false, errors.New("redis down")
 	}))
 
-	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token"})
+	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token", Capabilities: defaultTestCaps})
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
@@ -280,7 +287,7 @@ func TestIssue_NoPolicyForRole(t *testing.T) {
 		}, nil
 	}))
 
-	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token"})
+	w := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-token", Capabilities: defaultTestCaps})
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -288,8 +295,9 @@ func TestIssue_DPoPBinding(t *testing.T) {
 	app := testApp(t)
 
 	w := doPost(app, "/api/v1/issue", IssueRequest{
-		Token: "valid-id-token",
-		DPoP:  &DPoPBinding{JKT: "test-thumbprint-hash"},
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		DPoP:         &DPoPBinding{JKT: "test-thumbprint-hash"},
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -312,8 +320,9 @@ func TestIssue_TTLCapping(t *testing.T) {
 
 	// Request TTL exceeding max — should be capped to MaxTokenTTL (3600)
 	w := doPost(app, "/api/v1/issue", IssueRequest{
-		Token: "valid-id-token",
-		TTL:   99999,
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		TTL:          99999,
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -338,7 +347,7 @@ func TestAttenuate_Success(t *testing.T) {
 	app := testApp(t)
 
 	// First issue a parent token
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 3600})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps, TTL: 3600})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 
 	var parentResp IssueResponse
@@ -397,7 +406,7 @@ func TestAttenuate_InvalidParentToken(t *testing.T) {
 func TestAttenuate_RejectsForgedParentToken(t *testing.T) {
 	app := testApp(t)
 
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 3600})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps, TTL: 3600})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 	var parentResp IssueResponse
 	require.NoError(t, json.Unmarshal(issueResp.Body.Bytes(), &parentResp))
@@ -425,7 +434,7 @@ func TestAttenuate_TTLCannotExceedParent(t *testing.T) {
 	app := testApp(t)
 
 	// Issue parent with short TTL
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 120})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps, TTL: 120})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 
 	var parentResp IssueResponse
@@ -454,7 +463,7 @@ func TestRenew_Success(t *testing.T) {
 	app := testApp(t)
 
 	// Issue original token
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 300})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps, TTL: 300})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 
 	var originalResp IssueResponse
@@ -494,7 +503,7 @@ func TestRenew_SubjectMismatch(t *testing.T) {
 	app := testApp(t)
 
 	// Issue token
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token"})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 	var originalResp IssueResponse
 	require.NoError(t, json.Unmarshal(issueResp.Body.Bytes(), &originalResp))
@@ -510,7 +519,7 @@ func TestRenew_SubjectMismatch(t *testing.T) {
 	}))
 
 	// Issue with app2
-	issueResp2 := doPost(app2, "/api/v1/issue", IssueRequest{Token: "valid-id-token"})
+	issueResp2 := doPost(app2, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps})
 	require.Equal(t, http.StatusOK, issueResp2.Code)
 	var resp2 IssueResponse
 	require.NoError(t, json.Unmarshal(issueResp2.Body.Bytes(), &resp2))
@@ -761,7 +770,7 @@ func TestSignToken_ES384Digest(t *testing.T) {
 		RateLimiter: &mockRateLimiter{allowFunc: func(_ context.Context, _ string) (bool, error) { return true, nil }},
 	})
 
-	resp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token"})
+	resp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps})
 	require.Equal(t, http.StatusOK, resp.Code)
 	var issueResp IssueResponse
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &issueResp))
@@ -849,8 +858,9 @@ func TestIntegration_IssueAttenuateVerify(t *testing.T) {
 
 	// Step 1: Issue a token
 	issueResp := doPost(app, "/api/v1/issue", IssueRequest{
-		Token: "valid-id-token",
-		TTL:   3600,
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		TTL:          3600,
 	})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 
@@ -883,7 +893,7 @@ func TestIntegration_IssueRenewRoundTrip(t *testing.T) {
 	app := testApp(t)
 
 	// Issue
-	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", TTL: 300})
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{Token: "valid-id-token", Capabilities: defaultTestCaps, TTL: 300})
 	require.Equal(t, http.StatusOK, issueResp.Code)
 
 	var issued IssueResponse

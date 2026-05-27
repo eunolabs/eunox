@@ -102,6 +102,21 @@ func (v *testJWTVerifier) VerifyToken(_ context.Context, tokenStr string) (*capa
 	return &payload, nil
 }
 
+// testHintsProvider provides static capabilities for integration tests (F-1 fix).
+type testHintsProvider struct {
+	capabilities []capability.Constraint
+}
+
+func (p *testHintsProvider) GetHints(_ context.Context) (*agentruntime.IssuanceHints, error) {
+	return &agentruntime.IssuanceHints{
+		Capabilities: p.capabilities,
+	}, nil
+}
+
+func newTestHintsProvider(capabilities []capability.Constraint) *testHintsProvider {
+	return &testHintsProvider{capabilities: capabilities}
+}
+
 // setupTestIssuer creates an issuer server for testing with the given capabilities policy.
 func setupTestIssuer(t *testing.T, signingKey *eunoxcrypto.SoftwareSigner, idKey *ecdsa.PrivateKey, caps []capability.Constraint) *httptest.Server {
 	t.Helper()
@@ -223,14 +238,17 @@ func TestAgentRuntime_FullLoop(t *testing.T) {
 	gatewayServer := setupTestGateway(t, signingKey)
 	defer gatewayServer.Close()
 
-	// --- Create agent runtime ---
+	// --- Create agent runtime with capabilities (F-1 fix requires non-empty capabilities) ---
 	dpopDisabled := false
+	hints := newTestHintsProvider([]capability.Constraint{
+		{Resource: "*", Actions: []string{"*"}},
+	})
 	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    gatewayServer.URL,
 		IdentityToken: idTokenStr,
 		DPoPEnabled:   &dpopDisabled,
-	})
+	}, agentruntime.WithHintsProvider(hints))
 
 	require.NoError(t, err)
 	defer rt.Stop()
@@ -286,12 +304,15 @@ func TestAgentRuntime_DPoPEndToEnd(t *testing.T) {
 	})
 	defer issuerServer.Close()
 
-	// Create runtime with DPoP enabled (default)
+	// Create runtime with DPoP enabled (default) and capabilities hint (F-1 fix)
+	hints := newTestHintsProvider([]capability.Constraint{
+		{Resource: "file:///*", Actions: []string{"read"}},
+	})
 	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    "https://gateway.test",
 		IdentityToken: idTokenStr,
-	})
+	}, agentruntime.WithHintsProvider(hints))
 
 	require.NoError(t, err)
 	defer rt.Stop()
@@ -389,14 +410,17 @@ func TestAgentRuntime_HTTPAdapterFullLoop(t *testing.T) {
 	}))
 	defer upstreamServer.Close()
 
-	// Runtime
+	// Runtime with capabilities hints (F-1 fix)
 	dpopDisabled := false
+	hints := newTestHintsProvider([]capability.Constraint{
+		{Resource: "*", Actions: []string{"*"}},
+	})
 	rt, err := agentruntime.New(&agentruntime.Config{
 		IssuerURL:     issuerServer.URL,
 		GatewayURL:    gatewayServer.URL,
 		IdentityToken: idTokenStr,
 		DPoPEnabled:   &dpopDisabled,
-	})
+	}, agentruntime.WithHintsProvider(hints))
 
 	require.NoError(t, err)
 	defer rt.Stop()

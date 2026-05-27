@@ -209,9 +209,14 @@ func TestIssuance_Attenuation_SubsetEnforcement(t *testing.T) {
 	issuerSrv := httptest.NewServer(issuerApp.Handler())
 	defer issuerSrv.Close()
 
-	// Step 1: Issue broad token
+	// Step 1: Issue broad token (must include capabilities after F-1 fix)
 	idToken := generateTestIdentityToken(t, idKey, "attenuator-user")
-	issueBody, _ := json.Marshal(map[string]any{"token": idToken})
+	issueBody, _ := json.Marshal(map[string]any{
+		"token": idToken,
+		"capabilities": []map[string]any{
+			{"resource": "*", "actions": []string{"*"}},
+		},
+	})
 	resp, err := http.Post(issuerSrv.URL+"/api/v1/issue", "application/json", strings.NewReader(string(issueBody)))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -365,7 +370,12 @@ func TestIssuance_KeyRotation(t *testing.T) {
 	defer issuerSrv1.Close()
 
 	idToken := generateTestIdentityToken(t, idKey, "rotation-user")
-	issueBody, _ := json.Marshal(map[string]any{"token": idToken})
+	issueBody, _ := json.Marshal(map[string]any{
+		"token": idToken,
+		"capabilities": []map[string]any{
+			{"resource": "file://*", "actions": []string{"read"}},
+		},
+	})
 	resp, err := http.Post(issuerSrv1.URL+"/api/v1/issue", "application/json", strings.NewReader(string(issueBody)))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -559,7 +569,13 @@ func TestIssuance_TokenRenewal(t *testing.T) {
 
 	// Issue initial token
 	idToken := generateTestIdentityToken(t, idKey, "renew-user")
-	issueBody, _ := json.Marshal(map[string]any{"token": idToken, "ttl": 60})
+	issueBody, _ := json.Marshal(map[string]any{
+		"token": idToken,
+		"capabilities": []map[string]any{
+			{"resource": "*", "actions": []string{"*"}},
+		},
+		"ttl": 60,
+	})
 	resp, err := http.Post(issuerSrv.URL+"/api/v1/issue", "application/json", strings.NewReader(string(issueBody)))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

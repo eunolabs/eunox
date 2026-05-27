@@ -6,6 +6,7 @@ package killswitch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -29,6 +30,7 @@ type Redis struct {
 	globalActive   bool
 	killedAgents   map[string]bool
 	killedSessions map[string]bool
+	lastRefreshErr error // tracks last refresh error; nil means healthy
 
 	lifecycleCtx context.Context
 	cancel       context.CancelFunc
@@ -83,6 +85,16 @@ func (r *Redis) Stop() {
 	if r.cancel != nil {
 		r.cancel()
 	}
+}
+
+// HealthStatus returns the error from the most recent state refresh, or nil if
+// the last refresh succeeded. ResilientRedis.Start calls this to determine
+// whether to mark the reporter healthy or degraded without re-running a second
+// refreshState on the parent context (S-1 fix).
+func (r *Redis) HealthStatus() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastRefreshErr
 }
 
 // ShouldBlock checks if any kill switch is active, using local cache first.
@@ -176,8 +188,12 @@ func (r *Redis) ReviveSession(ctx context.Context, sessionID string) error {
 
 // Reset clears all kill-switch state.
 func (r *Redis) Reset(ctx context.Context) error {
-	// Delete global key
-	_ = r.client.Del(ctx, redisGlobalKey).Err()
+	// Delete global key — propagate any Redis error; a silent failure here
+	// would leave the global kill switch active while the caller believes it
+	// was cleared (T-4 signal: this is a critical "revive all" operation).
+	if err := r.client.Del(ctx, redisGlobalKey).Err(); err != nil {
+		return fmt.Errorf("kill switch reset: delete global key: %w", err)
+	}
 
 	// Scan and delete agent/session keys
 	r.deleteByPrefix(ctx, redisAgentPrefix)
@@ -231,6 +247,7 @@ func (r *Redis) refreshState(ctx context.Context) error {
 	// any other error is a real connectivity failure.
 	val, err := r.client.Get(ctx, redisGlobalKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		r.lastRefreshErr = err
 		return err
 	}
 	r.globalActive = err == nil && val == "1"
@@ -238,15 +255,18 @@ func (r *Redis) refreshState(ctx context.Context) error {
 	// Scan agents
 	r.killedAgents = make(map[string]bool)
 	if err := r.scanPrefix(ctx, redisAgentPrefix, r.killedAgents); err != nil {
+		r.lastRefreshErr = err
 		return err
 	}
 
 	// Scan sessions
 	r.killedSessions = make(map[string]bool)
 	if err := r.scanPrefix(ctx, redisSessionPfx, r.killedSessions); err != nil {
+		r.lastRefreshErr = err
 		return err
 	}
 
+	r.lastRefreshErr = nil
 	return nil
 }
 

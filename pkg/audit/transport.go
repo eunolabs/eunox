@@ -253,28 +253,30 @@ func (t *HTTPTransport) flushBuffer(parentCtx context.Context) {
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
 				t.metrics.observeFlushBatch(t.transportName, len(batch))
-				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
-				if err := t.deliverWithRetry(ctx, batch); err != nil {
-					t.logger.Error("audit transport: delivery failed",
-						"error", err, "batch_size", len(batch))
-				}
-				cancel()
+				t.deliverBatch(parentCtx, batch)
 				batch = batch[:0]
 			}
 		default:
 			// No more buffered events.
 			if len(batch) > 0 {
 				t.metrics.observeFlushBatch(t.transportName, len(batch))
-				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
-				if err := t.deliverWithRetry(ctx, batch); err != nil {
-					t.logger.Error("audit transport: delivery failed",
-						"error", err, "batch_size", len(batch))
-				}
-				cancel()
+				t.deliverBatch(parentCtx, batch)
 			}
 			t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 			return
 		}
+	}
+}
+
+// deliverBatch creates a scoped timeout context and delivers a batch of records.
+// Using a dedicated function ensures defer cancel() is called even if
+// deliverWithRetry panics (B-6 fix).
+func (t *HTTPTransport) deliverBatch(parentCtx context.Context, batch []SignedAuditEvidence) {
+	ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
+	defer cancel()
+	if err := t.deliverWithRetry(ctx, batch); err != nil {
+		t.logger.Error("audit transport: delivery failed",
+			"error", err, "batch_size", len(batch))
 	}
 }
 
@@ -530,27 +532,29 @@ func (t *AzureSentinelTransport) flushBuffer(parentCtx context.Context) {
 			batch = append(batch, *ev)
 			if len(batch) >= t.config.BatchSize {
 				t.metrics.observeFlushBatch(t.transportName, len(batch))
-				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
-				if err := t.deliverWithRetry(ctx, batch); err != nil {
-					t.logger.Error("azure sentinel transport: delivery failed",
-						"error", err, "batch_size", len(batch))
-				}
-				cancel()
+				t.deliverBatch(parentCtx, batch)
 				batch = batch[:0]
 			}
 		default:
 			if len(batch) > 0 {
 				t.metrics.observeFlushBatch(t.transportName, len(batch))
-				ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
-				if err := t.deliverWithRetry(ctx, batch); err != nil {
-					t.logger.Error("azure sentinel transport: delivery failed",
-						"error", err, "batch_size", len(batch))
-				}
-				cancel()
+				t.deliverBatch(parentCtx, batch)
 			}
 			t.metrics.observeBufferUtilization(t.transportName, len(t.buffer), cap(t.buffer))
 			return
 		}
+	}
+}
+
+// deliverBatch creates a scoped timeout context and delivers a batch of records.
+// Using a dedicated function ensures defer cancel() is called even if
+// deliverWithRetry panics (B-6 fix).
+func (t *AzureSentinelTransport) deliverBatch(parentCtx context.Context, batch []SignedAuditEvidence) {
+	ctx, cancel := context.WithTimeout(parentCtx, defaultDeliveryTimeout)
+	defer cancel()
+	if err := t.deliverWithRetry(ctx, batch); err != nil {
+		t.logger.Error("azure sentinel transport: delivery failed",
+			"error", err, "batch_size", len(batch))
 	}
 }
 

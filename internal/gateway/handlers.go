@@ -290,6 +290,43 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check revocation before DPoP (aligns with handleEnforce order, B-3 fix).
+	if app.deps.Revocation != nil && claims.JWTID != "" {
+		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+		if revErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+			return
+		}
+		if revoked {
+			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+			return
+		}
+	}
+
+	// DPoP sender-constraint enforcement (F-2 fix).
+	// When the capability token carries a cnf.jkt binding, a valid DPoP proof
+	// from the DPoP header is required so stolen tokens cannot be replayed.
+	// Placed after revocation and before kill-switch to match handleEnforce order.
+	if claims.Confirmation != nil && claims.Confirmation.JKT != "" {
+		dpopProof := r.Header.Get("DPoP")
+		if dpopProof == "" {
+			writeJSON(w, http.StatusUnauthorized, errorResponse("DPoP proof required for sender-constrained token"))
+			return
+		}
+
+		requestURL := app.reconstructRequestURL(r)
+
+		dpop := &capability.DPoPProof{
+			Proof:      dpopProof,
+			HTTPMethod: r.Method,
+			HTTPURL:    requestURL,
+		}
+		if err := app.verifyDPoP(r.Context(), dpop, claims); err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse(fmt.Sprintf("DPoP verification failed: %v", err)))
+			return
+		}
+	}
+
 	// Check kill switch
 	if app.deps.KillSwitch != nil {
 		sessionID := r.Header.Get("X-Session-ID")
@@ -300,19 +337,6 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		if blocked {
 			writeJSON(w, http.StatusForbidden, errorResponse("kill switch active"))
-			return
-		}
-	}
-
-	// Check revocation
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-			return
-		}
-		if revoked {
-			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
 			return
 		}
 	}
@@ -430,4 +454,46 @@ func (app *App) extractClientIP(r *http.Request) string {
 	}
 
 	return remoteHost
+}
+
+// reconstructRequestURL returns the full request URL for DPoP verification.
+//
+// When the gateway sits behind a TLS-terminating proxy (common deployment),
+// X-Forwarded-Proto and X-Forwarded-Host headers are honored when the immediate
+// peer is in TrustedProxyCIDRs.  This ensures the computed htu matches the
+// public URL the client used to sign the DPoP proof, preventing spurious
+// rejections in reverse-proxy deployments.
+func (app *App) reconstructRequestURL(r *http.Request) string {
+	scheme := "http"
+	host := r.Host
+
+	if len(app.trustedProxyNets) > 0 {
+		remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			remoteHost = r.RemoteAddr
+		}
+		if remoteIP := net.ParseIP(remoteHost); remoteIP != nil && app.isTrustedProxy(remoteIP) {
+			// Trust forwarded headers from known proxies
+			if fwdProto := r.Header.Get("X-Forwarded-Proto"); fwdProto != "" {
+				scheme = fwdProto
+			}
+			if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+				host = fwdHost
+			}
+		}
+	}
+
+	// Fallback: if not from a trusted proxy, use direct TLS state
+	if scheme == "http" && r.TLS != nil {
+		scheme = "https"
+	}
+
+	// Use URL.Path and RawQuery (not RequestURI) to avoid including fragment
+	// and to ensure we match what the client signed in the DPoP proof.
+	path := r.URL.Path
+	query := r.URL.RawQuery
+	if query != "" {
+		return fmt.Sprintf("%s://%s%s?%s", scheme, host, path, query)
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
 }

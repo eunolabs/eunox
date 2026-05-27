@@ -116,7 +116,7 @@ func TestEngine_MaxTTLForRole(t *testing.T) {
 	assert.Equal(t, 600, engine.MaxTTLForRole("nonexistent"))
 }
 
-func TestEngine_IntersectCapabilities_DefaultsToPolicy(t *testing.T) {
+func TestEngine_IntersectCapabilities_RejectsEmptyRequest(t *testing.T) {
 	engine := New()
 	engine.SetPolicy(&RoleCapabilityPolicy{
 		Role: "dev",
@@ -126,10 +126,11 @@ func TestEngine_IntersectCapabilities_DefaultsToPolicy(t *testing.T) {
 		},
 	})
 
-	// Empty request → returns all policy capabilities
+	// Empty request → now returns an error (breaking change in F-1 fix)
 	caps, err := engine.IntersectCapabilities("dev", nil)
-	require.NoError(t, err)
-	assert.Len(t, caps, 2)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidManifest)
+	assert.Nil(t, caps)
 }
 
 func TestEngine_IntersectCapabilities_NarrowsToIntersection(t *testing.T) {

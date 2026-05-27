@@ -183,8 +183,10 @@ func (e *Engine) IntersectCapabilities(role string, requested []capability.Const
 	}
 
 	if len(requested) == 0 {
-		// If no specific request, return policy defaults
-		return policy.Capabilities, nil
+		// Reject empty requests — callers must explicitly name the capabilities
+		// they want.  Silently granting the full policy set on an empty request
+		// gives every client maximum permissions on a bug or omission (F-1 fix).
+		return nil, fmt.Errorf("%w: at least one capability must be requested explicitly", ErrInvalidManifest)
 	}
 
 	result := make([]capability.Constraint, 0, len(requested))
