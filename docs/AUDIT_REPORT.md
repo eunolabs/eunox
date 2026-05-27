@@ -412,11 +412,19 @@ Dedicated race-condition tests would catch latent issues.
 
 ### Phase 3 — Feature Gaps (Next Sprint)
 
-| # | Finding | Effort | Dependencies |
-|---|---------|--------|--------------|
-| 6 | GAP-1: Add pagination to partner DID + SCIM list endpoints | 2 hrs | None |
-| 7 | STRUCT-1: Migrate gateway to `lifecycle.Manager` (or add drain delay) | 1 hr | None |
-| 8 | GAP-3: Log kill switch initial refresh failure | 10 min | None |
+**Status: ✅ Complete** — Implemented 2026-05-27.
+
+| # | Finding | Effort | Status |
+|---|---------|--------|--------|
+| 6 | GAP-1: Add pagination to partner DID + SCIM list endpoints | 2 hrs | ✅ Done |
+| 7 | STRUCT-1: Migrate gateway to `lifecycle.Manager` (or add drain delay) | 1 hr | ✅ Done |
+| 8 | GAP-3: Log kill switch initial refresh failure | 10 min | ✅ Done |
+
+**Implementation notes:**
+
+- **GAP-1**: `handlePartnerDIDList` now supports `page_size` (default 50, max 1000) and `page` (1-indexed) query parameters. Results are sorted stably by `RegisteredAt` ASC then `DID` ASC. Response includes `total_count`, `has_more`, `page`, `page_size`. Both `handleSCIMListUsers` and `handleSCIMListGroups` implement RFC 7644 §3.4.2.4 SCIM pagination via `startIndex` (1-based, default 1) and `count` (default 100, max 1000, `count=0` returns `totalResults` only). Results sorted by `Meta.Created` ASC then `ID` ASC.
+- **STRUCT-1**: `pkg/lifecycle.Manager` gained `AddServerWithListener(name, srv, ln)` for pre-bound listeners (e.g. admin server restricted to loopback). `cmd/gateway/main.go` replaced its manual signal/shutdown block with `lifecycle.New(WithDrainDelay(5s), ...)`. `Config.IsReady func() bool` field added; `handleReady` returns 503 while `IsReady` returns false (drain window).
+- **GAP-3**: `Redis` struct gained an optional `*slog.Logger` set via `WithLogger(logger)`. The initial `refreshState` failure in `Start()` is now logged as `Warn` with `"kill switch: initial state refresh failed; starting fail-open"` instead of silently discarded.
 
 ### Phase 4 — Test Coverage (Ongoing)
 

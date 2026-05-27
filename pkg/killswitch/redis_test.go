@@ -4,8 +4,13 @@
 package killswitch
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -140,4 +145,48 @@ func TestRedis_HandlePubSubMessage_AgentKillEmptyID(t *testing.T) {
 	// "agent:kill:" with no ID after prefix falls through to default (no-op).
 	r.handlePubSubMessage("agent:kill:")
 	assert.Empty(t, r.killedAgents)
+}
+
+func TestRedis_WithLogger(t *testing.T) {
+	t.Parallel()
+	r := NewRedis(nil)
+	assert.Nil(t, r.logger)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	r2 := r.WithLogger(logger)
+
+	// WithLogger returns the same receiver for chaining.
+	assert.Same(t, r, r2)
+	assert.Equal(t, logger, r.logger)
+}
+
+func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
+	t.Parallel()
+
+	// Start a real miniredis server, then close it before Start() so the
+	// initial refreshState call returns a real connection error.
+	mr := miniredis.NewMiniRedis()
+	if err := mr.Start(); err != nil {
+		t.Fatalf("miniredis start: %v", err)
+	}
+	addr := mr.Addr()
+	mr.Close() // kill it immediately so the first refresh fails
+
+	client := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		PoolSize:    1,
+		DialTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	r := NewRedis(client).WithLogger(logger)
+
+	r.Start(t.Context())
+	defer r.Stop()
+
+	assert.Contains(t, buf.String(), "initial state refresh failed")
 }

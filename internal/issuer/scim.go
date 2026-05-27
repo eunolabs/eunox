@@ -8,12 +8,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+)
+
+// SCIM pagination defaults (RFC 7644 §3.4.2.4).
+const (
+	scimDefaultCount = 100
+	scimMaxCount     = 1000
 )
 
 // SCIMStore provides in-memory storage for SCIM Users and Groups.
@@ -437,12 +445,38 @@ func (app *App) handleSCIMListUsers(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
 	users := app.scimStore.ListUsers(filter)
 
+	// Stable sort: by Meta.Created ASC, then ID ASC as tiebreaker.
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].Meta.Created == users[j].Meta.Created {
+			return users[i].ID < users[j].ID
+		}
+		return users[i].Meta.Created < users[j].Meta.Created
+	})
+
+	startIndex, count := parseSCIMPageParams(r)
+	totalResults := len(users)
+
+	// RFC 7644: startIndex is 1-based; offset = startIndex - 1.
+	offset := startIndex - 1
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > totalResults {
+		offset = totalResults
+	}
+
+	end := offset + count
+	if end > totalResults {
+		end = totalResults
+	}
+	page := users[offset:end]
+
 	resp := SCIMListResponse{
 		Schemas:      []string{scimListSchema},
-		TotalResults: len(users),
-		StartIndex:   1,
-		ItemsPerPage: len(users),
-		Resources:    users,
+		TotalResults: totalResults,
+		StartIndex:   startIndex,
+		ItemsPerPage: len(page),
+		Resources:    page,
 	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
@@ -595,12 +629,37 @@ func (app *App) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
 	groups := app.scimStore.ListGroups(filter)
 
+	// Stable sort: by Meta.Created ASC, then ID ASC as tiebreaker.
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Meta.Created == groups[j].Meta.Created {
+			return groups[i].ID < groups[j].ID
+		}
+		return groups[i].Meta.Created < groups[j].Meta.Created
+	})
+
+	startIndex, count := parseSCIMPageParams(r)
+	totalResults := len(groups)
+
+	offset := startIndex - 1
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > totalResults {
+		offset = totalResults
+	}
+
+	end := offset + count
+	if end > totalResults {
+		end = totalResults
+	}
+	page := groups[offset:end]
+
 	resp := SCIMListResponse{
 		Schemas:      []string{scimListSchema},
-		TotalResults: len(groups),
-		StartIndex:   1,
-		ItemsPerPage: len(groups),
-		Resources:    groups,
+		TotalResults: totalResults,
+		StartIndex:   startIndex,
+		ItemsPerPage: len(page),
+		Resources:    page,
 	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
@@ -985,4 +1044,32 @@ func writeSCIMError(w http.ResponseWriter, status int, detail, scimType string) 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// parseSCIMPageParams extracts SCIM pagination parameters from the request.
+//
+// Per RFC 7644 §3.4.2.4:
+//   - startIndex: 1-based index of the first result; defaults to 1.
+//   - count: maximum number of results per page; defaults to scimDefaultCount; capped at scimMaxCount.
+//     count=0 is valid and means "return no resources but include totalResults".
+func parseSCIMPageParams(r *http.Request) (startIndex, count int) {
+	startIndex = 1
+	count = scimDefaultCount
+
+	if si := r.URL.Query().Get("startIndex"); si != "" {
+		if v, err := strconv.Atoi(si); err == nil && v >= 1 {
+			startIndex = v
+		}
+	}
+
+	if c := r.URL.Query().Get("count"); c != "" {
+		if v, err := strconv.Atoi(c); err == nil && v >= 0 {
+			if v > scimMaxCount {
+				v = scimMaxCount
+			}
+			count = v
+		}
+	}
+
+	return startIndex, count
 }

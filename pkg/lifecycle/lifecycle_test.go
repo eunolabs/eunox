@@ -160,3 +160,46 @@ func TestManager_RunServerStartFailureTriggersShutdown(t *testing.T) {
 		t.Fatal("expected manager shutdown to start after server start failure")
 	}
 }
+
+func TestManager_AddServerWithListener(t *testing.T) {
+	t.Parallel()
+
+	// Pre-bind a listener on an ephemeral port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	m := New(WithDrainDelay(0), WithShutdownTimeout(2*time.Second))
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
+	m.AddServerWithListener("test-srv", srv, ln)
+	m.SetReady()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Run(ctx)
+	}()
+
+	// Give the server time to accept connections.
+	time.Sleep(50 * time.Millisecond)
+
+	// The server should be reachable on the pre-bound address.
+	resp, httpErr := http.Get("http://" + addr + "/ping")
+	require.NoError(t, httpErr)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Trigger shutdown.
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for shutdown")
+	}
+}

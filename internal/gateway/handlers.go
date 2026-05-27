@@ -33,9 +33,15 @@ func (app *App) handleLive(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// handleReady returns 200 if the service is ready to accept traffic.
+// handleReady returns 200 if the service is ready to accept traffic, or 503
+// during the lifecycle drain delay (when Config.IsReady returns false).
 func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if app.config.IsReady != nil && !app.config.IsReady() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
