@@ -1,8 +1,7 @@
 # Runbook: Audit Ledger HMAC Secret Rotation
 
 > **Applies to:** `PostgresLedgerBackend` and `PerReplicaPostgresLedgerBackend`  
-> **File:** `pkg/src/ledger-signer.ts`  
-> **CI-7 / OQ-1**
+> **File:** `pkg/src/ledger-signer.ts`
 
 ---
 

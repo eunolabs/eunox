@@ -64,11 +64,11 @@ consistent `tenant_id` scoping across all data paths.
 
 Tenant scoping is configured and enforced differently per service:
 
-| Service  | Tenant Context Source | Required | Notes |
-|----------|-----------------------|----------|-------|
-| Gateway  | `GATEWAY_TENANT_ID`   | Yes      | Used for admin/auth scoping and tenant-scoped operations |
-| Issuer   | Identity token claims | Yes      | No dedicated `ISSUER_TENANT_ID` setting |
-| Minter   | Request/auth context  | Yes      | No dedicated `MINTER_TENANT_ID` setting |
+| Service | Tenant Context Source | Required | Notes                                                    |
+| ------- | --------------------- | -------- | -------------------------------------------------------- |
+| Gateway | `GATEWAY_TENANT_ID`   | Yes      | Used for admin/auth scoping and tenant-scoped operations |
+| Issuer  | Identity token claims | Yes      | No dedicated `ISSUER_TENANT_ID` setting                  |
+| Minter  | Request/auth context  | Yes      | No dedicated `MINTER_TENANT_ID` setting                  |
 
 ### Token-Level Tenancy
 
@@ -85,6 +85,7 @@ Capability tokens include tenant identity in the `authorizedBy` claim:
 ```
 
 This claim is:
+
 - Set by the issuer at token creation time
 - Immutable after issuance (protected by digital signature)
 - Validated on audit queries to enforce tenant-scoped access
@@ -99,11 +100,11 @@ Eunox uses **row-level application filtering** (not PostgreSQL Row-Level
 Security policies). Every table containing tenant data includes a
 `tenant_id NOT NULL` column:
 
-| Table            | Tenant Column | Indexed                          |
-|------------------|---------------|----------------------------------|
-| `audit_records`  | `tenant_id`   | `idx_audit_records_tenant_timestamp` (tenant_id, timestamp DESC) |
-| `api_keys`       | `tenant_id`   | `idx_api_keys_tenant` (tenant_id) |
-| `key_policies`   | `tenant_id`   | `idx_key_policies_tenant` (tenant_id) |
+| Table           | Tenant Column | Indexed                                                          |
+| --------------- | ------------- | ---------------------------------------------------------------- |
+| `audit_records` | `tenant_id`   | `idx_audit_records_tenant_timestamp` (tenant_id, timestamp DESC) |
+| `api_keys`      | `tenant_id`   | `idx_api_keys_tenant` (tenant_id)                                |
+| `key_policies`  | `tenant_id`   | `idx_key_policies_tenant` (tenant_id)                            |
 
 ### Query Isolation
 
@@ -120,12 +121,12 @@ All database queries include a `WHERE tenant_id = $1` predicate:
 
 Redis keys are namespaced by tenant where applicable:
 
-| Key Pattern                         | Purpose                    |
-|-------------------------------------|----------------------------|
-| `kill_switch:{tenant_id}`           | Per-tenant kill switch     |
-| `revocations:{tenant_id}:{jti}`     | Token revocation entries   |
-| `callcounter:{key}:{windowSec}`     | API call counting          |
-| `partner_dids`                      | Global (cross-tenant)      |
+| Key Pattern                     | Purpose                  |
+| ------------------------------- | ------------------------ |
+| `kill_switch:{tenant_id}`       | Per-tenant kill switch   |
+| `revocations:{tenant_id}:{jti}` | Token revocation entries |
+| `callcounter:{key}:{windowSec}` | API call counting        |
+| `partner_dids`                  | Global (cross-tenant)    |
 
 ### Cross-Tenant Safeguards
 
@@ -193,6 +194,7 @@ type AdminIdentity struct {
 ```
 
 Admin operations are scoped:
+
 - An admin token for Tenant A cannot manage Tenant B's policies
 - The deprecated `X-Admin-Api-Key` static key is tenant-bound via gateway
   configuration
@@ -212,11 +214,11 @@ cache collisions:
 
 ### Current Implementation
 
-| Scope           | Mechanism        | Granularity    |
-|-----------------|------------------|----------------|
-| Admin endpoints | Per-IP limiter   | 10 req/min     |
-| Public API      | Per-key limiter  | Configurable   |
-| Health checks   | Exempt           | —              |
+| Scope           | Mechanism       | Granularity  |
+| --------------- | --------------- | ------------ |
+| Admin endpoints | Per-IP limiter  | 10 req/min   |
+| Public API      | Per-key limiter | Configurable |
+| Health checks   | Exempt          | —            |
 
 ### Per-Tenant Rate Limiting
 
@@ -248,7 +250,7 @@ All structured log entries include `tenant_id` when processing
 tenant-scoped requests:
 
 ```json
-{"level":"info","msg":"enforce","tenant_id":"acme","decision":"allow"}
+{ "level": "info", "msg": "enforce", "tenant_id": "acme", "decision": "allow" }
 ```
 
 ### Prometheus Metrics
@@ -273,15 +275,15 @@ recorded in the tenant-scoped audit ledger with full attribution:
 
 ### Threats and Mitigations
 
-| Threat | Severity | Mitigation |
-|--------|----------|------------|
-| **T1: Cross-tenant token replay** | High | Tokens are signed with per-tenant keys; JWKS sets are isolated per deployment |
-| **T2: SQL injection bypassing tenant filter** | High | Parameterized queries only; no dynamic SQL; ORM-free query construction |
-| **T3: Admin escalation to other tenant** | High | Admin JWT `tenantId` claim validated; cross-tenant ops require explicit acknowledgement |
-| **T4: Shared Redis key collision** | Medium | Keys namespaced by tenant_id; partner DID store is intentionally global |
-| **T5: Noisy neighbor (resource exhaustion)** | Medium | Per-key quotas; per-tenant kill switch; deploy separate instances for strict isolation |
-| **T6: Audit data leakage across tenants** | Medium | `QueryFilter.TenantID` mandatory on all non-admin queries; audit export scoped |
-| **T7: Metadata leakage via error messages** | Low | Errors never include cross-tenant identifiers; generic 403/404 responses |
+| Threat                                        | Severity | Mitigation                                                                              |
+| --------------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
+| **T1: Cross-tenant token replay**             | High     | Tokens are signed with per-tenant keys; JWKS sets are isolated per deployment           |
+| **T2: SQL injection bypassing tenant filter** | High     | Parameterized queries only; no dynamic SQL; ORM-free query construction                 |
+| **T3: Admin escalation to other tenant**      | High     | Admin JWT `tenantId` claim validated; cross-tenant ops require explicit acknowledgement |
+| **T4: Shared Redis key collision**            | Medium   | Keys namespaced by tenant_id; partner DID store is intentionally global                 |
+| **T5: Noisy neighbor (resource exhaustion)**  | Medium   | Per-key quotas; per-tenant kill switch; deploy separate instances for strict isolation  |
+| **T6: Audit data leakage across tenants**     | Medium   | `QueryFilter.TenantID` mandatory on all non-admin queries; audit export scoped          |
+| **T7: Metadata leakage via error messages**   | Low      | Errors never include cross-tenant identifiers; generic 403/404 responses                |
 
 ### Residual Risks
 
@@ -359,11 +361,8 @@ Tenant B → Gateway-B + Issuer-B → DB-B → Redis-B
 ### HIPAA (Healthcare Deployments)
 
 For HIPAA-regulated deployments, use **Topology C** (fully isolated) with:
+
 - Dedicated database instances per covered entity
 - Encryption at rest with tenant-specific KMS keys
 - Audit log retention of 6 years minimum
 - BAA (Business Associate Agreement) coverage for managed services
-
----
-
-*Document created as part of Phase 4 (OQ-1) of the architecture review.*

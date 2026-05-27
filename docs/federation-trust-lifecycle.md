@@ -44,12 +44,12 @@ to verify tokens issued by partners.
 
 ### Trust Anchors
 
-| Component | Trust Basis | Verification |
-|-----------|-------------|--------------|
-| Partner identity | DID document | DID resolution (did:web, did:key, did:ion) |
-| Token authenticity | Digital signature | Public key from DID document |
-| Capability scope | Attenuation rules | Parent ⊇ child validation |
-| Availability | Circuit breaker | Per-method isolation |
+| Component          | Trust Basis       | Verification                               |
+| ------------------ | ----------------- | ------------------------------------------ |
+| Partner identity   | DID document      | DID resolution (did:web, did:key, did:ion) |
+| Token authenticity | Digital signature | Public key from DID document               |
+| Capability scope   | Attenuation rules | Parent ⊇ child validation                  |
+| Availability       | Circuit breaker   | Per-method isolation                       |
 
 ### Trust Assumptions
 
@@ -85,11 +85,11 @@ Partner B DID: did:ion:EiC9R5...
 
 **Supported DID Methods:**
 
-| Method     | Resolution                            | Latency | Trust Level |
-|------------|---------------------------------------|---------|-------------|
-| `did:key`  | Embedded in URI (no network call)     | 0 ms    | Self-certifying |
-| `did:web`  | HTTPS GET `/.well-known/did.json`     | ~100 ms | DNS + TLS |
-| `did:ion`  | ION network query                     | ~500 ms | Bitcoin anchored |
+| Method    | Resolution                        | Latency | Trust Level      |
+| --------- | --------------------------------- | ------- | ---------------- |
+| `did:key` | Embedded in URI (no network call) | 0 ms    | Self-certifying  |
+| `did:web` | HTTPS GET `/.well-known/did.json` | ~100 ms | DNS + TLS        |
+| `did:ion` | ION network query                 | ~500 ms | Bitcoin anchored |
 
 ### Stage 2: Registration
 
@@ -107,6 +107,7 @@ curl -X POST https://gateway.internal:3003/admin/partner-dids/ \
 ```
 
 **Response:**
+
 ```json
 {
   "status": "registered",
@@ -132,6 +133,7 @@ curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner-a.
 ```
 
 **Response:**
+
 ```json
 {
   "did": "did:web:partner-a.example.com",
@@ -163,12 +165,14 @@ Partners rotate keys by updating their DID document. The gateway
 automatically picks up new keys on the next cache miss:
 
 **For did:web partners:**
+
 1. Partner updates `/.well-known/did.json` with new verification method
 2. Gateway's DID cache expires (default TTL: 5 minutes)
 3. Next token verification triggers fresh resolution
 4. New key is discovered and used for verification
 
 **For did:ion partners:**
+
 1. Partner publishes a DID update operation to the ION network
 2. ION network processes the update (may take minutes)
 3. Gateway resolves updated document on next cache miss
@@ -194,6 +198,7 @@ curl -X POST https://gateway.internal:3003/admin/partner-dids/did:web:partner-a.
 ```
 
 **Effect:**
+
 - Status changes to `revoked`
 - All subsequent token verification attempts for this DID fail with
   `ErrPartnerNotApproved`
@@ -235,20 +240,20 @@ resolved. The admin must explicitly call the approve endpoint again.
 
 ### Cache Configuration
 
-| Parameter       | Default | Description                    |
-|-----------------|---------|--------------------------------|
-| Cache TTL       | 5 min   | Time before re-resolution      |
-| Max cache items | 1000    | LRU eviction after this limit  |
-| HTTP timeout    | 10 sec  | did:web resolution timeout     |
-| ION timeout     | 30 sec  | did:ion resolution timeout     |
+| Parameter       | Default | Description                   |
+| --------------- | ------- | ----------------------------- |
+| Cache TTL       | 5 min   | Time before re-resolution     |
+| Max cache items | 1000    | LRU eviction after this limit |
+| HTTP timeout    | 10 sec  | did:web resolution timeout    |
+| ION timeout     | 30 sec  | did:ion resolution timeout    |
 
 ### Supported Key Types
 
-| Key Type | Curve/Size | Format               |
-|----------|------------|----------------------|
-| OKP      | Ed25519    | JWK or multibase     |
-| EC       | P-256      | JWK or multibase     |
-| RSA      | 2048+      | JWK                  |
+| Key Type | Curve/Size | Format           |
+| -------- | ---------- | ---------------- |
+| OKP      | Ed25519    | JWK or multibase |
+| EC       | P-256      | JWK or multibase |
+| RSA      | 2048+      | JWK              |
 
 ---
 
@@ -326,12 +331,12 @@ scope:
 
 ### Error Cases
 
-| Error | Meaning |
-|-------|---------|
-| `ErrSubsetViolation` | Child capabilities exceed parent scope |
-| `ErrEmptyParent` | Parent token has no capabilities to attenuate |
-| `ErrEmptyChild` | Empty child capabilities are not meaningful |
-| `ErrCrossOrgNotPermitted` | Parent does not allow cross-org delegation |
+| Error                     | Meaning                                       |
+| ------------------------- | --------------------------------------------- |
+| `ErrSubsetViolation`      | Child capabilities exceed parent scope        |
+| `ErrEmptyParent`          | Parent token has no capabilities to attenuate |
+| `ErrEmptyChild`           | Empty child capabilities are not meaningful   |
+| `ErrCrossOrgNotPermitted` | Parent does not allow cross-org delegation    |
 
 ---
 
@@ -342,15 +347,16 @@ prevent cascading failures:
 
 ### Configuration
 
-| Parameter           | Default | Description                           |
-|---------------------|---------|---------------------------------------|
-| Failure threshold   | 5       | Consecutive failures to trip breaker  |
-| Cooldown duration   | 30 sec  | Time in open state before half-open   |
-| Half-open max probes| 1       | Test requests allowed in half-open    |
+| Parameter            | Default | Description                          |
+| -------------------- | ------- | ------------------------------------ |
+| Failure threshold    | 5       | Consecutive failures to trip breaker |
+| Cooldown duration    | 30 sec  | Time in open state before half-open  |
+| Half-open max probes | 1       | Test requests allowed in half-open   |
 
 ### Isolation Strategy
 
 Circuit breakers are **per-DID-method** (not per-DID). This means:
+
 - A `did:web` resolution failure does not affect `did:ion` resolution
 - A single partner's DNS failure may trip the `did:web` breaker,
   affecting all `did:web` partners temporarily
@@ -369,11 +375,11 @@ CLOSED ──(5 failures)──▶ OPEN ──(30s cooldown)──▶ HALF-OPEN
 
 ### Metrics
 
-| Metric | Type | Labels |
-|--------|------|--------|
-| `euno_partner_did_circuit_breaker_state` | Gauge | `did_method`, `state` |
-| `euno_partner_did_resolution_total` | Counter | `did_method`, `outcome` |
-| `euno_partner_did_resolution_duration_seconds` | Histogram | `did_method` |
+| Metric                                         | Type      | Labels                  |
+| ---------------------------------------------- | --------- | ----------------------- |
+| `euno_partner_did_circuit_breaker_state`       | Gauge     | `did_method`, `state`   |
+| `euno_partner_did_resolution_total`            | Counter   | `did_method`, `outcome` |
+| `euno_partner_did_resolution_duration_seconds` | Histogram | `did_method`            |
 
 ---
 
@@ -394,27 +400,27 @@ Before trusting keys from a DID document:
 
 If a partner's DID document or signing key is compromised:
 
-| Step | Action | Command |
-|------|--------|---------|
-| 1 | Revoke partner DID | `POST /admin/partner-dids/{did}/revoke` |
-| 2 | Activate kill switch (if widespread) | See [kill-switch runbook](./runbooks/kill-switch.md) |
-| 3 | Revoke affected JTIs individually | `POST /admin/revoke/{jti}` |
-| 4 | Notify partner of compromise | Out-of-band communication |
-| 5 | Partner rotates keys in DID document | Partner responsibility |
-| 6 | Re-register and re-approve after verification | Repeat Stage 2–3 |
+| Step | Action                                        | Command                                              |
+| ---- | --------------------------------------------- | ---------------------------------------------------- |
+| 1    | Revoke partner DID                            | `POST /admin/partner-dids/{did}/revoke`              |
+| 2    | Activate kill switch (if widespread)          | See [kill-switch runbook](./runbooks/kill-switch.md) |
+| 3    | Revoke affected JTIs individually             | `POST /admin/revoke/{jti}`                           |
+| 4    | Notify partner of compromise                  | Out-of-band communication                            |
+| 5    | Partner rotates keys in DID document          | Partner responsibility                               |
+| 6    | Re-register and re-approve after verification | Repeat Stage 2–3                                     |
 
 ### Audit Trail
 
 All federation lifecycle events are captured in the tamper-evident audit
 ledger:
 
-| Event | Trigger |
-|-------|---------|
-| `partner-did.register` | New partner DID registered |
-| `partner-did.approve` | Partner moved to approved status |
-| `partner-did.revoke` | Partner trust revoked |
-| `partner-did.refresh` | DID cache manually invalidated |
-| `enforce.partner` | Partner token verified (per-request) |
+| Event                  | Trigger                              |
+| ---------------------- | ------------------------------------ |
+| `partner-did.register` | New partner DID registered           |
+| `partner-did.approve`  | Partner moved to approved status     |
+| `partner-did.revoke`   | Partner trust revoked                |
+| `partner-did.refresh`  | DID cache manually invalidated       |
+| `enforce.partner`      | Partner token verified (per-request) |
 
 ---
 
@@ -468,12 +474,12 @@ curl -s https://gateway.internal:3003/admin/partner-dids/ \
 
 ### Recommended Alerts
 
-| Alert | Condition | Severity |
-|-------|-----------|----------|
-| Federation circuit breaker open | `euno_partner_did_circuit_breaker_state{state="open"} > 0` | Warning |
-| High partner resolution failures | `rate(euno_partner_did_resolution_total{outcome="error"}[5m]) > 0.1` | Warning |
-| Partner resolution latency spike | `histogram_quantile(0.99, sum by (le) (rate(euno_partner_did_resolution_duration_seconds_bucket[5m]))) > 5` | Warning |
-| Partner token rejection spike | Increase in 401/403 for cross-org tokens | Info |
+| Alert                            | Condition                                                                                                   | Severity |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
+| Federation circuit breaker open  | `euno_partner_did_circuit_breaker_state{state="open"} > 0`                                                  | Warning  |
+| High partner resolution failures | `rate(euno_partner_did_resolution_total{outcome="error"}[5m]) > 0.1`                                        | Warning  |
+| Partner resolution latency spike | `histogram_quantile(0.99, sum by (le) (rate(euno_partner_did_resolution_duration_seconds_bucket[5m]))) > 5` | Warning  |
+| Partner token rejection spike    | Increase in 401/403 for cross-org tokens                                                                    | Info     |
 
 ### Dashboard Panels
 
@@ -482,7 +488,3 @@ curl -s https://gateway.internal:3003/admin/partner-dids/ \
 3. **Partner token volume** — accepted vs rejected
 4. **Cache hit ratio** — DID cache effectiveness
 5. **Resolution latency** — P50/P95/P99 by method
-
----
-
-*Document created as part of Phase 4 (OQ-2) of the architecture review.*

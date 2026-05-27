@@ -16,6 +16,4 @@
 //	github.com/testcontainers/testcontainers-go v0.38.0
 //	github.com/testcontainers/testcontainers-go/modules/postgres v0.38.0
 //	github.com/testcontainers/testcontainers-go/modules/redis v0.38.0
-//
-// See docs/OPEN_QUESTIONS.md §6 for the design rationale.
 package testutil

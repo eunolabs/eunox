@@ -632,7 +632,7 @@ func TestPostgresLedgerBackend_AcquireLock_Contention(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLockContention)
 }
 
-// CI-11: lock_timeout is emitted before acquiring the advisory lock.
+// lock_timeout is emitted before acquiring the advisory lock.
 
 func TestPostgresLedgerBackend_AcquireLock_WithLockTimeout(t *testing.T) {
 	t.Parallel()
@@ -956,7 +956,7 @@ func (b *failingBackend) Close() error {
 	return b.inner.Close()
 }
 
-// CI-4: dedicated chain HMAC secret tests.
+// dedicated chain HMAC secret tests.
 
 func TestComputeChainHashWithSecret_DifferentFromLegacy(t *testing.T) {
 ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)

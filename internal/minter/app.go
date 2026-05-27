@@ -404,7 +404,7 @@ func (app *App) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	operatorID := getOperatorID(r.Context())
 
 	// RevokeKey returns the revoked key atomically, eliminating the TOCTOU race
-	// that would arise from a separate GetKey call after revocation (CR-5).
+	// that would arise from a separate GetKey call after revocation.
 	key, err := app.deps.Store.RevokeKey(r.Context(), keyID, time.Now())
 	if err != nil {
 		if errors.Is(err, ErrKeyNotFound) {

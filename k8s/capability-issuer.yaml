@@ -48,7 +48,7 @@ spec:
         # config schema enforces the matching infrastructure (REDIS_URL
         # is required for multi-replica). Switch to
         # "multi-region-active-active" and set ISSUER_REGION when adding
-        # a second region — see docs/MULTI_REGION_ISSUER.md.
+        # a second region.
         - name: EUNO_DEPLOYMENT_TIER
           value: "multi-replica"
         - name: AZURE_KEYVAULT_URL
@@ -76,7 +76,7 @@ spec:
         - name: DEFAULT_TOKEN_TTL
           value: "900"
         # Distributed coordination — REQUIRED for the multi-replica issuer
-        # so the per-subject issuance rate limiter (F-1) shares state
+        # so the per-subject issuance rate limiter shares state
         # across pods (otherwise the effective budget is multiplied by
         # the replica count).
         - name: REDIS_URL

@@ -94,7 +94,7 @@ func TestValidateAdminAuth(t *testing.T) {
 			tenantID:  "tenant-1",
 			expectErr: false,
 		},
-		// --- Staging (CR-3: JWT required in staging too) ---
+		// --- JWT required in staging too) ---
 		{
 			name: "staging_missing_jwks_uri_requires_error",
 			cfg: config.GatewayConfig{

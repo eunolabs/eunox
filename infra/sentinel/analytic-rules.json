@@ -26,7 +26,7 @@
     "denialSpikeThreshold": {
       "type": "int",
       "defaultValue": 5,
-      "metadata": { "description": "Sprint 6 tuned default. Number of capability denials within 5 minutes from the same agent/session that constitutes a spike. Raise if false-positive rate > 40 %; see docs/SPRINT_6_STABILIZATION_HANDOFF.md § 4." }
+      "metadata": { "description": "Sprint 6 tuned default. Number of capability denials within 5 minutes from the same agent/session that constitutes a spike. Raise if false-positive rate > 40 %." }
     },
     "invalidTokenBurstThreshold": {
       "type": "int",

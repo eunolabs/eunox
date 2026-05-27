@@ -10,11 +10,11 @@
 #
 # All secrets (AUDIT_LEDGER_HMAC_SECRET, ADMIN_API_KEY, REDIS_URL, etc.)
 # should be sourced from Azure Key Vault rather than supplied here.
-# See docs/DEPLOYMENT.md §"Stage-5 on-prem deployment" and
+# See docs/deployment.md §"Stage-5 on-prem deployment" and
 # docs/secrets-gcp.md (substitute Azure equivalents) for External Secrets
 # Operator and Azure Key Vault Provider for Secrets Store CSI Driver wiring.
 #
-# See docs/DEPLOYMENT.md and infra/bicep/main.bicep for the full AKS
+# See docs/deployment.md and infra/bicep/main.bicep for the full AKS
 # deployment guide, including:
 #   - Azure Workload Identity Federation setup
 #   - Azure Container Registry (ACR) image push configuration

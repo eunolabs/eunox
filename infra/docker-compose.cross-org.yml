@@ -1,7 +1,6 @@
 # Cross-organization trust harness — docker-compose
 #
-# Stands up the three services that exercise the cross-org VC flow described
-# in `docs/sprint-3-4-gaps/05-cross-org-trust-harness.md`:
+# Stands up the three services that exercise the cross-org VC flow:
 #
 #   - our-issuer        : the gateway operator's own capability issuer.
 #   - our-gateway       : the tool gateway, configured to trust the partner DID.

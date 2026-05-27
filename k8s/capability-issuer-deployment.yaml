@@ -98,7 +98,7 @@ spec:
         # config schema enforces the matching infrastructure (REDIS_URL
         # is required for multi-replica). Switch to
         # "multi-region-active-active" and set ISSUER_REGION when adding
-        # a second region — see docs/MULTI_REGION_ISSUER.md.
+        # a second region.
         - name: EUNO_DEPLOYMENT_TIER
           value: "multi-replica"
 
@@ -204,7 +204,7 @@ spec:
             configMapKeyRef:
               name: issuer-config
               key: redis-url
-        # Issuance rate limiter (F-1) — enabled by default in production so
+        # Issuance rate limiter — enabled by default in production so
         # a single compromised principal cannot mint capabilities at line
         # rate.  Tune via the ConfigMap below.
         - name: ISSUANCE_RATE_LIMIT_ENABLED
@@ -362,8 +362,7 @@ data:
   issuer-did: "did:web:your-domain.com"
 
   # Distributed coordination (Redis) — REQUIRED so the per-subject
-  # issuance rate limiter (F-1) shares state across all issuer replicas.
+  # issuance rate limiter shares state across all issuer replicas.
   # Defaults to the in-cluster Redis from `redis.yaml`; override with a
-  # managed Redis URL for production / multi-region (see
-  # docs/MULTI_REGION_ISSUER.md).
+  # managed Redis URL for production / multi-region.
   redis-url: "redis://redis.euno-system.svc.cluster.local:6379"

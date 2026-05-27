@@ -279,11 +279,11 @@ paths:
                     type: string
                     description: |
                       Optional logical region tag for this issuer
-                      instance (F-7, multi-region active/active). When
+                      instance (multi-region active/active). When
                       present, capability tokens minted by this
                       instance carry the same value in the `region`
                       claim. Omitted entirely on single-region
-                      deployments. See `docs/MULTI_REGION_ISSUER.md`.
+                      deployments.
                     example: eastus2
 
 components:
@@ -413,7 +413,7 @@ components:
     TooManyRequests:
       description: |
         The per-(tenant, user, agent) issuance rate limit was exceeded
-        (F-1, error code `RATE_LIMIT_EXCEEDED`). The shared bucket
+        (error code `RATE_LIMIT_EXCEEDED`). The shared bucket
         covers `/api/v1/issue`, `/api/v1/attenuate`, and `/api/v1/renew`
         so a compromised account cannot evade the limit by switching
         mint paths. Clients SHOULD honour the `Retry-After` header

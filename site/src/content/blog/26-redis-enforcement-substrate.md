@@ -1,10 +1,10 @@
 ---
 title: "Redis as a Shared Enforcement Substrate: Call Counters, Kill-Switch, and DPoP Replay"
-description: "Fourth post in the \"Technology choices\" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index."
+description: 'Fourth post in the "Technology choices" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-14"
 ---
 
-*Fourth post in the "Technology choices" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.*
+_Fourth post in the "Technology choices" series. [Post 10](./10-tool-gateway-pdp.md) covers the enforcement pipeline at a high level. [Post 21](./21-operator-tooling.md) covers the operator-facing kill-switch and revocation commands that Redis backs. This post goes into the Redis data model and explains the failure modes — what happens to enforcement decisions when Redis is unavailable. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -163,7 +163,7 @@ The gateway bootstrap runs `checkProductionRedisHa()` and refuses to start if an
 
 The reason is that single-node Redis is a single point of failure for every Redis-backed enforcement check. In fail-closed mode, a Redis node failure stops the entire gateway. The HA check ensures that before you ever deploy to production, you've set up Redis Cluster or Redis Sentinel.
 
-The check inspects the URL scheme (or seed-list format) and verifies that it points to a Sentinel or Cluster setup. Accepted HA patterns are `redis+sentinel://`, `rediss+sentinel://`, `redis+cluster://`, `rediss+cluster://`, or comma-separated seed nodes. A plain `redis://host:6379` in production mode causes startup failure with a CR-3 error. The exact implementation includes the env var name (for example `REDIS_URL`) and reads: `"CR-3: Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance. In production, all runtime-security state stores ... See docs/deployment.md §\"Redis HA for production\"."`
+The check inspects the URL scheme (or seed-list format) and verifies that it points to a Sentinel or Cluster setup. Accepted HA patterns are `redis+sentinel://`, `rediss+sentinel://`, `redis+cluster://`, `rediss+cluster://`, or comma-separated seed nodes. A plain `redis://host:6379` in production mode causes startup failure with an error. The exact implementation includes the env var name (for example `REDIS_URL`) and reads: `"Gateway refused to start — REDIS_URL appears to point at a single-node Redis instance. In production, all runtime-security state stores ... See docs/deployment.md §\"Redis HA for production\"."`
 
 For testing and development, non-production environments bypass this check. There is no `ALLOW_SINGLE_NODE_REDIS` production override.
 
@@ -231,4 +231,4 @@ The Prometheus metrics I watch most closely for Redis health:
 
 ---
 
-*Previous: [post 25 — KMS-backed JWT signing](./25-kms-backed-jwt-signing.md). Next: [post 27 — SCIM 2.0 for AI agents: bringing enterprise directory provisioning to capability tokens](./27-scim-for-ai-agents.md).*
+_Previous: [post 25 — KMS-backed JWT signing](./25-kms-backed-jwt-signing.md). Next: [post 27 — SCIM 2.0 for AI agents: bringing enterprise directory provisioning to capability tokens](./27-scim-for-ai-agents.md)._

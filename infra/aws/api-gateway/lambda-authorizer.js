@@ -1,11 +1,10 @@
 /**
  * Euno Capability Authorizer — AWS API Gateway custom Lambda authorizer.
  *
- * This file is the AWS-side parity of the Azure APIM `validate-jwt` policy
- * referenced by Sprint 1 of the execution plan and by the multi-cloud
- * parity matrix in `docs/SPRINT_1_2_SUMMARY.md`. It performs the same
- * edge-level capability-token verification that the in-cluster Tool
- * Gateway performs in `packages/tool-gateway/src/verifier.ts`:
+ * This file is the AWS-side parity of the Azure APIM `validate-jwt` policy.
+ * It performs the same edge-level capability-token verification that
+ * the in-cluster Tool Gateway performs in
+ * `packages/tool-gateway/src/verifier.ts`:
  *
  *   1. Signature verification against the issuer's published JWKS.
  *   2. Algorithm allow-list (defence in depth against `alg` substitution).

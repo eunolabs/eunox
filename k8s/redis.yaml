@@ -31,7 +31,7 @@
 #
 # Set REDIS_URL in namespace-and-config.yaml (and the per-store overrides
 # REVOCATION_REDIS_URL, KILL_SWITCH_REDIS_URL, CALL_COUNTER_REDIS_URL) to
-# point at your HA Redis endpoint.  See docs/DEPLOYMENT.md §"Redis HA for
+# point at your HA Redis endpoint.  See docs/deployment.md §"Redis HA for
 # production" for Sentinel and Cluster URL formats and startup-validation
 # behaviour.
 #
@@ -39,12 +39,7 @@
 # resources below — they are only needed for local / CI / pilot clusters.
 #
 # References:
-#   - docs/DEPLOYMENT.md §"Redis HA for production"
-#   - docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md ("Redis instance provisioned")
-#   - docs/MULTI_REGION_ISSUER.md             (REDIS_URL per-region)
-#   - docs/DISTRIBUTED_REVOCATION.md
-#   - docs/DISTRIBUTED_KILL_SWITCH.md
-#   - docs/architecture-review-2026-05.md     CR-3
+#   - docs/deployment.md §"Redis HA for production"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -63,7 +58,7 @@ metadata:
     component: coordination
     # Mark this Deployment as development/pilot only so infrastructure scanners
     # and admission controllers can enforce that production clusters do not run
-    # single-node Redis.  See docs/DEPLOYMENT.md §"Redis HA for production".
+    # single-node Redis.  See docs/deployment.md §"Redis HA for production".
     euno.dev/dev-only: 'true'
   annotations:
     # This single-node Redis is NOT suitable for production.  Replace with
@@ -73,7 +68,7 @@ metadata:
       Single-node Redis with no replication or automatic failover.
       A pod restart causes all revocation, kill-switch, call-counter, and DPoP
       state to be lost and blocks enforcement until Redis recovers.
-      See docs/DEPLOYMENT.md §"Redis HA for production" for HA alternatives.
+      See docs/deployment.md §"Redis HA for production" for HA alternatives.
 spec:
   # Single replica: the in-memory Redis store is not horizontally replicated;
   # for HA Redis use a managed offering (see header comment).

@@ -147,7 +147,7 @@ func (es *EvidenceSigner) KeyID() string {
 //
 // When chainSecret is non-empty it is used as the outer HMAC key, anchoring the
 // entire chain to a dedicated secret that can be rotated independently of the
-// per-record signing key (CI-4).  The message still encodes the previousHash so
+// per-record signing key.  The message still encodes the previousHash so
 // that the chain linkage cannot be reordered even if the secret is known.
 //
 // When chainSecret is empty the function falls back to the legacy behaviour:
@@ -237,7 +237,7 @@ type PipelineConfig struct {
 	// ChainHMACSecret is an optional dedicated secret for the HMAC chain
 	// integrity hash.  When set, the chain hash is computed with this secret
 	// as the HMAC key rather than the previous hash, decoupling the chain
-	// integrity mechanism from the per-record signing key (CI-4).
+	// integrity mechanism from the per-record signing key.
 	//
 	// Populate from the AUDIT_CHAIN_HMAC_SECRET environment variable.
 	// Omitting this field preserves backward-compatible behaviour (the previous
@@ -316,7 +316,7 @@ func (p *DefaultPipeline) Append(ctx context.Context, entry *LogEntry) error {
 		return err
 	}
 
-	// Compute chain hash using the dedicated chain secret when configured (CI-4),
+	// Compute chain hash using the dedicated chain secret when configured,
 	// otherwise fall back to legacy behaviour.
 	chainHash := ComputeChainHashWithSecret(p.chainHMACSecret, p.lastChainHash, entry.ID, entry.Timestamp, signature)
 

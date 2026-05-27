@@ -2,8 +2,7 @@
 
 This document describes the security model, sandbox isolation boundaries, and
 blast radius containment mechanisms for the Euno agent runtime
-(`internal/agentruntime/`). It answers the questions posed in OQ-1 of the
-[Technical Architecture Review](technical-review-2026-05-26.md).
+(`internal/agentruntime/`).
 
 ---
 
@@ -51,6 +50,7 @@ of a valid, scoped capability token for every side-effecting operation.
 
 **Key trust boundary:** The agent process is entirely within the untrusted zone.
 It cannot:
+
 - Directly access protected backends (network policies block egress)
 - Forge capability tokens (requires KMS private key)
 - Replay tokens (DPoP binds tokens to specific method+URL)
@@ -58,13 +58,14 @@ It cannot:
 
 ### 2.2 Credential Exposure
 
-| Secret | Resides In | Exposure Window | Mitigation |
-|--------|-----------|-----------------|------------|
+| Secret                 | Resides In   | Exposure Window                   | Mitigation                               |
+| ---------------------- | ------------ | --------------------------------- | ---------------------------------------- |
 | Capability token (JWT) | Agent memory | Until expiry (typically 5–15 min) | Short TTL, DPoP binding, revocation list |
-| DPoP private key | Agent memory | Lifetime of runtime instance | Ephemeral P-256 key, never persisted |
-| Identity token | Agent memory | Until first exchange or expiry | One-time use or short-lived OIDC token |
+| DPoP private key       | Agent memory | Lifetime of runtime instance      | Ephemeral P-256 key, never persisted     |
+| Identity token         | Agent memory | Until first exchange or expiry    | One-time use or short-lived OIDC token   |
 
 The agent never holds:
+
 - KMS keys (signing happens server-side)
 - Database credentials (minted on-demand by DB Token Service)
 - Storage secrets (presigned URLs issued by Storage Grant Service)
@@ -81,11 +82,11 @@ The agent sandbox architecture uses layered isolation:
 
 #### Layer 1: Kernel/VM Isolation
 
-| Platform | Technology | Boundary |
-|----------|-----------|----------|
-| AKS | Kata Containers (Pod Sandboxing) | Separate lightweight VM per pod |
-| GKE Autopilot | gVisor (GKE Sandbox) | Syscall interception via user-space kernel |
-| EKS | Firecracker microVMs (via Kata) | Hardware-virtualized isolation |
+| Platform      | Technology                       | Boundary                                   |
+| ------------- | -------------------------------- | ------------------------------------------ |
+| AKS           | Kata Containers (Pod Sandboxing) | Separate lightweight VM per pod            |
+| GKE Autopilot | gVisor (GKE Sandbox)             | Syscall interception via user-space kernel |
+| EKS           | Firecracker microVMs (via Kata)  | Hardware-virtualized isolation             |
 
 Each agent pod runs in a separate kernel context. A compromised agent cannot
 access host kernel data structures, /proc of other containers, or shared memory.
@@ -95,7 +96,7 @@ access host kernel data structures, /proc of other containers, or shared memory.
 ```yaml
 securityContext:
   runAsNonRoot: true
-  runAsUser: 65534          # nobody
+  runAsUser: 65534 # nobody
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
   capabilities:
@@ -139,6 +140,7 @@ spec:
 ```
 
 The agent can **only** communicate with:
+
 1. The Capability Issuer (to acquire tokens)
 2. The Tool Gateway (to invoke tools)
 
@@ -163,16 +165,16 @@ Prevents resource exhaustion attacks (fork bombs, memory bombs, disk filling).
 
 For bare-metal, VM, or standalone container deployments:
 
-| Mechanism | Purpose |
-|-----------|---------|
-| Firecracker microVM | Full VM isolation without K8s |
-| Docker `--security-opt=no-new-privileges` | Prevent privilege escalation |
-| `--cap-drop=ALL` | Remove all Linux capabilities |
-| `--read-only` | Immutable root filesystem |
-| AppArmor/SELinux profiles | MAC enforcement |
-| iptables/nftables | Restrict egress to gateway only |
-| cgroups v2 | Resource limits (CPU, memory, I/O) |
-| Overlay filesystem | Ephemeral write layer destroyed on exit |
+| Mechanism                                 | Purpose                                 |
+| ----------------------------------------- | --------------------------------------- |
+| Firecracker microVM                       | Full VM isolation without K8s           |
+| Docker `--security-opt=no-new-privileges` | Prevent privilege escalation            |
+| `--cap-drop=ALL`                          | Remove all Linux capabilities           |
+| `--read-only`                             | Immutable root filesystem               |
+| AppArmor/SELinux profiles                 | MAC enforcement                         |
+| iptables/nftables                         | Restrict egress to gateway only         |
+| cgroups v2                                | Resource limits (CPU, memory, I/O)      |
+| Overlay filesystem                        | Ephemeral write layer destroyed on exit |
 
 ---
 
@@ -192,16 +194,16 @@ The agent never has direct network access to protected backends.
 
 ### 4.2 What Prevents Privilege Escalation?
 
-| Attack Vector | Mitigation |
-|--------------|------------|
-| Forge token claims | JWT signed by KMS; agent has no signing key |
-| Replay token for different endpoint | DPoP binds token to specific HTTP method + URL |
-| Reuse JTI (replay attack) | Gateway maintains JTI replay cache |
-| Escalate scope mid-session | Tokens are immutable; new token requires re-issuance |
-| Tamper with tool arguments | Arguments are evaluated by gateway against capability conditions |
-| Call unauthorized backend directly | NetworkPolicy blocks all egress except gateway/issuer |
+| Attack Vector                       | Mitigation                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| Forge token claims                  | JWT signed by KMS; agent has no signing key                               |
+| Replay token for different endpoint | DPoP binds token to specific HTTP method + URL                            |
+| Reuse JTI (replay attack)           | Gateway maintains JTI replay cache                                        |
+| Escalate scope mid-session          | Tokens are immutable; new token requires re-issuance                      |
+| Tamper with tool arguments          | Arguments are evaluated by gateway against capability conditions          |
+| Call unauthorized backend directly  | NetworkPolicy blocks all egress except gateway/issuer                     |
 | Prompt injection to bypass controls | Enforcement is external to agent — prompt injection cannot bypass gateway |
-| Exfiltrate data via side channels | Network isolation prevents covert channels; audit logs detect anomalies |
+| Exfiltrate data via side channels   | Network isolation prevents covert channels; audit logs detect anomalies   |
 
 ### 4.3 Timeout Enforcement
 
@@ -224,15 +226,16 @@ Agent timeout (context.WithTimeout)
 
 If an agent is compromised:
 
-| Blast Radius | Contained By |
-|-------------|-------------|
+| Blast Radius       | Contained By                                                               |
+| ------------------ | -------------------------------------------------------------------------- |
 | **Within session** | Token scoped to specific tools/resources; conditions enforce action limits |
-| **Cross-session** | Each session has independent token; kill switch terminates by session ID |
-| **Cross-agent** | Network isolation prevents lateral movement; DID-scoped kill switch |
-| **Cross-tenant** | Tenant isolation at every layer (tokens, Redis keys, audit partitions) |
-| **Infrastructure** | VM/gVisor boundary prevents host compromise |
+| **Cross-session**  | Each session has independent token; kill switch terminates by session ID   |
+| **Cross-agent**    | Network isolation prevents lateral movement; DID-scoped kill switch        |
+| **Cross-tenant**   | Tenant isolation at every layer (tokens, Redis keys, audit partitions)     |
+| **Infrastructure** | VM/gVisor boundary prevents host compromise                                |
 
 Operator response path:
+
 1. Kill switch (session or agent scope) — propagates in <1s via pub/sub
 2. Token revocation — immediate denial on next gateway call
 3. Global kill switch — blocks all agent traffic fleet-wide
@@ -275,6 +278,7 @@ Each tool invocation includes a DPoP proof JWT:
 ### 5.3 Verification (Gateway Side)
 
 The gateway verifies DPoP proofs by:
+
 1. Computing JWK thumbprint from the proof's public key
 2. Verifying it matches the `cnf.jkt` claim in the capability token
 3. Verifying `htm` matches the request HTTP method
@@ -290,25 +294,26 @@ The gateway verifies DPoP proofs by:
 
 The token provider implements graceful degradation:
 
-| Failure | Behavior |
-|---------|----------|
-| Issuer unreachable | Circuit breaker opens after threshold; serves stale token for 60s grace period |
-| Token expired during outage | Returns error after grace period; agent must handle denial |
-| Clock skew | Refresh triggers 30s before expiry to absorb minor skew |
-| Network partition | Retry with exponential backoff + jitter; circuit breaker prevents thundering herd |
+| Failure                     | Behavior                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| Issuer unreachable          | Circuit breaker opens after threshold; serves stale token for 60s grace period    |
+| Token expired during outage | Returns error after grace period; agent must handle denial                        |
+| Clock skew                  | Refresh triggers 30s before expiry to absorb minor skew                           |
+| Network partition           | Retry with exponential backoff + jitter; circuit breaker prevents thundering herd |
 
 ### 6.2 Gateway Failures
 
-| Failure | Behavior |
-|---------|----------|
-| Gateway returns 5xx | Transient retry (up to 3 attempts with backoff) |
-| Gateway returns 429 | Transient retry with backoff; respects Retry-After |
-| Gateway unreachable | Same as 5xx; network isolation means no bypass possible |
-| Gateway denies action | Non-retryable; returns denial to agent |
+| Failure               | Behavior                                                |
+| --------------------- | ------------------------------------------------------- |
+| Gateway returns 5xx   | Transient retry (up to 3 attempts with backoff)         |
+| Gateway returns 429   | Transient retry with backoff; respects Retry-After      |
+| Gateway unreachable   | Same as 5xx; network isolation means no bypass possible |
+| Gateway denies action | Non-retryable; returns denial to agent                  |
 
 ### 6.3 Agent Misbehavior Detection
 
 The platform detects agent misbehavior through:
+
 - **Audit trail analysis**: Unusual patterns trigger alerts (many denials, scope probing)
 - **Rate limiting**: Per-agent and per-session rate limits
 - **Call counting**: Action budgets tracked via Redis call counters
@@ -318,31 +323,31 @@ The platform detects agent misbehavior through:
 
 ## 7. Configuration Reference
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `IssuerURL` | (required) | Capability issuer endpoint |
-| `GatewayURL` | (required) | Tool Gateway enforcement endpoint |
-| `IdentityToken` | — | Static identity token for authentication |
-| `IdentityTokenProvider` | — | Dynamic identity token provider |
-| `RefreshBeforeExpiry` | 30s | Proactive refresh window |
-| `MaxRetries` | 3 | Max retry attempts for transient errors |
-| `RetryBaseDelay` | 100ms | Initial backoff delay |
-| `RetryMaxDelay` | 5s | Maximum backoff delay |
-| `DPoPEnabled` | true | Enable proof-of-possession |
-| `HTTPClient` | (default) | Custom HTTP client (30s timeout, 10MB body limit) |
+| Parameter               | Default    | Description                                       |
+| ----------------------- | ---------- | ------------------------------------------------- |
+| `IssuerURL`             | (required) | Capability issuer endpoint                        |
+| `GatewayURL`            | (required) | Tool Gateway enforcement endpoint                 |
+| `IdentityToken`         | —          | Static identity token for authentication          |
+| `IdentityTokenProvider` | —          | Dynamic identity token provider                   |
+| `RefreshBeforeExpiry`   | 30s        | Proactive refresh window                          |
+| `MaxRetries`            | 3          | Max retry attempts for transient errors           |
+| `RetryBaseDelay`        | 100ms      | Initial backoff delay                             |
+| `RetryMaxDelay`         | 5s         | Maximum backoff delay                             |
+| `DPoPEnabled`           | true       | Enable proof-of-possession                        |
+| `HTTPClient`            | (default)  | Custom HTTP client (30s timeout, 10MB body limit) |
 
 ---
 
 ## 8. Threat Model Summary
 
-| Threat | Likelihood | Impact | Mitigation | Residual Risk |
-|--------|-----------|--------|------------|---------------|
-| Token theft | Medium | Medium | Short TTL, DPoP binding, revocation | Stale-token grace window (60s) |
-| Prompt injection | High | Medium | External enforcement (gateway), not in-agent | Agent may waste quota on denied calls |
-| Container escape | Low | Critical | Kata/gVisor/Firecracker VM boundary | Zero-day in VM technology |
-| Supply chain compromise | Low | High | Immutable images, signed manifests | Compromised base image |
-| Network-level attack | Low | Medium | mTLS, NetworkPolicy, no ambient egress | DNS rebinding (mitigated by policy) |
-| DPoP key extraction | Low | Low | Ephemeral key, per-instance; token still time-limited | Memory forensics on live process |
+| Threat                  | Likelihood | Impact   | Mitigation                                            | Residual Risk                         |
+| ----------------------- | ---------- | -------- | ----------------------------------------------------- | ------------------------------------- |
+| Token theft             | Medium     | Medium   | Short TTL, DPoP binding, revocation                   | Stale-token grace window (60s)        |
+| Prompt injection        | High       | Medium   | External enforcement (gateway), not in-agent          | Agent may waste quota on denied calls |
+| Container escape        | Low        | Critical | Kata/gVisor/Firecracker VM boundary                   | Zero-day in VM technology             |
+| Supply chain compromise | Low        | High     | Immutable images, signed manifests                    | Compromised base image                |
+| Network-level attack    | Low        | Medium   | mTLS, NetworkPolicy, no ambient egress                | DNS rebinding (mitigated by policy)   |
+| DPoP key extraction     | Low        | Low      | Ephemeral key, per-instance; token still time-limited | Memory forensics on live process      |
 
 ---
 

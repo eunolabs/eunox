@@ -89,7 +89,7 @@ func (s *InMemoryStore) ListKeys(_ context.Context, tenantID string, limit, offs
 // RevokeKey implements KeyStore.
 // It marks the key as revoked and returns a copy of the key with RevokedAt set.
 // The returned snapshot is safe for the caller to use without re-querying the store,
-// eliminating the TOCTOU race that arises from a separate GetKey call (CR-5).
+// eliminating the TOCTOU race that arises from a separate GetKey call.
 func (s *InMemoryStore) RevokeKey(_ context.Context, keyID string, revokedAt time.Time) (*APIKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

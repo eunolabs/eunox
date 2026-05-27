@@ -1,9 +1,7 @@
 # Multi-Region Consistency Model
 
 This document describes the consistency guarantees, partition tolerance behavior,
-and multi-region deployment model for the Euno platform. It answers the
-questions posed in OQ-5 of the
-[Technical Architecture Review](technical-review-2026-05-26.md).
+and multi-region deployment model for the Euno platform.
 
 ---
 
@@ -11,11 +9,11 @@ questions posed in OQ-5 of the
 
 Euno supports three deployment tiers with increasing consistency complexity:
 
-| Tier | Redis | Consistency Model | Target SLA |
-|------|-------|------------------|------------|
-| `single-replica` | Not required | Strong (single process) | 99.9% |
-| `multi-replica` | Required | Eventual (sub-second propagation) | 99.95% |
-| `multi-region-active-active` | Cross-region replication | Eventual (seconds-level propagation) | 99.99% |
+| Tier                         | Redis                    | Consistency Model                    | Target SLA |
+| ---------------------------- | ------------------------ | ------------------------------------ | ---------- |
+| `single-replica`             | Not required             | Strong (single process)              | 99.9%      |
+| `multi-replica`              | Required                 | Eventual (sub-second propagation)    | 99.95%     |
+| `multi-region-active-active` | Cross-region replication | Eventual (seconds-level propagation) | 99.99%     |
 
 This document focuses on the multi-region tier, where **eventual consistency**
 is the fundamental trade-off for geographic redundancy and partition tolerance.
@@ -26,14 +24,14 @@ is the fundamental trade-off for geographic redundancy and partition tolerance.
 
 ### 2.1 State Classification
 
-| Component | State Type | Consistency Requirement | Failure Mode |
-|-----------|-----------|------------------------|-------------|
-| **Kill switch** | Safety-critical | Eventual (bounded staleness) | Fail-closed |
-| **Token revocation** | Safety-critical | Eventual (bounded staleness) | Fail-closed |
-| **Rate limiter** | Best-effort | Approximate | Fail-open |
-| **Call counter** | Best-effort | Approximate | Fail-open |
-| **DPoP replay cache** | Integrity | Per-region (no cross-region) | Fail-closed |
-| **Audit ledger** | Compliance-critical | Append-only, eventually durable | Fail-closed (signing) |
+| Component             | State Type          | Consistency Requirement         | Failure Mode          |
+| --------------------- | ------------------- | ------------------------------- | --------------------- |
+| **Kill switch**       | Safety-critical     | Eventual (bounded staleness)    | Fail-closed           |
+| **Token revocation**  | Safety-critical     | Eventual (bounded staleness)    | Fail-closed           |
+| **Rate limiter**      | Best-effort         | Approximate                     | Fail-open             |
+| **Call counter**      | Best-effort         | Approximate                     | Fail-open             |
+| **DPoP replay cache** | Integrity           | Per-region (no cross-region)    | Fail-closed           |
+| **Audit ledger**      | Compliance-critical | Append-only, eventually durable | Fail-closed (signing) |
 
 ### 2.2 Safety-Critical vs. Best-Effort
 
@@ -70,21 +68,21 @@ Region A                              Region B
 
 The kill switch uses four complementary propagation mechanisms:
 
-| Mechanism | Latency | Purpose |
-|-----------|---------|---------|
-| 1. Write-through | Immediate (issuing pod) | Local consistency |
-| 2. Redis pub/sub | < 10ms (same region) | Cross-pod propagation |
-| 3. Redis replication | 1–5ms (same region), 50–200ms (cross-region) | Cross-region propagation |
-| 4. Safety-net refresh | 30s (configurable) | Catch missed pub/sub events |
+| Mechanism             | Latency                                      | Purpose                     |
+| --------------------- | -------------------------------------------- | --------------------------- |
+| 1. Write-through      | Immediate (issuing pod)                      | Local consistency           |
+| 2. Redis pub/sub      | < 10ms (same region)                         | Cross-pod propagation       |
+| 3. Redis replication  | 1–5ms (same region), 50–200ms (cross-region) | Cross-region propagation    |
+| 4. Safety-net refresh | 30s (configurable)                           | Catch missed pub/sub events |
 
 ### 3.3 Worst-Case Staleness
 
-| Scenario | Maximum Staleness | Explanation |
-|----------|------------------|-------------|
-| Same pod | 0 | Write-through |
-| Same region, different pod | < 1s | Pub/sub + local cache refresh |
-| Cross-region, no partition | < 30s | Replication lag + safety-net refresh |
-| Cross-region, during partition | 30s after partition heals | Safety-net catches up |
+| Scenario                       | Maximum Staleness         | Explanation                          |
+| ------------------------------ | ------------------------- | ------------------------------------ |
+| Same pod                       | 0                         | Write-through                        |
+| Same region, different pod     | < 1s                      | Pub/sub + local cache refresh        |
+| Cross-region, no partition     | < 30s                     | Replication lag + safety-net refresh |
+| Cross-region, during partition | 30s after partition heals | Safety-net catches up                |
 
 **Operator implication:** After activating a kill switch, wait up to 30 seconds
 before assuming all regions have applied the change. In practice, propagation
@@ -105,11 +103,13 @@ Region A (has Redis primary)          Region B (has Redis replica)
 ```
 
 **During partition:**
+
 - Region A (primary): Full kill switch functionality
 - Region B (replica): Reads last-known state; **fail-closed** if Redis
   becomes unreachable (blocks all requests)
 
 **After partition heals:**
+
 - Redis replication catches up automatically
 - Safety-net refresh (30s) ensures all pods re-sync
 - No manual intervention required
@@ -129,12 +129,12 @@ When the token would have expired anyway, the revocation key auto-deletes.
 
 ### 4.2 Multi-Region Behavior
 
-| Scenario | Behavior |
-|----------|----------|
-| Revoke in Region A | Key written to primary → replicated to Region B |
-| Agent presents revoked token in Region B | Verified against local replica |
-| Replication lag | Agent may use token for duration of lag (typically < 200ms) |
-| Redis unavailable | **Fail-closed**: token treated as revoked |
+| Scenario                                 | Behavior                                                    |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| Revoke in Region A                       | Key written to primary → replicated to Region B             |
+| Agent presents revoked token in Region B | Verified against local replica                              |
+| Replication lag                          | Agent may use token for duration of lag (typically < 200ms) |
+| Redis unavailable                        | **Fail-closed**: token treated as revoked                   |
 
 ### 4.3 Revocation Consistency Guarantees
 
@@ -147,6 +147,7 @@ When the token would have expired anyway, the revocation key auto-deletes.
 ### 4.4 Edge Case: Revoke During Partition
 
 If a token is revoked in Region A while Region B is partitioned:
+
 1. Region B continues serving the token (using last-known state)
 2. After partition heals, revocation replicates to Region B
 3. Token is then denied in Region B
@@ -173,6 +174,7 @@ Total actual: agent-x could use 100/min across regions
 ### 5.2 Design Decision
 
 Cross-region rate limiting with strong consistency would require:
+
 - Cross-region Redis reads on every request (latency: 50–200ms)
 - Or distributed counter with CRDTs (complexity)
 - Or central rate limit service (single point of failure)
@@ -180,6 +182,7 @@ Cross-region rate limiting with strong consistency would require:
 **Chosen approach**: Per-region limits with **fail-open** semantics.
 
 **Justification:**
+
 - Rate limiting is a best-effort safeguard, not a security boundary
 - True abuse prevention uses capability conditions (action counts, time windows)
 - Per-region limits still provide meaningful protection
@@ -206,12 +209,12 @@ if err != nil {
 
 The audit ledger is **append-only** with **at-least-once** delivery semantics:
 
-| Property | Guarantee |
-|----------|-----------|
-| Ordering | Causally ordered within a session; globally unordered |
-| Delivery | At-least-once (retry on failure) |
-| Durability | Persisted to backend after successful enqueue |
-| Immutability | Append-only; no updates or deletes |
+| Property     | Guarantee                                             |
+| ------------ | ----------------------------------------------------- |
+| Ordering     | Causally ordered within a session; globally unordered |
+| Delivery     | At-least-once (retry on failure)                      |
+| Durability   | Persisted to backend after successful enqueue         |
+| Immutability | Append-only; no updates or deletes                    |
 
 ### 6.2 Multi-Region Audit Architecture
 
@@ -264,12 +267,12 @@ See [Audit Chain Architecture](audit-chain-architecture.md) for full details.
 
 ### 7.1 Partition Scenarios
 
-| Partition | Region A (Primary) | Region B (Replica) |
-|-----------|-------------------|-------------------|
-| **Inter-region network** | Full functionality | Read-only Redis; stale state |
-| **Redis primary failure** | Sentinel/failover promotes replica | Becomes new primary |
-| **Full Region A outage** | Unavailable | Takes over (if DNS/LB configured) |
-| **DNS failure** | Agents cannot reach services | Same |
+| Partition                 | Region A (Primary)                 | Region B (Replica)                |
+| ------------------------- | ---------------------------------- | --------------------------------- |
+| **Inter-region network**  | Full functionality                 | Read-only Redis; stale state      |
+| **Redis primary failure** | Sentinel/failover promotes replica | Becomes new primary               |
+| **Full Region A outage**  | Unavailable                        | Takes over (if DNS/LB configured) |
+| **DNS failure**           | Agents cannot reach services       | Same                              |
 
 ### 7.2 Expected Behavior During Partition
 
@@ -336,11 +339,11 @@ Region A (Active)                 Region B (Active)
 
 ### 8.3 Cloud-Specific Recommendations
 
-| Cloud | Redis HA | Database HA | Recommended Topology |
-|-------|---------|-------------|---------------------|
-| **AWS** | ElastiCache Global Datastore | Aurora Global Database | Active-passive with < 1s replication |
-| **Azure** | Azure Cache for Redis (geo-replication) | Azure SQL Geo-Replication | Active-passive with auto-failover groups |
-| **GCP** | Memorystore (cross-region replication) | Cloud SQL (cross-region replicas) | Active-passive with Cloud DNS failover |
+| Cloud     | Redis HA                                | Database HA                       | Recommended Topology                     |
+| --------- | --------------------------------------- | --------------------------------- | ---------------------------------------- |
+| **AWS**   | ElastiCache Global Datastore            | Aurora Global Database            | Active-passive with < 1s replication     |
+| **Azure** | Azure Cache for Redis (geo-replication) | Azure SQL Geo-Replication         | Active-passive with auto-failover groups |
+| **GCP**   | Memorystore (cross-region replication)  | Cloud SQL (cross-region replicas) | Active-passive with Cloud DNS failover   |
 
 ---
 
@@ -364,27 +367,27 @@ The DPoP JTI replay cache is **intentionally per-region** (not replicated):
 
 ## 10. Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EUNO_DEPLOYMENT_TIER` | `single-replica` | Deployment tier |
-| `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30000 | Safety-net refresh interval |
-| `KILL_SWITCH_PUBSUB_ENABLED` | true | Enable pub/sub propagation |
-| `REVOCATION_UNAVAILABLE_MODE` | `fail-closed` | Behavior when Redis unreachable |
-| `REDIS_URL` | — | Primary Redis URL |
-| `REDIS_REPLICA_URL` | — | Read-replica URL (multi-region) |
+| Variable                          | Default          | Description                     |
+| --------------------------------- | ---------------- | ------------------------------- |
+| `EUNO_DEPLOYMENT_TIER`            | `single-replica` | Deployment tier                 |
+| `KILL_SWITCH_REFRESH_INTERVAL_MS` | 30000            | Safety-net refresh interval     |
+| `KILL_SWITCH_PUBSUB_ENABLED`      | true             | Enable pub/sub propagation      |
+| `REVOCATION_UNAVAILABLE_MODE`     | `fail-closed`    | Behavior when Redis unreachable |
+| `REDIS_URL`                       | —                | Primary Redis URL               |
+| `REDIS_REPLICA_URL`               | —                | Read-replica URL (multi-region) |
 
 ---
 
 ## 11. Consistency Guarantees Summary
 
-| Property | Single-Replica | Multi-Replica | Multi-Region |
-|----------|---------------|---------------|-------------|
-| Kill switch latency | 0 | < 1s | < 30s |
-| Revocation latency | 0 | < 1s | < 30s |
-| Rate limit accuracy | Exact | Exact (shared Redis) | Approximate (per-region) |
-| Audit ordering | Total | Causal (per-session) | Causal (per-session) |
-| DPoP replay protection | Strong | Strong | Strong (per-region) |
-| Partition tolerance | N/A | Redis failover | Fail-closed safety / fail-open best-effort |
+| Property               | Single-Replica | Multi-Replica        | Multi-Region                               |
+| ---------------------- | -------------- | -------------------- | ------------------------------------------ |
+| Kill switch latency    | 0              | < 1s                 | < 30s                                      |
+| Revocation latency     | 0              | < 1s                 | < 30s                                      |
+| Rate limit accuracy    | Exact          | Exact (shared Redis) | Approximate (per-region)                   |
+| Audit ordering         | Total          | Causal (per-session) | Causal (per-session)                       |
+| DPoP replay protection | Strong         | Strong               | Strong (per-region)                        |
+| Partition tolerance    | N/A            | Redis failover       | Fail-closed safety / fail-open best-effort |
 
 ---
 

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// adminRateLimitMiddleware enforces per-IP rate limiting on admin endpoints (CR-4).
+// adminRateLimitMiddleware enforces per-IP rate limiting on admin endpoints.
 func (app *App) adminRateLimitMiddleware(next http.Handler) http.Handler {
 	limit := app.config.AdminRateLimitPerMinute
 	if limit <= 0 {
@@ -49,7 +49,7 @@ func adminRateLimitKey(r *http.Request) string {
 }
 
 // publicRateLimitMiddleware enforces per-IP rate limiting on the public /api/v1
-// route group (CR-2).  The key is derived from extractClientIP so that trusted
+// route group.  The key is derived from extractClientIP so that trusted
 // proxy CIDRs are respected and the real caller IP is used rather than the
 // proxy's address.
 func (app *App) publicRateLimitMiddleware(next http.Handler) http.Handler {

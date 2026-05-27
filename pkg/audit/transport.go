@@ -166,7 +166,7 @@ func NewHTTPTransport(cfg *HTTPTransportConfig, logger *slog.Logger, opts ...HTT
 
 // Enqueue adds a single record to the transport buffer for batched delivery.
 //
-// Overflow policy (DI-3): Enqueue is NON-BLOCKING. When the internal buffer is
+// Overflow policy: Enqueue is NON-BLOCKING. When the internal buffer is
 // full, it returns ErrBatchFull immediately and records a "dropped" metric via
 // audit_enqueue_total{status="dropped"}. The event is permanently lost from this
 // transport's perspective — it is NOT retried or written aside. Callers SHOULD

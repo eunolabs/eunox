@@ -14,7 +14,7 @@
         },
         "EUNO_DEPLOYMENT_TIER": {
           "type": "string",
-          "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover. See docs/PRODUCTION_DEPLOYMENT_CHECKLIST.md and docs/MULTI_REGION_ISSUER.md."
+          "description": "Deployment availability tier. Drives cross-field validation: `single-replica` (default) — Redis optional, in-memory fallback acceptable for dev / single-pod; `multi-replica` — REDIS_URL is REQUIRED so revocation, kill-switch, maxCalls, DPoP-replay (gateway) and the per-subject issuance rate limiter (issuer) share state across pods; `multi-region-active-active` — all of the above plus a region tag (ISSUER_REGION / GATEWAY_REGION) is REQUIRED on every replica so audit trails can be reconstructed after a regional failover."
         },
         "PORT": {
           "type": "string",
@@ -30,7 +30,7 @@
         },
         "ISSUER_JWKS_URL": {
           "type": "string",
-          "description": "URL of the issuer JWKS endpoint. Defaults to http://localhost:3001/.well-known/jwks.json. Use this instead of ISSUER_PUBLIC_KEY_URL for R-6 JWKS key rotation."
+          "description": "URL of the issuer JWKS endpoint. Defaults to http://localhost:3001/.well-known/jwks.json. Use this instead of ISSUER_PUBLIC_KEY_URL for JWKS key rotation."
         },
         "ISSUER_PUBLIC_KEY_URL": {
           "type": "string",
@@ -59,7 +59,7 @@
         },
         "ACTION_RESOLVER_FILE": {
           "type": "string",
-          "description": "Optional path to a JSON file describing the ActionResolver (R-7) used to derive a capability action from incoming HTTP requests on /proxy and from tool invocations on /api/v1/tools/invoke. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. mapping `POST /graphql` queries to `read`). Should match the value configured on the capability-issuer so mint-time CA tiering and enforcement-time action derivation share a vocabulary."
+          "description": "Optional path to a JSON file describing the ActionResolver used to derive a capability action from incoming HTTP requests on /proxy and from tool invocations on /api/v1/tools/invoke. Recognised top-level keys: `httpMethodActions`, `defaultHttpAction`, `toolActions`, `defaultToolAction`, `actionTiers`, `defaultTier`. Operator entries are merged on top of the built-in defaults so the file only needs to declare deployment-specific verbs (e.g. mapping `POST /graphql` queries to `read`). Should match the value configured on the capability-issuer so mint-time CA tiering and enforcement-time action derivation share a vocabulary."
         },
         "ADMIN_API_KEY": {
           "type": "string",
@@ -67,11 +67,11 @@
         },
         "ENABLE_CRYPTOGRAPHIC_AUDIT": {
           "type": "string",
-          "description": "Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits. Legacy single-toggle for evidence signing; for finer-grained control use EVIDENCE_SIGNED_DECISIONS (I-8)."
+          "description": "Sign every audit-trail entry with the configured evidence signer. When true, an evidence signer MUST be configured or the process exits. Legacy single-toggle for evidence signing; for finer-grained control use EVIDENCE_SIGNED_DECISIONS."
         },
         "EVIDENCE_SIGNED_DECISIONS": {
           "type": "string",
-          "description": "Comma-separated list of validation decisions whose audit evidence is signed. Allowed values: allow, deny. When set, this overrides ENABLE_CRYPTOGRAPHIC_AUDIT (which becomes the legacy on/off shorthand). Use \"deny\" alone to record a tamper-evident trail of refusals without paying the per-allow signing cost (I-8). An evidence signer MUST be configured if this is non-empty."
+          "description": "Comma-separated list of validation decisions whose audit evidence is signed. Allowed values: allow, deny. When set, this overrides ENABLE_CRYPTOGRAPHIC_AUDIT (which becomes the legacy on/off shorthand). Use \"deny\" alone to record a tamper-evident trail of refusals without paying the per-allow signing cost. An evidence signer MUST be configured if this is non-empty."
         },
         "EVIDENCE_SIGNING_KEY_PEM": {
           "type": "string",
@@ -103,7 +103,7 @@
         },
         "AUDIT_PIPELINE_ENABLED": {
           "type": "string",
-          "description": "When true (default), the gateway routes audit evidence through the async batched pipeline (R-9): producers enqueue and return immediately while N background workers call the signer. Set false to revert to the legacy synchronous path that awaits signEvidence on every request — only useful for A/B comparison, the async path is the recommended configuration."
+          "description": "When true (default), the gateway routes audit evidence through the async batched pipeline: producers enqueue and return immediately while N background workers call the signer. Set false to revert to the legacy synchronous path that awaits signEvidence on every request — only useful for A/B comparison, the async path is the recommended configuration."
         },
         "AUDIT_PIPELINE_MAX_SIZE": {
           "type": "string",
@@ -183,7 +183,7 @@
         },
         "ARGUMENT_SCHEMA_REQUIRED": {
           "type": "string",
-          "description": "When true, the gateway denies any matched capability that does not declare an `argumentSchema` (strict mode for I-7). The default (false) preserves existing behaviour: capabilities without an argument schema impose no argument-level constraint. Enable this once every capability your gateway accepts has been migrated to declare an explicit argument schema, to fail closed on schema-less tokens."
+          "description": "When true, the gateway denies any matched capability that does not declare an `argumentSchema` (strict mode). The default (false) preserves existing behaviour: capabilities without an argument schema impose no argument-level constraint. Enable this once every capability your gateway accepts has been migrated to declare an explicit argument schema, to fail closed on schema-less tokens."
         },
         "ENABLE_DETAILED_LOGGING": {
           "type": "string",
@@ -203,7 +203,7 @@
         },
         "GATEWAY_QUOTA_ENABLED": {
           "type": "string",
-          "description": "Enable the per-(jti, action, resource) gateway quota engine (F-1b). Default false. When enabled, every validated tool invocation is counted against a per-token/action/resource budget so a single long-lived token cannot flood the enforcement engine. Wire CALL_COUNTER_REDIS_URL (or REDIS_URL) for distributed counting across replicas."
+          "description": "Enable the per-(jti, action, resource) gateway quota engine. Default false. When enabled, every validated tool invocation is counted against a per-token/action/resource budget so a single long-lived token cannot flood the enforcement engine. Wire CALL_COUNTER_REDIS_URL (or REDIS_URL) for distributed counting across replicas."
         },
         "GATEWAY_QUOTA_MAX": {
           "type": "string",
@@ -359,19 +359,19 @@
         },
         "GATEWAY_SHARD_COUNT": {
           "type": "string",
-          "description": "Total number of gateway shards in the fleet. Default 1 (sharding disabled). Set to the replica count of your gateway StatefulSet when horizontal sharding is enabled (H-1). The Envoy shard router must be deployed alongside the gateway and configured with the same shard count so it routes agents consistently. Must match GATEWAY_SHARD_COUNT on every replica; a mismatch causes inconsistent routing and counter drift. See docs/HORIZONTAL_SHARDING.md."
+          "description": "Total number of gateway shards in the fleet. Default 1 (sharding disabled). Set to the replica count of your gateway StatefulSet when horizontal sharding is enabled (H-1). The Envoy shard router must be deployed alongside the gateway and configured with the same shard count so it routes agents consistently. Must match GATEWAY_SHARD_COUNT on every replica; a mismatch causes inconsistent routing and counter drift."
         },
         "GATEWAY_SHARD_INDEX": {
           "type": "string",
-          "description": "Zero-based shard index for this gateway replica. Default 0. Must be in the range [0, GATEWAY_SHARD_COUNT - 1]. When running as a Kubernetes StatefulSet, inject this from the pod ordinal via an init container or a `GATEWAY_SHARD_INDEX=$(echo $POD_NAME | awk -F- '{print $NF}')` env stanza. See k8s/tool-gateway.yaml and docs/HORIZONTAL_SHARDING.md."
+          "description": "Zero-based shard index for this gateway replica. Default 0. Must be in the range [0, GATEWAY_SHARD_COUNT - 1]. When running as a Kubernetes StatefulSet, inject this from the pod ordinal via an init container or a `GATEWAY_SHARD_INDEX=$(echo $POD_NAME | awk -F- '{print $NF}')` env stanza. See k8s/tool-gateway.yaml."
         },
         "GATEWAY_REGION": {
           "type": "string",
-          "description": "Logical region tag for this gateway instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover. See docs/MULTI_REGION_ISSUER.md."
+          "description": "Logical region tag for this gateway instance (e.g. \"eastus2\", \"westeurope\"). Surfaced on audit events and request span attributes (`euno.region`). Symmetrical to ISSUER_REGION on the capability-issuer; recommended in any multi-region deployment so audit trails can be reconstructed after a regional failover."
         },
         "DPOP_REQUIRED": {
           "type": "string",
-          "description": "When true (default), the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449 / F-2). Set to false only for backward-compatible deployments where issuers have not yet been rolled out with DPoP support; in that mode a leaked token remains usable as a plain bearer token until it expires or is revoked."
+          "description": "When true (default), the gateway rejects any capability token without a `cnf.jkt` confirmation claim (i.e. requires sender-constrained tokens per RFC 9449). Set to false only for backward-compatible deployments where issuers have not yet been rolled out with DPoP support; in that mode a leaked token remains usable as a plain bearer token until it expires or is revoked."
         },
         "DPOP_CLOCK_SKEW_SECONDS": {
           "type": "string",
@@ -383,7 +383,7 @@
         },
         "TRUST_PROXY": {
           "type": "string",
-          "description": "Express `trust proxy` setting. Controls whether `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-For` are honoured when reconstructing the request URL — required for DPoP `htu` verification (F-2) when the gateway sits behind a TLS-terminating reverse proxy. Accepts: \"true\" (trust all proxies — UNSAFE if the gateway is also reachable directly by clients), \"false\"/unset (ignore X-Forwarded-* — safe default for direct deployment), an integer hop count (\"1\" = trust the immediate upstream proxy, recommended), or a comma-separated list of trusted CIDRs (\"10.0.0.0/8,172.16.0.0/12\"). MUST be configured when running behind a load balancer; without it, a direct caller can spoof X-Forwarded-* to make the DPoP proof verify against an attacker-chosen URL."
+          "description": "Express `trust proxy` setting. Controls whether `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-For` are honoured when reconstructing the request URL — required for DPoP `htu` verification when the gateway sits behind a TLS-terminating reverse proxy. Accepts: \"true\" (trust all proxies — UNSAFE if the gateway is also reachable directly by clients), \"false\"/unset (ignore X-Forwarded-* — safe default for direct deployment), an integer hop count (\"1\" = trust the immediate upstream proxy, recommended), or a comma-separated list of trusted CIDRs (\"10.0.0.0/8,172.16.0.0/12\"). MUST be configured when running behind a load balancer; without it, a direct caller can spoof X-Forwarded-* to make the DPoP proof verify against an attacker-chosen URL."
         },
         "OCSF_TRANSPORT": {
           "type": "string",

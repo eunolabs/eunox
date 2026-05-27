@@ -23,7 +23,7 @@ description: |
       --set redis.enabled=true \
       -f k8s/helm/euno/values.yaml
 
-  See docs/DEPLOYMENT.md for the production installation guide.
+  See docs/deployment.md for the production installation guide.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
