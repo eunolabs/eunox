@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	goredis "github.com/redis/go-redis/v9"
-
 	"github.com/edgeobs/eunox/internal/gateway"
 	"github.com/edgeobs/eunox/pkg/callcounter"
 	"github.com/edgeobs/eunox/pkg/capability"
@@ -203,7 +201,11 @@ func run() error {
 		TrustedProxyCIDRs:       cfg.TrustedProxyCIDRs,
 		// IsReady lets handleReady reflect the lifecycle drain state so that load
 		// balancers remove this instance from rotation before connections drain.
-		IsReady: lm.IsReady,
+		// It also incorporates Redis health: a degraded backend marks the instance
+		// as not-ready so that load balancers avoid routing to a degraded gateway.
+		IsReady: func() bool {
+			return lm.IsReady() && backends.monitor.IsReady()
+		},
 	}
 
 	app, err := gateway.New(&appCfg, &deps)
@@ -254,6 +256,8 @@ func run() error {
 	// Cancel the root context (stopping background goroutines like dpopStore)
 	// when the lifecycle manager shuts down.
 	lm.OnStop(cancel)
+	// Close the in-memory rate limiters to stop their background cleanup goroutines.
+	lm.OnStop(app.Close)
 
 	return lm.Run(context.Background())
 }
@@ -286,22 +290,32 @@ func resolveRedisURL(specificURL, fallbackURL string) string {
 }
 
 // validateRedisConfig returns an error if the gateway is starting in production
-// without REDIS_URL configured.
+// without any Redis configured.
 //
 // In production, stateful security components (kill-switch, revocation,
 // call counter) must be backed by Redis so that security state is not lost on
 // restart or scale-out (CR-1 in ARCHITECTURE_REVIEW.md).
+//
+// Either REDIS_URL (shared fallback) must be set, or all three per-service URLs
+// (KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must
+// be set so that every component has a URL to connect to.
 func validateRedisConfig(cfg *config.GatewayConfig) error {
 	if cfg.NodeEnv != config.EnvProduction {
 		return nil
 	}
-	if cfg.RedisURL == "" {
-		return fmt.Errorf(
-			"REDIS_URL is required in production: kill-switch and revocation state is lost on restart without Redis (CR-1 in ARCHITECTURE_REVIEW.md). " +
-				"Per-service overrides KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, and CALL_COUNTER_REDIS_URL are also accepted but require REDIS_URL as the shared fallback",
-		)
+	// Shared URL covers every service.
+	if cfg.RedisURL != "" {
+		return nil
 	}
-	return nil
+	// All per-service URLs cover every service without requiring REDIS_URL.
+	if cfg.KillSwitchRedisURL != "" && cfg.RevocationRedisURL != "" && cfg.CallCounterRedisURL != "" {
+		return nil
+	}
+	return fmt.Errorf(
+		"in production, either REDIS_URL (shared fallback) or all per-service Redis URLs " +
+			"(KILL_SWITCH_REDIS_URL, REVOCATION_REDIS_URL, CALL_COUNTER_REDIS_URL) must be set; " +
+			"kill-switch and revocation state is lost on restart without Redis (CR-1 in ARCHITECTURE_REVIEW.md)",
+	)
 }
 
 // gatewayBackends holds the stateful backends for the gateway.
@@ -329,11 +343,11 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 	var ks killswitch.Manager
 	ksURL := resolveRedisURL(cfg.KillSwitchRedisURL, cfg.RedisURL)
 	if ksURL != "" {
-		opts, err := goredis.ParseURL(ksURL)
+		client, err := newRedisClientFromURL(ksURL)
 		if err != nil {
 			return nil, fmt.Errorf("kill-switch redis URL: %w", err)
 		}
-		inner := killswitch.NewRedis(goredis.NewClient(opts)).WithLogger(logger)
+		inner := killswitch.NewRedis(client).WithLogger(logger)
 		ks = killswitch.NewResilientRedis(inner, monitor.Register("kill-switch"))
 		logger.Info("kill-switch: using Redis-backed store")
 	} else {
@@ -345,11 +359,11 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 	var rev revocation.Store
 	revURL := resolveRedisURL(cfg.RevocationRedisURL, cfg.RedisURL)
 	if revURL != "" {
-		opts, err := goredis.ParseURL(revURL)
+		client, err := newRedisClientFromURL(revURL)
 		if err != nil {
 			return nil, fmt.Errorf("revocation redis URL: %w", err)
 		}
-		inner := revocation.NewRedis(goredis.NewClient(opts))
+		inner := revocation.NewRedis(client)
 		rev = revocation.NewResilientRedis(inner, monitor.Register("revocation"), nil)
 		logger.Info("revocation: using Redis-backed store")
 	} else {
@@ -361,11 +375,11 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 	var cc callcounter.Store
 	ccURL := resolveRedisURL(cfg.CallCounterRedisURL, cfg.RedisURL)
 	if ccURL != "" {
-		opts, err := goredis.ParseURL(ccURL)
+		client, err := newRedisClientFromURL(ccURL)
 		if err != nil {
 			return nil, fmt.Errorf("call-counter redis URL: %w", err)
 		}
-		cc = callcounter.NewResilientRedis(callcounter.NewRedis(goredis.NewClient(opts)), monitor.Register("call-counter"))
+		cc = callcounter.NewResilientRedis(callcounter.NewRedis(client), monitor.Register("call-counter"))
 		logger.Info("call-counter: using Redis-backed store")
 	} else {
 		cc = callcounter.NewInMemory()

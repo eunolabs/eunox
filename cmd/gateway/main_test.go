@@ -230,16 +230,37 @@ func TestValidateRedisConfig(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name:      "production_missing_redis_url_fails",
+			name:      "production_missing_all_redis_urls_fails",
 			cfg:       config.GatewayConfig{NodeEnv: config.EnvProduction},
 			expectErr: true,
-			errMsg:    "REDIS_URL is required in production",
+			errMsg:    "in production, either REDIS_URL",
 		},
 		{
 			name: "production_with_redis_url_ok",
 			cfg: config.GatewayConfig{
 				NodeEnv:  config.EnvProduction,
 				RedisURL: "redis://localhost:6379",
+			},
+			expectErr: false,
+		},
+		{
+			name: "production_partial_per_service_urls_fails",
+			cfg: config.GatewayConfig{
+				NodeEnv:           config.EnvProduction,
+				KillSwitchRedisURL: "redis://ks:6379",
+				RevocationRedisURL: "redis://rev:6379",
+				// CallCounterRedisURL not set
+			},
+			expectErr: true,
+			errMsg:    "in production, either REDIS_URL",
+		},
+		{
+			name: "production_all_per_service_urls_ok",
+			cfg: config.GatewayConfig{
+				NodeEnv:             config.EnvProduction,
+				KillSwitchRedisURL:  "redis://ks:6379",
+				RevocationRedisURL:  "redis://rev:6379",
+				CallCounterRedisURL: "redis://cc:6379",
 			},
 			expectErr: false,
 		},
@@ -331,6 +352,93 @@ func TestBuildGatewayBackends_InvalidRedisURL(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+			}
+		})
+	}
+}
+
+func TestNewRedisClientFromURL(t *testing.T) {
+	t.Parallel()
+
+	// These tests verify that newRedisClientFromURL returns a non-nil client
+	// without error. No actual Redis connection is made.
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+		errMsg  string
+	}{
+		// Standard single-node URLs handled by goredis.ParseURL.
+		{
+			name: "standard_redis",
+			url:  "redis://localhost:6379",
+		},
+		{
+			name: "standard_rediss_tls",
+			url:  "rediss://localhost:6380",
+		},
+		// Sentinel URLs.
+		{
+			name: "sentinel_redis_sentinel_scheme",
+			url:  "redis-sentinel://sentinel1:26379,sentinel2:26379,sentinel3:26379/mymaster",
+		},
+		{
+			name: "sentinel_redis_plus_sentinel_scheme",
+			url:  "redis+sentinel://sentinel1:26379,sentinel2:26379/mymaster",
+		},
+		{
+			name: "sentinel_rediss_plus_sentinel_tls",
+			url:  "rediss+sentinel://sentinel1:26379,sentinel2:26379/mymaster",
+		},
+		{
+			name: "sentinel_with_password",
+			url:  "redis-sentinel://:secret@sentinel1:26379,sentinel2:26379/master",
+		},
+		// Cluster / multi-host URLs.
+		{
+			name: "cluster_redis_cluster_scheme",
+			url:  "redis-cluster://node1:6379,node2:6379,node3:6379",
+		},
+		{
+			name: "multi_host_standard_scheme",
+			url:  "redis://node1:6379,node2:6379",
+		},
+		// Error cases.
+		{
+			name:    "invalid_url",
+			url:     "not-a-valid-url://??",
+			wantErr: true,
+		},
+		{
+			name:    "sentinel_no_hosts",
+			url:     "redis-sentinel:///mymaster",
+			wantErr: true,
+		},
+		{
+			name:    "cluster_no_hosts",
+			url:     "redis-cluster:///",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := newRedisClientFromURL(tt.url)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for URL %q, got nil", tt.url)
+				}
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for URL %q: %v", tt.url, err)
+			}
+			if client == nil {
+				t.Errorf("expected non-nil client for URL %q", tt.url)
 			}
 		})
 	}

@@ -243,6 +243,17 @@ func (app *App) AdminHandler() http.Handler {
 	return app.adminRouter
 }
 
+// Close releases resources held by the App, stopping background goroutines
+// started by the in-memory rate limiters.
+func (app *App) Close() {
+	if app.adminRateLimiter != nil {
+		app.adminRateLimiter.Close()
+	}
+	if app.publicRateLimiter != nil {
+		app.publicRateLimiter.Close()
+	}
+}
+
 func (app *App) initMetrics() *gatewayMetrics {
 	if app.deps.Metrics == nil {
 		return nil
