@@ -155,29 +155,29 @@ flowchart TB
 | `internal/posture`         | service package     | Posture emitter and plugin integrations.                                                                                              |
 | `migrations/`              | schema migrations   | Database migration files used by services that own SQL backends.                                                                      |
 
-The root `package.json` declares both workspace globs and the
-`scripts/check-license-boundary.mjs` lint step prevents Apache-2.0 packages
-from depending on BUSL-1.1 packages.
+The `Makefile` at the repository root provides the canonical `build`, `test`,
+`lint`, `coverage`, and `clean` targets. License-boundary enforcement runs via
+`make check-license`.
 
 ---
 
 ## 4. C4 Level 3 — Internal structure of the two services
 
-### 4.1 Capability Issuer (`internal/issuer/src/`)
+### 4.1 Capability Issuer (`internal/issuer/`)
 
 ```mermaid
 flowchart LR
-    HTTP["index.ts<br/>(Express, helmet, rate-limit)"]
-    Service["issuer-service.ts<br/>CapabilityIssuerService"]
-    PolicyMap["role-mapping.ts<br/>(in @eunox/common)"]
-    CondReg["condition-registry.ts<br/>(in @eunox/common)"]
-    Validators["capability-validators.ts<br/>(in @eunox/common)"]
+    HTTP["cmd/issuer/main.go<br/>(net/http, chi, rate-limit)"]
+    Service["internal/issuer/app.go<br/>IssuerApp"]
+    PolicyMap["internal/issuer/policy/<br/>(role mapping)"]
+    CondReg["pkg/capability/condition.go<br/>(condition types)"]
+    Validators["pkg/capability/validate.go<br/>(condition validation)"]
     Manifests["AgentCapabilityManifest<br/>(declarative upper bound)"]
     Consent["UserConsent record<br/>(REQUIRE_USER_CONSENT)"]
     PIM["Privileged Identity Mgmt<br/>(role-active check)"]
-    IDP["IdentityProvider<br/>(adapter, registry)"]
-    SIGN["TokenSigner<br/>(adapter, registry)"]
-    DID["did-resolver.ts"]
+    IDP["IdentityProvider<br/>(pkg/identity/)"]
+    SIGN["TokenSigner<br/>(pkg/crypto/signer.go)"]
+    DID["pkg/did/resolver.go"]
     SG["storage-grant/<br/>(STS token mint)"]
     DBT["db-token/<br/>(IAM DB cred mint)"]
     POST["PostureEmitter (optional)"]
@@ -200,7 +200,7 @@ flowchart LR
 Notable design choices visible in the code:
 
 - **Discriminated-union conditions** (`CapabilityCondition` in
-  `common/src/types.ts`) are validated _at mint time_ by
+  `pkg/capability/condition.go`) are validated _at mint time_ by
   `validateConditions(...)` — unknown `type` ⇒ hard reject. No
   fail-open path.
 - **Action type widened to `string`** (`Action = string`) so tokens can
@@ -230,22 +230,22 @@ Notable design choices visible in the code:
   endpoint remains operational (returns the active key's SPKI PEM with
   a `Deprecation` response header) for one deprecation cycle.
 
-### 4.2 Tool Gateway (`internal/gateway/src/`)
+### 4.2 Tool Gateway (`internal/gateway/`)
 
 ```mermaid
 flowchart LR
-    HTTP["index.ts<br/>(Express, helmet, CORS,<br/>rate-limit, /proxy/*)"]
-    Verifier["verifier.ts<br/>JWTTokenVerifier<br/>(jose)"]
-    Engine["enforcement.ts<br/>EnforcementEngine"]
-    Admin["admin-api.ts<br/>kill switch + revoke"]
-    Rev["revocation-store.ts<br/>(memory or Redis)"]
-    Partner["partner-issuer-resolver.ts<br/>cross-org trust"]
-    KS["KillSwitchManager<br/>(in-mem / Redis)"]
-    CCS["CallCounterStore<br/>(in-mem / Redis)"]
-    EV["EvidenceSigner<br/>(software / KMS)"]
-    Cond["enforceConditions()<br/>(condition-registry)"]
-    Args["validateArguments()<br/>(argument-validator)"]
-    Audit["AuditLogEntry<br/>(via createAuditLogger)"]
+    HTTP["cmd/gateway/main.go<br/>(net/http, chi, CORS,<br/>rate-limit, /proxy/*)"]
+    Verifier["internal/gateway/jwt.go<br/>JWTVerifier"]
+    Engine["pkg/enforcement/engine.go<br/>Engine"]
+    Admin["internal/gateway/admin.go<br/>kill switch + revoke"]
+    Rev["pkg/revocation/<br/>(memory or Redis)"]
+    Partner["internal/gateway/partner_verifier.go<br/>cross-org trust"]
+    KS["pkg/killswitch/<br/>(in-mem / Redis)"]
+    CCS["pkg/callcounter/<br/>(in-mem / Redis)"]
+    EV["pkg/audit/audit.go<br/>EvidenceSigner"]
+    Cond["enforceConditions()<br/>(pkg/capability/condition.go)"]
+    Args["validateArguments()<br/>(pkg/capability/validate.go)"]
+    Audit["pkg/audit/audit.go<br/>AuditLogEntry"]
 
     HTTP --> Admin
     HTTP --> Verifier
@@ -263,7 +263,7 @@ flowchart LR
 Notable design choices visible in the code:
 
 - **Resource canonicalisation** in `createTargetHostCanonicalizeMiddleware` +
-  `createValidateCapabilityMiddleware` (`routes/proxy.ts`): the gateway
+  `createValidateCapabilityMiddleware` (`internal/gateway/handlers.go`): the gateway
   derives the protected resource as `api://{host}/{tail}` **exclusively from
   the URL path** using a two-middleware pipeline:
   1. `createTargetHostCanonicalizeMiddleware` (strip-and-rewrite) — runs
@@ -282,15 +282,15 @@ Notable design choices visible in the code:
      requests (`k8s/envoy-shard-router.yaml`) before they reach the gateway,
      providing a second enforcement point at the ingress layer.
 - **HTTP-method → action mapping** is supplied by the pluggable
-  `ActionResolver` from `@eunox/common` (R-7). The built-in default
+  `ActionResolver` in `pkg/enforcement` (R-7). The built-in default
   preserves the legacy table (`GET→read`, `POST/PUT/PATCH→write`,
   `DELETE→delete`); deployments override it by pointing the gateway
   at an `ACTION_RESOLVER_FILE` JSON config — the same file the issuer
   consumes for CA tiering, so mint-time and enforcement-time action
   vocabularies stay aligned.
 - **Fail-closed cryptographic audit** — `ENABLE_CRYPTOGRAPHIC_AUDIT=true`
-  refuses to start without a configured `EvidenceSigner` (`index.ts`
-  ll. 135–156). No silent unsigned audit.
+  refuses to start without a configured `EvidenceSigner` (`pkg/audit/audit.go`).
+  No silent unsigned audit.
 - **Distributed by env var** — when `REDIS_URL` is set, kill-switch,
   revocation list, and call-counter store are upgraded from in-process
   to Redis-backed; in-process is dev-only.
@@ -377,7 +377,7 @@ flowchart LR
     PartnerAgent["Partner agent"]
     PartnerIssuer["Partner Capability Issuer"]
     DIDDoc["Partner DID Document<br/>(did:web / did:ion / did:key)"]
-    Resolver["did-resolver.ts<br/>(local cache)"]
+    Resolver["pkg/did/resolver.go<br/>(local cache)"]
     Gateway["Tool Gateway<br/>partner-issuer-resolver"]
     Backend["Local protected backend"]
     Audit["Audit log<br/>(crossOrg=true,<br/>partnerDID=...)"]
@@ -410,11 +410,11 @@ maintainers can trace each line against the source.
 sequenceDiagram
     autonumber
     participant Caller as Agent runtime / CLI
-    participant API as capability-issuer/index.ts
-    participant Svc as CapabilityIssuerService
-    participant IdP as IdentityProvider adapter
-    participant Cond as @eunox/common condition-registry
-    participant Roles as @eunox/common role-mapping
+    participant API as cmd/issuer/main.go
+    participant Svc as IssuerApp
+    participant IdP as IdentityProvider adapter (pkg/identity/)
+    participant Cond as pkg/capability (condition validation)
+    participant Roles as internal/issuer/policy (role mapping)
     participant KMS as TokenSigner adapter (KMS/HSM)
     participant Post as PostureEmitter (optional)
 
@@ -442,7 +442,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant Agent
-    participant GW as tool-gateway/index.ts
+    participant GW as cmd/gateway/main.go
     participant Ver as JWTTokenVerifier
     participant Rev as RevocationStore
     participant Resolver as PartnerIssuerResolver
@@ -546,7 +546,7 @@ narrower (or denied) renewal — never a wider one.
 sequenceDiagram
     autonumber
     participant Admin
-    participant Adm as tool-gateway/admin-api.ts
+    participant Adm as internal/gateway/admin.go
     participant KS as KillSwitchManager (Redis-backed)
     participant Rev as RevocationStore (Redis-backed)
     participant GW1 as Gateway replica 1
@@ -628,12 +628,10 @@ the best practical approximation: enqueue-before-response with a WAL
 queue that survives pod restarts.
 
 The issuer service treats the emitter as `PostureEmitterLike`
-(structural interface), so `issuer-service.ts` is interface-based and
-can be wired with any compatible emitter implementation — see
-`issuer-service.ts` ll. 41–52. (The service entry point
-`capability-issuer/src/index.ts` wires the concrete
-`DurablePostureEmitter`; the structural-interface boundary is at the
-service class, not the package.)
+(structural interface), so `internal/issuer/app.go` is interface-based and
+can be wired with any compatible emitter implementation. The service entry
+point `cmd/issuer/main.go` wires the concrete `DurablePostureEmitter`; the
+structural-interface boundary is at the service struct, not the package.
 
 Set `POSTURE_DURABLE_QUEUE_PATH` to a writable path on a persistent
 volume in production (e.g. `/var/lib/eunox/posture-queue.db`);
@@ -690,17 +688,17 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 
 | Concern              | Where it lives                                                                                                                                                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AuthN (humans)       | IdP adapters in `capability-issuer/src/*-identity-provider.ts`                                                                                                                     | OIDC at the boundary; never inside the rest of the system                                                                                                                                                                                                                                                                                                                                                                           |
+| AuthN (humans)       | IdP adapters in `pkg/identity/` (`azure_ad.go`, `cognito.go`, `gcp.go`, `did.go`)                                                                                                  | OIDC at the boundary; never inside the rest of the system                                                                                                                                                                                                                                                                                                                                                                           |
 | AuthN (services)     | Cloud-managed identity (workload identity / managed identity)                                                                                                                      | Issuer→KMS, gateway→Redis, etc.                                                                                                                                                                                                                                                                                                                                                                                                     |
-| AuthZ (capabilities) | `enforcement.ts` + `condition-registry.ts`                                                                                                                                         | Single PDP+PEP at the gateway                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Crypto signing       | `signer.ts` adapter; `azure-signer.ts`, `aws-kms-signer.ts`, etc.                                                                                                                  | KMS never sees the message body — digest only                                                                                                                                                                                                                                                                                                                                                                                       |
-| Key rotation (R-6)   | `GET /.well-known/jwks.json` (issuer); `JwksClient` (gateway)                                                                                                                      | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default).                            |
-| Audit                | `evidence.ts` + `createAuditLogger` + `EvidenceSigner`                                                                                                                             | Fail-closed: cannot enable crypto-audit without a signer                                                                                                                                                                                                                                                                                                                                                                            |
-| Observability        | `logger.ts` + `log-transports.ts` + Sentinel rules                                                                                                                                 | W3C trace-context (`traceparent`/`tracestate`) wired via `@opentelemetry/api` in `tracing.ts` (`@eunox/common-core`). `tracingMiddleware` runs on every gateway and minter request; `RemoteEnforcerPDP` propagates the header outbound. Audit log entries carry `trace_id`/`span_id` when a span is active. Attaching an OTel SDK exporter (Jaeger, OTLP, etc.) is a config-only deployment change — no code modification required. |
-| Rate limiting        | Issuer: `IssuanceRateLimiter` backed by the shared call-counter store. Gateway: `CallCounterBackedGatewayQuotaEngine` per token/action/resource when `GATEWAY_QUOTA_ENABLED=true`. | The issuer and gateway share counter abstractions from `@eunox/common-core`; Redis-backed production implementations live in `@eunox/common-infra`.                                                                                                                                                                                                                                                                                 |
-| Schema evolution     | `CAPABILITY_TOKEN_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`                                                                                                                    | Fail-closed on unknown versions                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Configuration        | `dotenv` + typed `EunoConfig` (Zod) in `@eunox/common-core`                                                                                                                        | Single schema per service drives boot validation and the regenerated `.env.example` (`eunox config dump-template --service <name>`)                                                                                                                                                                                                                                                                                                 |
-| Tests                | Per-package `tests/` + `internal/integration-tests`                                                                                                                                | Workspace tests exercise package and cross-service behaviour.                                                                                                                                                                                                                                                                                                                                                                       |
+| AuthZ (capabilities) | `pkg/enforcement/engine.go` + `pkg/capability/condition.go`                                                                                                                        | Single PDP+PEP at the gateway                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Crypto signing       | `pkg/crypto/signer.go` adapter; `kms_azure.go`, `kms_aws.go`, `kms_gcp.go`                                                                                                         | KMS never sees the message body — digest only                                                                                                                                                                                                                                                                                                                                                                                       |
+| Key rotation (R-6)   | `GET /.well-known/jwks.json` (issuer); `JwksVerifier` (gateway)                                                                                                                    | Issuer publishes a JWK Set; every token carries a `kid`. Gateway caches JWKS with a configurable TTL (`EUNO_JWKS_CACHE_TTL_SECONDS`, default 300 s) and refreshes on `kid` miss (no restart needed). Rotation procedure: add key 2 → wait one TTL → sign with key 2 → wait one TTL → remove key 1. Strict `kid` enforcement: tokens without a `kid` are rejected when `EUNO_REQUIRE_KID=true` (default).                            |
+| Audit                | `pkg/audit/audit.go` + `NewEvidenceSigner` + `EvidenceSigner`                                                                                                                      | Fail-closed: cannot enable crypto-audit without a signer                                                                                                                                                                                                                                                                                                                                                                            |
+| Observability        | `log/slog` + `pkg/observability/` + Sentinel rules                                                                                                                                 | W3C trace-context (`traceparent`/`tracestate`) wired via `go.opentelemetry.io/otel`. `tracingMiddleware` runs on every gateway and minter request; audit log entries carry `trace_id`/`span_id` when a span is active. Attaching an OTel SDK exporter (Jaeger, OTLP, etc.) is a config-only deployment change — no code modification required.                                                                                      |
+| Rate limiting        | Issuer: `IssuanceRateLimiter` backed by the shared call-counter store. Gateway: quota engine per token/action/resource when `GATEWAY_QUOTA_ENABLED=true`.                          | Issuer and gateway share counter abstractions from `pkg/callcounter`; Redis-backed production implementations live in `pkg/callcounter/redis.go`.                                                                                                                                                                                                                                                                                   |
+| Schema evolution     | `capability.SchemaVersion` + `capability.SupportedSchemaVersions`                                                                                                                  | Fail-closed on unknown versions                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Configuration        | `pkg/config/` — struct tags with `env` and `default` annotations                                                                                                                   | Single config struct per service drives boot validation and env-var loading via `config.LoadOrExit(prefix)`                                                                                                                                                                                                                                                                                                                         |
+| Tests                | Per-package `*_test.go` + `internal/integration/`                                                                                                                                  | Go test suite exercises package and cross-service behaviour via `make test`.                                                                                                                                                                                                                                                                                                                                                        |
 
 ---
 
