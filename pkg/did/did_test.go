@@ -438,6 +438,94 @@ func TestCachingResolver(t *testing.T) {
 		resolver3.Invalidate("did:web:invalidate.test")
 		assert.Equal(t, 0, resolver3.Len())
 	})
+
+	t.Run("stale-on-error within stale window", func(t *testing.T) {
+		// Track upstream calls and control whether they succeed or fail.
+		var upstreamCalls int
+		shouldFail := false
+		innerWithControl := &mockResolver{
+			resolveFunc: func(_ context.Context, did string) (*Document, error) {
+				upstreamCalls++
+				if shouldFail {
+					return nil, &resolveError{status: http.StatusServiceUnavailable}
+				}
+				return &Document{ID: did}, nil
+			},
+		}
+
+		testNow := time.Now()
+		testClock := &testNow
+
+		resolver := NewCachingResolver(innerWithControl,
+			WithCacheTTL(5*time.Minute),
+			WithStaleWindow(2*time.Minute),
+			WithTimeFunc(func() time.Time { return *testClock }),
+		)
+
+		// First call: cache the entry.
+		upstreamCalls = 0
+		doc, err := resolver.Resolve(context.Background(), "did:web:stale.test")
+		require.NoError(t, err)
+		assert.Equal(t, "did:web:stale.test", doc.ID)
+		assert.Equal(t, 1, upstreamCalls)
+
+		// Advance time past TTL but within stale window.
+		newTime := testNow.Add(6 * time.Minute)
+		testClock = &newTime
+
+		// Make upstream fail.
+		shouldFail = true
+
+		// Second call: should return the stale entry.
+		doc2, err := resolver.Resolve(context.Background(), "did:web:stale.test")
+		require.NoError(t, err)
+		assert.Equal(t, "did:web:stale.test", doc2.ID)
+		assert.Equal(t, 2, upstreamCalls) // Upstream was called but failed.
+	})
+
+	t.Run("stale-on-error beyond stale window", func(t *testing.T) {
+		// Track upstream calls and control whether they succeed or fail.
+		var upstreamCalls int
+		shouldFail := false
+		innerWithControl := &mockResolver{
+			resolveFunc: func(_ context.Context, did string) (*Document, error) {
+				upstreamCalls++
+				if shouldFail {
+					return nil, &resolveError{status: http.StatusServiceUnavailable}
+				}
+				return &Document{ID: did}, nil
+			},
+		}
+
+		testNow := time.Now()
+		testClock := &testNow
+
+		resolver := NewCachingResolver(innerWithControl,
+			WithCacheTTL(5*time.Minute),
+			WithStaleWindow(2*time.Minute),
+			WithTimeFunc(func() time.Time { return *testClock }),
+		)
+
+		// First call: cache the entry.
+		upstreamCalls = 0
+		doc, err := resolver.Resolve(context.Background(), "did:web:stale2.test")
+		require.NoError(t, err)
+		assert.Equal(t, "did:web:stale2.test", doc.ID)
+		assert.Equal(t, 1, upstreamCalls)
+
+		// Advance time beyond TTL + stale window.
+		newTime := testNow.Add(8 * time.Minute)
+		testClock = &newTime
+
+		// Make upstream fail.
+		shouldFail = true
+
+		// Second call: should return the error, not the stale entry.
+		_, err = resolver.Resolve(context.Background(), "did:web:stale2.test")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "Service Unavailable")
+		assert.Equal(t, 2, upstreamCalls) // Upstream was called and failed.
+	})
 }
 
 func TestMultiResolver(t *testing.T) {

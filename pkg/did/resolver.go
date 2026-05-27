@@ -70,13 +70,21 @@ func (d *Document) PublicKeys() []crypto.PublicKey {
 }
 
 // CachingResolver wraps a Resolver with TTL-based caching.
+//
+// After a cache entry expires it is eligible for upstream refresh.  When
+// StaleWindow is set (via [WithStaleWindow]), a recently-expired entry is
+// served as a stale result if the upstream resolver returns an error.  This
+// trades a short period of potential staleness for availability during
+// transient upstream outages — appropriate for DID documents, which change
+// infrequently.
 type CachingResolver struct {
-	inner    Resolver
-	mu       sync.RWMutex
-	cache    map[string]*cacheEntry
-	ttl      time.Duration
-	maxItems int
-	now      func() time.Time
+	inner       Resolver
+	mu          sync.RWMutex
+	cache       map[string]*cacheEntry
+	ttl         time.Duration
+	staleWindow time.Duration
+	maxItems    int
+	now         func() time.Time
 }
 
 type cacheEntry struct {
@@ -98,6 +106,15 @@ func WithCacheTTL(ttl time.Duration) CachingResolverOption {
 func WithMaxCacheItems(maxItems int) CachingResolverOption {
 	return func(r *CachingResolver) {
 		r.maxItems = maxItems
+	}
+}
+
+// WithStaleWindow sets the extra duration beyond the TTL during which a cached
+// entry may be served as a stale result when the upstream resolver returns an
+// error.  A zero value (the default) disables stale-on-error behaviour.
+func WithStaleWindow(d time.Duration) CachingResolverOption {
+	return func(r *CachingResolver) {
+		r.staleWindow = d
 	}
 }
 
@@ -124,18 +141,40 @@ func NewCachingResolver(inner Resolver, opts ...CachingResolverOption) *CachingR
 }
 
 // Resolve resolves a DID, using the cache if available and not expired.
+//
+// If the upstream resolver returns an error and a stale window has been
+// configured (via [WithStaleWindow]), a recently-expired cache entry is
+// returned instead of the error.  This improves availability during transient
+// upstream outages without changing the API contract for callers.
 func (r *CachingResolver) Resolve(ctx context.Context, did string) (*Document, error) {
 	r.mu.RLock()
+	var staleEntry *cacheEntry
 	if entry, ok := r.cache[did]; ok {
-		if r.now().Sub(entry.fetchedAt) < r.ttl {
+		age := r.now().Sub(entry.fetchedAt)
+		if age < r.ttl {
 			r.mu.RUnlock()
 			return entry.doc, nil
+		}
+		// Entry is past TTL but might be within the stale window.
+		if r.staleWindow > 0 && age < r.ttl+r.staleWindow {
+			staleEntry = entry
 		}
 	}
 	r.mu.RUnlock()
 
 	doc, err := r.inner.Resolve(ctx, did)
 	if err != nil {
+		// Serve a stale entry rather than propagating the error when the
+		// upstream is temporarily unavailable.
+		if staleEntry != nil {
+			// Re-check that the stale entry is still within the stale window.
+			// The upstream call may have been slow, and the entry could have aged
+			// beyond ttl+staleWindow in the meantime.
+			age := r.now().Sub(staleEntry.fetchedAt)
+			if age < r.ttl+r.staleWindow {
+				return staleEntry.doc, nil
+			}
+		}
 		return nil, err
 	}
 
@@ -174,7 +213,8 @@ func (r *CachingResolver) Len() int {
 func (r *CachingResolver) evictExpired() {
 	now := r.now()
 	for key, entry := range r.cache {
-		if now.Sub(entry.fetchedAt) >= r.ttl {
+		// Evict entries that have passed both the TTL and the stale window.
+		if now.Sub(entry.fetchedAt) >= r.ttl+r.staleWindow {
 			delete(r.cache, key)
 		}
 	}
