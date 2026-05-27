@@ -7,7 +7,45 @@ import (
 	"context"
 
 	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// ResilientRedisOption is a functional option for [NewResilientRedis].
+type ResilientRedisOption func(*ResilientRedisLimiter)
+
+// WithPrometheusRegisterer registers a Prometheus gauge that tracks the
+// degradation state of the [ResilientRedisLimiter].
+//
+// The gauge is exported as:
+//
+//	ratelimit_redis_degraded{component="<component>"}
+//
+// Value 1 means Redis is unavailable and the limiter is in degraded (fail-open)
+// mode; value 0 means Redis is reachable and operating normally.
+func WithPrometheusRegisterer(reg prometheus.Registerer, component string) ResilientRedisOption {
+	return func(r *ResilientRedisLimiter) {
+		g := prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: "ratelimit",
+				Name:      "redis_degraded",
+				Help:      "1 when the Redis rate-limiter is operating in degraded (fail-open) mode, 0 when healthy.",
+				ConstLabels: prometheus.Labels{
+					"component": component,
+				},
+			},
+			func() float64 {
+				if r.reporter.State() == redisfailover.Degraded {
+					return 1
+				}
+				return 0
+			},
+		)
+		// Ignore registration errors — a duplicate registration means the
+		// gauge is already being tracked (e.g. in tests with shared registries).
+		_ = reg.Register(g)
+		r.degradedGauge = g
+	}
+}
 
 // ResilientRedisLimiter wraps a Redis rate limiter with fail-open semantics.
 // When Redis is unreachable, it falls back to an in-memory rate limiter to
@@ -21,16 +59,25 @@ type ResilientRedisLimiter struct {
 	primary  *RedisLimiter
 	fallback *InMemoryLimiter
 	reporter *redisfailover.Reporter
+
+	// degradedGauge is optionally registered by WithPrometheusRegisterer.
+	degradedGauge prometheus.Collector
 }
 
 // NewResilientRedis creates a fail-open resilient rate limiter that falls
 // back to in-memory limiting when Redis is unreachable.
-func NewResilientRedis(primary *RedisLimiter, cfg Config, reporter *redisfailover.Reporter) *ResilientRedisLimiter {
-	return &ResilientRedisLimiter{
+// Optional [ResilientRedisOption] functions can be used to extend behaviour,
+// for example adding Prometheus metrics with [WithPrometheusRegisterer].
+func NewResilientRedis(primary *RedisLimiter, cfg Config, reporter *redisfailover.Reporter, opts ...ResilientRedisOption) *ResilientRedisLimiter {
+	r := &ResilientRedisLimiter{
 		primary:  primary,
 		fallback: NewInMemory(cfg),
 		reporter: reporter,
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Allow checks rate limit, falling back to in-memory limiter on Redis failure.

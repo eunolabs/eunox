@@ -29,6 +29,13 @@ var (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	port := envOrDefault("STORAGE_GRANT_SVC_PORT", "3006")
 	adapter := envOrDefault("STORAGE_GRANT_SVC_ADAPTER", "aws-s3")
 
@@ -48,15 +55,13 @@ func main() {
 	// Build cloud adapter.
 	cloudAdapter, err := buildAdapter(adapter)
 	if err != nil {
-		logger.Error("failed to build cloud adapter", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("build cloud adapter: %w", err)
 	}
 
 	// Require a concrete JWT verifier before starting the service.
 	verifier, err := buildVerifier()
 	if err != nil {
-		logger.Error("failed to configure JWT verification", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("configure JWT verification: %w", err)
 	}
 
 	// Build metrics.
@@ -79,8 +84,7 @@ func main() {
 
 	app, appErr := storagegrantsvc.New(cfg, deps)
 	if appErr != nil {
-		logger.Error("failed to create application", slog.String("error", appErr.Error()))
-		os.Exit(1)
+		return fmt.Errorf("create application: %w", appErr)
 	}
 
 	// Start HTTP server.
@@ -90,28 +94,35 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("listening", slog.String("addr", srv.Addr))
 		if listenErr := srv.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
-			logger.Error("server error", slog.String("error", listenErr.Error()))
-			os.Exit(1)
+			errCh <- fmt.Errorf("server: %w", listenErr)
 		}
 	}()
 
-	// Wait for shutdown signal.
+	// Wait for shutdown signal or server error.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Info("shutting down")
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
-		cancel()
-		logger.Error("shutdown error", slog.String("error", shutdownErr.Error()))
-		os.Exit(1)
+	select {
+	case sig := <-quit:
+		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
+	case err := <-errCh:
+		return err
 	}
-	cancel()
+
+	logger.Info("shutting down")
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
+		return fmt.Errorf("shutdown: %w", shutdownErr)
+	}
+
 	logger.Info("shutdown complete")
+	return nil
 }
 
 func buildAdapter(name string) (storagegrantsvc.CloudStorageAdapter, error) {

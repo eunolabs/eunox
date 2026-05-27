@@ -327,6 +327,10 @@ pattern.
 Use an `errCh chan error` as in the gateway, and `select` between the signal channel
 and the error channel in `main()`.
 
+**Status: Implemented** — `cmd/minter/main.go`, `cmd/issuer/main.go`, `cmd/db-token-svc/main.go`,
+and `cmd/storage-grant-svc/main.go` all use a `run() error` function with an internal
+`errCh chan error` to propagate server errors back to `main()`, matching the gateway pattern.
+
 ---
 
 ### CI-2 — `handleProxy` builds an `EnforceRequest` from HTTP headers without input validation
@@ -342,6 +346,10 @@ trigger unexpected glob matching in `matchesResource()`.
 Validate `X-Tool-Name` against a `^[a-zA-Z0-9_\-:.]{1,256}$` allowlist pattern
 before using it in enforcement. Return `400 Bad Request` if the header is missing
 or invalid.
+
+**Status: Implemented** — `internal/gateway/handlers.go` validates `X-Tool-Name` with
+`validToolNameRE` (`^[a-zA-Z0-9_\-:.]{1,256}$`) and returns `400 Bad Request` for missing
+or non-conforming values before any enforcement logic runs.
 
 ---
 
@@ -360,6 +368,11 @@ Either restrict `Resource` to the documented trailing-`*`-only semantics and rej
 other patterns during capability validation, or use `path/filepath.Match` for
 consistent glob semantics. Add tests for mid-string wildcards.
 
+**Status: Implemented** — `pkg/enforcement/engine.go` `matchesResource` now uses `path.Match`
+for full glob semantics (`?`, `[abc]`, mid-string `*`). `ValidateResourcePattern` is exported
+for use at capability load time to reject malformed patterns. Tests for `?`, character classes,
+and mid-string wildcards added in `pkg/enforcement/enforcement_test.go`.
+
 ---
 
 ### CI-4 — `pkg/audit/audit.go` HMAC chain key is derived from the audit signing key
@@ -375,6 +388,13 @@ This couples the signing key lifecycle to the chain integrity model.
 Separate the HMAC chain key from the record signing key. Derive the chain key from a
 dedicated `AUDIT_CHAIN_HMAC_SECRET` environment variable (similar to `PEPPER_HEX` in
 the minter). This enables independent key rotation without breaking chain continuity.
+
+**Status: Implemented** — `pkg/audit/audit.go` adds `ComputeChainHashWithSecret` /
+`VerifyChainHashWithSecret` that use a dedicated HMAC secret (message includes `previousHash`
+to preserve ordering). `PipelineConfig.ChainHMACSecret` activates the new mode when set;
+pipelines without it continue to use the legacy key-derived hash, preserving backward
+compatibility. Tests in `pkg/audit/audit_test.go` verify determinism, incompatibility
+between modes, and pipeline integration.
 
 ---
 
@@ -392,6 +412,12 @@ Expose the `reporter.IsDegraded()` state as a Prometheus gauge
 (`ratelimit_redis_degraded{component="ratelimit"}`) and incorporate it into the
 readiness probe response so load balancers can drain degraded replicas if desired.
 
+**Status: Implemented** — `pkg/ratelimit/resilient_redis.go` adds a `WithPrometheusRegisterer`
+functional option that accepts a caller-supplied `component` label. When provided, a `GaugeFunc`
+named `ratelimit_redis_degraded` is registered and reflects the live degradation state
+(`reporter.State() == Degraded`). Tests in `pkg/ratelimit/resilient_redis_test.go` verify the
+gauge reads 1 when degraded and 0 when healthy, and that the component label is set correctly.
+
 ---
 
 ### CI-6 — `InMemoryDPoPStore` cleanup fires only on `len(seen) > 1000`; no periodic cleanup
@@ -407,6 +433,12 @@ every 1001st call, adding latency spikes to the enforcement hot path.
 Run a background cleanup goroutine on a fixed interval (e.g., every 2 minutes) tied
 to the service lifecycle context, matching the pattern used in
 `pkg/killswitch/redis.go`.
+
+**Status: Implemented** — `internal/gateway/dpop_store.go` adds a `Start(ctx context.Context)`
+method that runs a background ticker-based cleanup goroutine. `cleanupInterval` defaults to 2
+minutes. `cmd/gateway/main.go` calls `dpopStore.Start(ctx)` with the root cancellable context.
+Tests in `internal/gateway/dpop_store_test.go` cover cleanup, replay detection, and goroutine
+cancellation.
 
 ---
 
@@ -429,6 +461,12 @@ Extract the `authenticateAuditRequest` check into a chi middleware and apply it 
 the `/api/v1/audit` sub-router, so protection is structural and cannot be bypassed
 by accidentally omitting an inline call.
 
+**Status: Implemented** — `internal/gateway/audit_routes.go` adds `auditAuthMiddleware()` chi
+middleware and stores the principal in context via `auditPrincipalKey`. Applied with `r.Use`
+on the `/audit` sub-router in `app.go`. All four handlers now call `auditPrincipalFromCtx(r.Context())`
+instead of inline auth. Tests in `internal/gateway/audit_routes_test.go` verify unauthenticated
+requests are rejected at the router boundary for all four routes.
+
 ---
 
 ### CI-8 — `pkg/config/validation.go` regex validation uses `regexp.MatchString` (full-match not anchored)
@@ -445,6 +483,10 @@ without anchors will silently pass malformed values.
 Wrap the pattern with anchors unconditionally: `"^(?:" + tags.Regex + ")$"`, or
 document that all `regex` tag values must be anchored and add a unit test that
 verifies partial matches are rejected.
+
+**Status: Implemented** — `pkg/config/validation.go` wraps every regex with `^(?:...)$`
+before calling `regexp.MatchString`, ensuring full-string matching regardless of whether the
+tag value includes explicit anchors.
 
 ---
 
@@ -463,6 +505,10 @@ request:
 ```go
 r.Header.Set("X-Request-Id", requestID)
 ```
+
+**Status: Implemented** — `internal/gateway/handlers.go` `handleProxy` now calls
+`r.Header.Set("X-Request-Id", requestID)` before proxying to the backend, enabling
+distributed log correlation across gateway and backend services.
 
 ---
 
@@ -484,6 +530,10 @@ posture emission becomes necessary.
 Document a migration path to a PostgreSQL backend when horizontal scaling of posture
 emission is required.
 
+**Status: Implemented** — `internal/posture/app.go` includes a comment block documenting
+the PostgreSQL migration path: replacing the SQLite driver and local volume with a shared
+PostgreSQL connection string and updating the queue backend wiring.
+
 ---
 
 ### CI-11 — Audit ledger PostgreSQL advisory lock enforces single-writer but no failover guard
@@ -501,6 +551,12 @@ Set a session-level `lock_timeout` on the audit DB connection (e.g., `SET
 lock_timeout = '5s'`), and emit a structured error/metric when the lock wait
 exceeds a threshold so alerts fire before the write backlog grows.
 
+**Status: Implemented** — `pkg/audit/backend.go` adds `LockTimeout time.Duration` to
+`PostgresLedgerConfig`. When non-zero, `AcquireLock` emits `SET lock_timeout = 'Nms'` before
+the advisory lock call, bounding the wait when a blocking lock implementation is used. Tests in
+`pkg/audit/audit_test.go` verify the `SET` statement is emitted in the correct order and
+skipped when `LockTimeout` is zero.
+
 ---
 
 ### CI-12 — `pkg/circuitbreaker/do.go` uses `panic` for nil guard instead of returning an error
@@ -513,6 +569,10 @@ service initialization code they produce an unrecoverable crash rather than a
 structured startup error. All panic sites in the circuitbreaker package are
 constructor guards and are acceptable, but they should be documented as invariants
 in the package godoc so callers are aware.
+
+**Status: Implemented** — `pkg/circuitbreaker/do.go` package-level godoc explicitly documents
+that `Do` and `DoVoid` panic on nil breaker as a programming-error invariant, and
+callers must ensure the breaker is constructed before use.
 
 ---
 

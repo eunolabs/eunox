@@ -49,9 +49,10 @@ type AdvisoryLock interface {
 // PostgresLedgerBackend implements LedgerBackend using PostgreSQL with a global advisory lock.
 // This ensures single-writer semantics for the HMAC chain when running a single replica.
 type PostgresLedgerBackend struct {
-	db     DB
-	lock   AdvisoryLock
-	lockID int64
+	db          DB
+	lock        AdvisoryLock
+	lockID      int64
+	lockTimeout time.Duration
 
 	mu     sync.Mutex
 	closed bool
@@ -62,6 +63,18 @@ type PostgresLedgerConfig struct {
 	// LockID is the advisory lock ID to prevent concurrent writers.
 	// Default: 8675309 (arbitrary fixed ID for the audit ledger).
 	LockID int64
+
+	// LockTimeout is the maximum time the database session is allowed to wait
+	// when acquiring the advisory lock.  When non-zero, AcquireLock emits a
+	// PostgreSQL SET lock_timeout statement before calling TryLock so that the
+	// database returns a lock_timeout error promptly if contention is detected,
+	// rather than waiting indefinitely.  This is only effective when the
+	// AdvisoryLock implementation uses a blocking lock call (e.g.
+	// pg_advisory_lock); implementations backed by pg_try_advisory_lock return
+	// immediately regardless of this setting.
+	//
+	// A value of 0 (the default) disables the timeout.
+	LockTimeout time.Duration
 }
 
 const defaultLockID int64 = 8675309
@@ -73,14 +86,28 @@ func NewPostgresLedgerBackend(db DB, lock AdvisoryLock, cfg PostgresLedgerConfig
 		lockID = defaultLockID
 	}
 	return &PostgresLedgerBackend{
-		db:     db,
-		lock:   lock,
-		lockID: lockID,
+		db:          db,
+		lock:        lock,
+		lockID:      lockID,
+		lockTimeout: cfg.LockTimeout,
 	}
 }
 
 // AcquireLock attempts to acquire the advisory lock. Must be called before Append.
+//
+// When PostgresLedgerConfig.LockTimeout is non-zero, AcquireLock first sets the
+// session-level lock_timeout so that the subsequent advisory-lock call returns
+// quickly when contention is detected rather than blocking indefinitely.
 func (b *PostgresLedgerBackend) AcquireLock(ctx context.Context) error {
+	if b.lockTimeout > 0 {
+		ms := b.lockTimeout.Milliseconds()
+		// SET does not support query parameters in PostgreSQL; ms is an int64
+		// derived from a time.Duration so there is no injection risk here.
+		if _, err := b.db.ExecContext(ctx, fmt.Sprintf("SET lock_timeout = '%dms'", ms)); err != nil {
+			return fmt.Errorf("audit: set lock_timeout: %w", err)
+		}
+	}
+
 	acquired, err := b.lock.TryLock(ctx, b.lockID)
 	if err != nil {
 		return fmt.Errorf("audit: acquire advisory lock: %w", err)

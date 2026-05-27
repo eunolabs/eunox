@@ -144,23 +144,69 @@ func (es *EvidenceSigner) KeyID() string {
 }
 
 // ComputeChainHash computes the HMAC-SHA256 chain hash linking a record to the previous hash.
-// chainHash = HMAC-SHA256(key: previousHash, message: recordID || timestamp || signature)
+//
+// When chainSecret is non-empty it is used as the outer HMAC key, anchoring the
+// entire chain to a dedicated secret that can be rotated independently of the
+// per-record signing key (CI-4).  The message still encodes the previousHash so
+// that the chain linkage cannot be reordered even if the secret is known.
+//
+// When chainSecret is empty the function falls back to the legacy behaviour:
+// the previousHash itself is used as the HMAC key (genesis record uses "genesis").
+// This preserves backward-compatibility with chains written before AUDIT_CHAIN_HMAC_SECRET
+// was configured.
+//
+// chainHash = HMAC-SHA256(key: chainSecret || previousHash, message: recordID || timestamp || signature)
 func ComputeChainHash(previousHash, recordID string, timestamp time.Time, signature string) string {
-	key := []byte(previousHash)
-	if previousHash == "" {
-		// Genesis record uses a fixed key.
-		key = []byte("genesis")
+	return computeChainHashWithSecret("", previousHash, recordID, timestamp, signature)
+}
+
+// ComputeChainHashWithSecret is like ComputeChainHash but uses a dedicated
+// chain secret as the primary HMAC key, incorporating the previousHash into the
+// message so that per-record linkage is preserved.
+func ComputeChainHashWithSecret(chainSecret, previousHash, recordID string, timestamp time.Time, signature string) string {
+	return computeChainHashWithSecret(chainSecret, previousHash, recordID, timestamp, signature)
+}
+
+func computeChainHashWithSecret(chainSecret, previousHash, recordID string, timestamp time.Time, signature string) string {
+	var key []byte
+	if chainSecret != "" {
+		// Dedicated chain secret: key = chainSecret so the chain is anchored to
+		// a secret that can be rotated independently of the signing key.  The
+		// previousHash is included in the message to preserve per-record linkage.
+		key = []byte(chainSecret)
+	} else {
+		// Legacy behaviour: derive the HMAC key from the previous hash so that
+		// each record authenticates the next in a self-referential chain.
+		key = []byte(previousHash)
+		if previousHash == "" {
+			key = []byte("genesis")
+		}
 	}
 
-	message := fmt.Sprintf("%s|%s|%s", recordID, timestamp.UTC().Format(time.RFC3339Nano), signature)
+	var message string
+	if chainSecret != "" {
+		// Include previousHash in the message when using a dedicated secret so
+		// that the chain ordering is still cryptographically bound.
+		message = fmt.Sprintf("%s|%s|%s|%s", previousHash, recordID, timestamp.UTC().Format(time.RFC3339Nano), signature)
+	} else {
+		message = fmt.Sprintf("%s|%s|%s", recordID, timestamp.UTC().Format(time.RFC3339Nano), signature)
+	}
+
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(message))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // VerifyChainHash verifies that a chain hash is valid given the inputs.
+// Use VerifyChainHashWithSecret when a dedicated chain HMAC secret was used.
 func VerifyChainHash(evidence *SignedAuditEvidence) bool {
-	expected := ComputeChainHash(
+	return VerifyChainHashWithSecret("", evidence)
+}
+
+// VerifyChainHashWithSecret verifies a chain hash produced with a dedicated secret.
+func VerifyChainHashWithSecret(chainSecret string, evidence *SignedAuditEvidence) bool {
+	expected := computeChainHashWithSecret(
+		chainSecret,
 		evidence.PreviousHash,
 		evidence.Record.ID,
 		evidence.Record.Timestamp,
@@ -171,9 +217,10 @@ func VerifyChainHash(evidence *SignedAuditEvidence) bool {
 
 // DefaultPipeline is the standard implementation of the Pipeline interface.
 type DefaultPipeline struct {
-	signer    *EvidenceSigner
-	backend   LedgerBackend
-	replicaID string
+	signer          *EvidenceSigner
+	backend         LedgerBackend
+	replicaID       string
+	chainHMACSecret string
 
 	mu            sync.Mutex
 	lastChainHash string
@@ -186,6 +233,16 @@ type DefaultPipeline struct {
 type PipelineConfig struct {
 	// ReplicaID identifies this pipeline instance (for per-replica chains).
 	ReplicaID string
+
+	// ChainHMACSecret is an optional dedicated secret for the HMAC chain
+	// integrity hash.  When set, the chain hash is computed with this secret
+	// as the HMAC key rather than the previous hash, decoupling the chain
+	// integrity mechanism from the per-record signing key (CI-4).
+	//
+	// Populate from the AUDIT_CHAIN_HMAC_SECRET environment variable.
+	// Omitting this field preserves backward-compatible behaviour (the previous
+	// hash is used as the HMAC key, with "genesis" for the first record).
+	ChainHMACSecret string
 }
 
 // NewPipeline creates a new DefaultPipeline.
@@ -203,9 +260,10 @@ func NewPipeline(signer *EvidenceSigner, backend LedgerBackend, cfg PipelineConf
 	}
 
 	return &DefaultPipeline{
-		signer:    signer,
-		backend:   backend,
-		replicaID: replicaID,
+		signer:          signer,
+		backend:         backend,
+		replicaID:       replicaID,
+		chainHMACSecret: cfg.ChainHMACSecret,
 	}, nil
 }
 
@@ -258,8 +316,9 @@ func (p *DefaultPipeline) Append(ctx context.Context, entry *LogEntry) error {
 		return err
 	}
 
-	// Compute chain hash.
-	chainHash := ComputeChainHash(p.lastChainHash, entry.ID, entry.Timestamp, signature)
+	// Compute chain hash using the dedicated chain secret when configured (CI-4),
+	// otherwise fall back to legacy behaviour.
+	chainHash := ComputeChainHashWithSecret(p.chainHMACSecret, p.lastChainHash, entry.ID, entry.Timestamp, signature)
 
 	// Increment sequence.
 	p.lastSeqNum++

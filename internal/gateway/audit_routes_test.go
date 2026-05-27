@@ -113,7 +113,8 @@ func TestAuditRecords_NoAuditConfigured(t *testing.T) {
 	t.Parallel()
 
 	app := newAuditTestApp(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
+	// Auth passes (admin key), but audit store is not configured — expect 503.
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -257,7 +258,8 @@ func TestAuditSigningKeys_NotConfigured(t *testing.T) {
 	t.Parallel()
 
 	app := newAuditTestApp(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", http.NoBody)
+	// Auth passes (admin key), but audit pipeline is not configured — expect 503.
+	req := withAuditAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/signing-keys", http.NoBody))
 	rec := httptest.NewRecorder()
 
 	app.Handler().ServeHTTP(rec, req)
@@ -473,4 +475,55 @@ func TestAuditChainProof_BrokenLinkage(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
 	assert.Equal(t, false, result["valid"])
 	assert.Equal(t, float64(2), result["broken_at_seq"])
+}
+
+// CI-7: audit auth middleware tests.
+
+func TestAuditMiddleware_UnauthenticatedReturns401(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
+	// No credentials — middleware must return 401.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAuditMiddleware_WrongAdminKeyReturns401(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/records", http.NoBody)
+	req.Header.Set("X-Admin-Api-Key", "wrong-key")
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAuditMiddleware_AuthAppliedToAllAuditRoutes(t *testing.T) {
+	t.Parallel()
+
+	store := &mockQueryStore{}
+	app := newAuditTestApp(t, &gateway.AuditDependencies{QueryStore: store, SigningKeys: []gateway.SigningKeyInfo{}})
+
+	routes := []string{
+		"/api/v1/audit/records",
+		"/api/v1/audit/export",
+		"/api/v1/audit/signing-keys",
+		"/api/v1/audit/chain-proof",
+	}
+	for _, path := range routes {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+			// No auth headers — all routes must return 401.
+			rec := httptest.NewRecorder()
+			app.Handler().ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusUnauthorized, rec.Code, "expected 401 for unauthenticated request to %s", path)
+		})
+	}
 }

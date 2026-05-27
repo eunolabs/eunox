@@ -9,12 +9,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/capability"
 	"github.com/google/uuid"
 )
+
+// validToolNameRE enforces an allowlist on the X-Tool-Name proxy header.
+// Accepts 1–256 characters: letters, digits, underscores, hyphens, colons, dots.
+var validToolNameRE = regexp.MustCompile(`^[a-zA-Z0-9_\-:.]{1,256}$`)
 
 const defaultMaxBodySize int64 = 1 << 20 // 1 MB
 
@@ -263,6 +268,12 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract and validate X-Request-Id for distributed tracing (CI-9).
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+
 	// Extract token from Authorization header
 	token := extractBearerToken(r)
 	if token == "" {
@@ -310,10 +321,19 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate X-Tool-Name against a strict allowlist (CI-2).
+	// Rejects empty, oversized, or path-traversal-style tool names before they
+	// reach the enforcement engine or are written into audit records.
+	toolName := r.Header.Get("X-Tool-Name")
+	if !validToolNameRE.MatchString(toolName) {
+		writeJSON(w, http.StatusBadRequest, errorResponse(`X-Tool-Name header is missing or invalid; must match ^[a-zA-Z0-9_\-:.]{1,256}$`))
+		return
+	}
+
 	// Build enforce request from proxy context
 	enforceReq := capability.EnforceRequest{
 		SessionID: r.Header.Get("X-Session-ID"),
-		ToolName:  r.Header.Get("X-Tool-Name"),
+		ToolName:  toolName,
 		Context: capability.EnforceRequestContext{
 			SourceIP:  app.extractClientIP(r),
 			Operation: r.Method,
@@ -331,6 +351,10 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, resp)
 		return
 	}
+
+	// Inject the gateway-assigned request ID into the upstream request so that
+	// logs and traces across gateway → backend can be correlated (CI-9).
+	r.Header.Set("X-Request-Id", requestID)
 
 	// Proxy the request to backend
 	app.proxy.ServeHTTP(w, r)

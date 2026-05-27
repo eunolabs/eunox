@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/edgeobs/eunox/pkg/audit"
 )
+
+// auditPrincipalKey is the context key used to store an authenticated
+// [auditPrincipal] by [App.auditAuthMiddleware].
+type auditPrincipalKey struct{}
 
 // AuditDependencies holds optional audit pipeline dependencies for the gateway.
 type AuditDependencies struct {
@@ -29,6 +34,37 @@ type SigningKeyInfo struct {
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
+// auditAuthMiddleware is a chi-compatible middleware that authenticates incoming
+// requests against the audit API.  On success it stores the resolved
+// [auditPrincipal] in the request context under [auditPrincipalKey{}] and
+// calls the next handler.  On failure it writes an appropriate JSON error
+// response and does NOT call next.
+//
+// Supported credential schemes (checked in order):
+//  1. Static admin API key via X-Admin-Api-Key header.
+//  2. ****** token via Authorization header (tenant-scoped).
+func (app *App) auditAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := app.authenticateAuditRequest(w, r)
+		if !ok {
+			return
+		}
+		ctx := context.WithValue(r.Context(), auditPrincipalKey{}, principal)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// auditPrincipalFromCtx retrieves the authenticated [auditPrincipal] stored by
+// [App.auditAuthMiddleware].  It panics if called outside the audit middleware
+// chain (i.e. without auditAuthMiddleware applied).
+func auditPrincipalFromCtx(ctx context.Context) *auditPrincipal {
+	p, ok := ctx.Value(auditPrincipalKey{}).(*auditPrincipal)
+	if !ok || p == nil {
+		panic("gateway: auditPrincipalFromCtx called without auditAuthMiddleware in chain")
+	}
+	return p
+}
+
 // handleAuditRecords handles GET /api/v1/audit/records.
 // Returns paginated audit records filtered by tenant, event type, or actor.
 func (app *App) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +73,7 @@ func (app *App) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, ok := app.authenticateAuditRequest(w, r)
-	if !ok {
-		return
-	}
+	principal := auditPrincipalFromCtx(r.Context())
 
 	tenantID, ok := principal.scopedTenantID(w, r.URL.Query().Get("tenant_id"))
 	if !ok {
@@ -87,10 +120,7 @@ func (app *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, ok := app.authenticateAuditRequest(w, r)
-	if !ok {
-		return
-	}
+	principal := auditPrincipalFromCtx(r.Context())
 
 	tenantID, ok := principal.scopedTenantID(w, r.URL.Query().Get("tenant_id"))
 	if !ok {
@@ -151,9 +181,8 @@ func (app *App) handleAuditSigningKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := app.authenticateAuditRequest(w, r); !ok {
-		return
-	}
+	// Principal is already authenticated by auditAuthMiddleware.
+	_ = auditPrincipalFromCtx(r.Context())
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"keys": app.deps.Audit.SigningKeys,
@@ -168,9 +197,8 @@ func (app *App) handleAuditChainProof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := app.authenticateAuditRequest(w, r); !ok {
-		return
-	}
+	// Principal is already authenticated by auditAuthMiddleware.
+	_ = auditPrincipalFromCtx(r.Context())
 
 	replicaID := r.URL.Query().Get("replica_id")
 	if replicaID == "" {
@@ -324,3 +352,4 @@ func (p *auditPrincipal) scopedTenantID(w http.ResponseWriter, requestedTenantID
 func auditAdminAPIKeyHeader() string {
 	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
 }
+

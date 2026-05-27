@@ -49,6 +49,11 @@ func main() {
 }
 
 func run() error {
+	// Root context — cancel() is called explicitly after the shutdown signal is
+	// received to unblock all in-flight operations tied to this context.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Load config
 	cfg := config.LoadOrExit[config.GatewayConfig]("GATEWAY")
 
@@ -86,6 +91,7 @@ func run() error {
 	ks := killswitch.NewInMemory()
 	revStore := revocation.NewInMemory()
 	dpopStore := gateway.NewInMemoryDPoPStore(5 * time.Minute)
+	dpopStore.Start(ctx)
 
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
 	var jwtVerifier gateway.JWTVerifier
@@ -225,6 +231,10 @@ func run() error {
 	// lifecycle manager's SetNotReady → drain → shutdown sequence will flip
 	// IsReady back to false before connections are drained on shutdown.
 	lm.SetReady()
+
+	// Cancel the root context (stopping background goroutines like dpopStore)
+	// when the lifecycle manager shuts down.
+	lm.OnStop(cancel)
 
 	return lm.Run(context.Background())
 }

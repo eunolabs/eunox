@@ -38,6 +38,13 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := config.LoadOrExit[config.IssuerConfig]("")
 	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
@@ -57,15 +64,13 @@ func main() {
 	// Build signing key
 	signer, err := buildSigner(&cfg)
 	if err != nil {
-		logger.Error("failed to build signer", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("build signer: %w", err)
 	}
 
 	// Build identity verifier
 	idVerifier, err := buildIdentityVerifier(&cfg, logger)
 	if err != nil {
-		logger.Error("failed to build identity verifier", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("build identity verifier: %w", err)
 	}
 
 	// Build rate limiter
@@ -80,11 +85,7 @@ func main() {
 	)
 	if cfg.RolePolicyFile != "" {
 		if loadErr := policyEngine.LoadFromFile(cfg.RolePolicyFile); loadErr != nil {
-			logger.Error("failed to load role policy file",
-				slog.String("file", cfg.RolePolicyFile),
-				slog.String("error", loadErr.Error()),
-			)
-			os.Exit(1)
+			return fmt.Errorf("load role policy file %q: %w", cfg.RolePolicyFile, loadErr)
 		}
 		policyEngine.StartHotReload()
 		logger.Info("loaded role policies", slog.String("file", cfg.RolePolicyFile))
@@ -132,31 +133,36 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("listening", slog.String("addr", srv.Addr))
 		if listenErr := srv.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
-			logger.Error("server error", slog.String("error", listenErr.Error()))
-			os.Exit(1)
+			errCh <- fmt.Errorf("server: %w", listenErr)
 		}
 	}()
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal or server error.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Info("shutting down")
 
+	select {
+	case sig := <-quit:
+		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
+	case err := <-errCh:
+		return err
+	}
+
+	logger.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
 
 	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
-		cancel()
-		logger.Error("shutdown error", slog.String("error", shutdownErr.Error()))
-		os.Exit(1)
+		return fmt.Errorf("shutdown: %w", shutdownErr)
 	}
-	cancel()
 
 	policyEngine.Stop()
 	logger.Info("shutdown complete")
+	return nil
 }
 
 func buildSigner(cfg *config.IssuerConfig) (crypto.Signer, error) {

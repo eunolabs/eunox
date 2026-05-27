@@ -31,6 +31,13 @@ var (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := config.LoadOrExit[config.MinterConfig]("")
 	logger := observability.NewLogger(&observability.LogConfig{
 		Level:       os.Getenv("LOG_LEVEL"),
@@ -48,8 +55,7 @@ func main() {
 	// Build pepper.
 	pepper, err := buildPepper(&cfg)
 	if err != nil {
-		logger.Error("failed to build pepper", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("build pepper: %w", err)
 	}
 
 	// Build admin authenticator.
@@ -98,28 +104,35 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("listening", slog.String("addr", srv.Addr))
 		if listenErr := srv.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
-			logger.Error("server error", slog.String("error", listenErr.Error()))
-			os.Exit(1)
+			errCh <- fmt.Errorf("server: %w", listenErr)
 		}
 	}()
 
-	// Wait for shutdown signal.
+	// Wait for shutdown signal or server error.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Info("shutting down")
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
-		cancel()
-		logger.Error("shutdown error", slog.String("error", shutdownErr.Error()))
-		os.Exit(1)
+	select {
+	case sig := <-quit:
+		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
+	case err := <-errCh:
+		return err
 	}
-	cancel()
+
+	logger.Info("shutting down")
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if shutdownErr := srv.Shutdown(ctx); shutdownErr != nil {
+		return fmt.Errorf("shutdown: %w", shutdownErr)
+	}
+
 	logger.Info("shutdown complete")
+	return nil
 }
 
 func buildPepper(cfg *config.MinterConfig) (*minter.Pepper, error) {

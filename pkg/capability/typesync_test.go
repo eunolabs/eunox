@@ -51,7 +51,7 @@ func TestConditionTypesInSyncWithUpstreamTypeScript(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(url) //nolint:noctx // test helper, no request context needed
 	if err != nil {
 		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
 			t.Fatalf("types-sync: cannot reach upstream in CI (%v)", err)
