@@ -152,7 +152,7 @@ func TestHandleProxy_DPoPRequired_MissingHeader(t *testing.T) {
 	// When a token has a cnf.jkt binding but no DPoP header is present,
 	// handleProxy must reject the request with 401.
 	app := makeAppWithCIDRs(t, nil)
-	
+
 	// Set up a dummy backend
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -160,7 +160,7 @@ func TestHandleProxy_DPoPRequired_MissingHeader(t *testing.T) {
 	defer backend.Close()
 	backendURL, _ := url.Parse(backend.URL)
 	app.proxy = httputil.NewSingleHostReverseProxy(backendURL)
-	
+
 	app.deps.JWTVerifier = &mockProxyJWTVerifier{
 		claims: &capability.TokenPayload{
 			Subject:   "agent-123",

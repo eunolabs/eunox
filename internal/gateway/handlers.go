@@ -470,7 +470,7 @@ func (app *App) extractClientIP(r *http.Request) string {
 func (app *App) reconstructRequestURL(r *http.Request) string {
 	scheme := "http"
 	host := r.Host
-	
+
 	if len(app.trustedProxyNets) > 0 {
 		remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -486,11 +486,18 @@ func (app *App) reconstructRequestURL(r *http.Request) string {
 			}
 		}
 	}
-	
+
 	// Fallback: if not from a trusted proxy, use direct TLS state
 	if scheme == "http" && r.TLS != nil {
 		scheme = "https"
 	}
-	
-	return fmt.Sprintf("%s://%s%s", scheme, host, r.RequestURI)
+
+	// Use URL.Path and RawQuery (not RequestURI) to avoid including fragment
+	// and to ensure we match what the client signed in the DPoP proof.
+	path := r.URL.Path
+	query := r.URL.RawQuery
+	if query != "" {
+		return fmt.Sprintf("%s://%s%s?%s", scheme, host, path, query)
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
 }
