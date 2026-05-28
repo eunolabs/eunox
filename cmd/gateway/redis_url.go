@@ -197,8 +197,8 @@ func containsMultipleHosts(rawURL string) bool {
 // newRedisUniversalClientFromURL returns the Redis client as a
 // [goredis.UniversalClient] (which exposes Subscribe) rather than [goredis.Cmdable].
 // All concrete client types created by [newRedisClientFromURL] implement
-// [goredis.UniversalClient]; the type assertion here panics at startup if the
-// implementation ever changes, which is preferable to a silent runtime failure.
+// [goredis.UniversalClient]; the function returns an error if the assertion fails
+// (which would indicate an unexpected client type).
 func newRedisUniversalClientFromURL(rawURL string) (goredis.UniversalClient, error) {
 	c, err := newRedisClientFromURL(rawURL)
 	if err != nil {

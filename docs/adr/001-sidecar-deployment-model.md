@@ -57,8 +57,9 @@ The sidecar mode is enabled by setting `GATEWAY_SIDECAR_MODE=true` and
 ```
 
 In sidecar mode:
-- The gateway listens on `127.0.0.1:3002` (localhost only, unreachable from outside the pod)
-- The agent is configured to send all tool calls to `http://localhost:3002/api/v1/enforce`
+- The gateway listens on `127.0.0.1:3002` (loopback only, unreachable from outside the pod)
+- The agent is configured to send all tool calls to `http://127.0.0.1:3002/api/v1/enforce`
+  (use `127.0.0.1` explicitly, not `localhost`, to avoid DNS resolution to `::1` in IPv6-first environments)
 - Policy, revocation, and kill-switch state are still stored in shared Redis
 - Each sidecar has its own independent Redis pub/sub subscription
 

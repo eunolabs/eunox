@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -46,12 +47,15 @@ type agentPartition struct {
 //
 // Use [NewPartitioned] and call [PartitionedKillSwitch.Start] to begin background subscriptions.
 type PartitionedKillSwitch struct {
-	inner  *Redis // handles global + session + full state refresh
-	client redis.UniversalClient
-	logger *slog.Logger
+	inner    *Redis // handles global + session + full state refresh
+	client   redis.UniversalClient
+	logger   *slog.Logger
+	reporter *redisfailover.Reporter // optional; used for readiness reporting
 
-	mu         sync.RWMutex
-	partitions map[string]*agentPartition
+	mu           sync.RWMutex
+	partitions   map[string]*agentPartition
+	lifecycleCtx context.Context // set by Start; controls per-agent subscription lifetimes
+	started      bool            // true after Start has completed its initial load
 }
 
 // NewPartitioned creates a partitioned kill-switch manager. client must be a
@@ -66,11 +70,34 @@ func NewPartitioned(inner *Redis, client redis.UniversalClient, logger *slog.Log
 	}
 }
 
-// Start initialises the shared kill-switch state. Per-agent subscriptions are
-// created lazily on first [ShouldBlock] call for each agentID. ctx controls the
-// lifetime of all background goroutines.
+// WithReporter attaches a [redisfailover.Reporter] to the partitioned kill-switch so
+// that it can report readiness state to the health monitor (fail-closed semantics
+// identical to [ResilientRedis]).
+func (p *PartitionedKillSwitch) WithReporter(reporter *redisfailover.Reporter) *PartitionedKillSwitch {
+	p.reporter = reporter
+	return p
+}
+
+// Start initialises the shared kill-switch state and stores the lifecycle context
+// so that per-agent subscriptions (created lazily on first [ShouldBlock] call) are
+// tied to the service lifetime rather than individual request contexts. ctx must
+// remain live for the duration of the service — canceling it will shut down all
+// background pub/sub goroutines.
 func (p *PartitionedKillSwitch) Start(ctx context.Context) {
 	p.inner.Start(ctx)
+
+	p.mu.Lock()
+	p.lifecycleCtx = ctx
+	p.started = true
+	p.mu.Unlock()
+
+	if p.reporter != nil {
+		if err := p.inner.HealthStatus(); err != nil {
+			p.reporter.MarkDegraded()
+		} else {
+			p.reporter.MarkHealthy()
+		}
+	}
 }
 
 // Stop cancels the shared kill-switch and all per-agent subscriptions.
@@ -87,14 +114,26 @@ func (p *PartitionedKillSwitch) Stop() {
 
 // ShouldBlock returns true if any kill-switch condition is active for the given agent
 // or session. Per-agent failure domain isolation:
+//   - If [Start] has not yet been called (initial state not loaded), fail-closed.
 //   - If the per-agent subscription for agentID is degraded (connection failed), this
 //     agent is treated as fail-closed (blocked) until the subscription recovers.
 //   - If the global shared kill-switch is degraded, all agents are affected (same as
 //     the existing Redis kill-switch behaviour).
 func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessionID string) (bool, error) {
+	p.mu.RLock()
+	started := p.started
+	p.mu.RUnlock()
+	if !started {
+		// Not yet initialised: fail-closed.
+		return true, nil
+	}
+
 	// Delegate global and session checks to the shared inner manager.
 	blocked, err := p.inner.ShouldBlock(ctx, agentID, sessionID)
 	if err != nil || blocked {
+		if p.reporter != nil && err != nil {
+			p.reporter.MarkDegraded()
+		}
 		return blocked, err
 	}
 
@@ -103,7 +142,7 @@ func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessio
 	}
 
 	// Ensure a per-agent partition (and subscription) exists for this agentID.
-	part := p.getOrCreatePartition(ctx, agentID)
+	part := p.getOrCreatePartition(agentID)
 
 	part.mu.RLock()
 	defer part.mu.RUnlock()
@@ -173,7 +212,9 @@ func (p *PartitionedKillSwitch) ReviveSession(ctx context.Context, sessionID str
 	return p.inner.ReviveSession(ctx, sessionID)
 }
 
-// Reset clears all state including all per-agent partitions.
+// Reset clears all state including per-agent partitions. Active per-agent subscriptions
+// are canceled and removed; they will be re-created lazily on the next [ShouldBlock]
+// call, seeding fresh state from the shared manager's (now reset) cache.
 func (p *PartitionedKillSwitch) Reset(ctx context.Context) error {
 	if err := p.inner.Reset(ctx); err != nil {
 		return err
@@ -181,10 +222,11 @@ func (p *PartitionedKillSwitch) Reset(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, part := range p.partitions {
-		part.mu.Lock()
-		part.killed = false
-		part.mu.Unlock()
+		if part.cancel != nil {
+			part.cancel()
+		}
 	}
+	p.partitions = make(map[string]*agentPartition)
 	return nil
 }
 
@@ -210,8 +252,9 @@ func (p *PartitionedKillSwitch) DegradedAgents() []string {
 }
 
 // getOrCreatePartition returns the agentPartition for agentID, creating and starting
-// a per-agent subscription if one does not yet exist.
-func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentID string) *agentPartition {
+// a per-agent subscription if one does not yet exist. The subscription goroutine is
+// tied to p.lifecycleCtx (set by Start) so that it outlives individual requests.
+func (p *PartitionedKillSwitch) getOrCreatePartition(agentID string) *agentPartition {
 	p.mu.RLock()
 	part, ok := p.partitions[agentID]
 	p.mu.RUnlock()
@@ -230,15 +273,16 @@ func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentI
 	// Seed initial kill state from the shared manager's cache.
 	// The shared Redis manager's ShouldBlock reads from its local cache, so this
 	// is fast and does not trigger a Redis round-trip.
-	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
+	blocked, _ := p.inner.ShouldBlock(p.lifecycleCtx, agentID, "")
 	part.killed = blocked
 
 	p.partitions[agentID] = part
+
+	// Start the per-agent subscription tied to the service lifecycle context.
+	partCtx, cancel := context.WithCancel(p.lifecycleCtx)
+	part.cancel = cancel
 	p.mu.Unlock()
 
-	// Start the per-agent subscription in the background.
-	partCtx, cancel := context.WithCancel(ctx)
-	part.cancel = cancel
 	go p.runAgentSubscription(partCtx, agentID, part)
 
 	return part

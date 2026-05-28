@@ -80,10 +80,11 @@ func TestSidecarMode_AllowsMatchingAgent(t *testing.T) {
 	assert.NotEqual(t, http.StatusForbidden, w.Code)
 }
 
-// TestSidecarMode_AllowsAbsentHeader verifies that a request without the
-// X-Agent-Id header is not blocked by the sidecar middleware. The agent identity
-// will be validated later during token verification.
-func TestSidecarMode_AllowsAbsentHeader(t *testing.T) {
+// TestSidecarMode_RejectsAbsentHeader verifies that a request without the
+// X-Agent-Id header is rejected with 403 in sidecar mode. The header is required
+// to enforce strict single-agent isolation and prevent a valid token for a
+// different agent from being accepted when the header is absent.
+func TestSidecarMode_RejectsAbsentHeader(t *testing.T) {
 	app := newSidecarApp(t, "agent-alice")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/enforce", http.NoBody)
@@ -91,7 +92,8 @@ func TestSidecarMode_AllowsAbsentHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	app.Handler().ServeHTTP(w, req)
 
-	assert.NotEqual(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "wrong sidecar")
 }
 
 // TestSidecarMode_RequiresAgentID verifies that New() returns an error when
