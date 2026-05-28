@@ -218,9 +218,8 @@ func TestDeliveryWorker_DeadLettersAfterMaxAttempts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set attempts to maxAttempts to trigger dead-letter immediately.
-	q.mu.Lock()
+	// Directly use the underlying db connection (test-only: no concurrent access at this point).
 	_, err = q.db.ExecContext(context.Background(), `UPDATE posture_queue SET attempts = ? WHERE id = ?`, 10, id)
-	q.mu.Unlock()
 	require.NoError(t, err)
 
 	cfg := DeliveryWorkerConfig{

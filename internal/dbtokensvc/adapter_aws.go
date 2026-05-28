@@ -111,16 +111,21 @@ func (a *RealAWSRDSAdapter) MintCredential(ctx context.Context, req *MintDBCrede
 	}, nil
 }
 
-// generateAuthToken creates an RDS IAM authentication token.
+// generateAuthToken creates an RDS IAM authentication token using the current time.
+func (a *RealAWSRDSAdapter) generateAuthToken(creds *AWSCredentials, dbUser string, ttl time.Duration) string {
+	return a.generateAuthTokenAt(creds, dbUser, ttl, time.Now().UTC())
+}
+
+// generateAuthTokenAt creates an RDS IAM authentication token at a fixed point in time.
+// Accepting the timestamp as a parameter enables deterministic, golden-output tests.
 // This is equivalent to the AWS SDK's rdsutils.BuildAuthToken function.
 // The token is a presigned HTTP request to the RDS endpoint using SigV4.
-func (a *RealAWSRDSAdapter) generateAuthToken(creds *AWSCredentials, dbUser string, ttl time.Duration) string {
+func (a *RealAWSRDSAdapter) generateAuthTokenAt(creds *AWSCredentials, dbUser string, ttl time.Duration, now time.Time) string {
 	// Build query parameters.
 	params := url.Values{}
 	params.Set("Action", "connect")
 	params.Set("DBUser", dbUser)
 
-	now := time.Now().UTC()
 	datestamp := now.Format("20060102")
 	amzdate := now.Format("20060102T150405Z")
 

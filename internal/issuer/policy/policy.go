@@ -55,6 +55,7 @@ type Engine struct {
 	startOnce     sync.Once
 	defaultMaxTTL int
 	onReloadError func(error)
+	onReload      func() // called on every successful hot-reload; primarily for testing
 }
 
 // Option configures the policy Engine.
@@ -81,6 +82,14 @@ func WithOnReloadError(fn func(error)) Option {
 	}
 }
 
+// WithOnReload sets a callback that is invoked after every successful hot-reload.
+// This is primarily intended for testing and observability.
+func WithOnReload(fn func()) Option {
+	return func(e *Engine) {
+		e.onReload = fn
+	}
+}
+
 // New creates a new policy Engine. If filePath is non-empty, it loads policies from disk.
 func New(opts ...Option) *Engine {
 	e := &Engine{
@@ -98,7 +107,24 @@ func New(opts ...Option) *Engine {
 // LoadFromFile loads policies from a JSON file.
 func (e *Engine) LoadFromFile(filePath string) error {
 	e.filePath = filePath
-	return e.reload()
+	// Capture the mtime before reload so that if the file is modified
+	// between Stat and ReadFile, the poll loop will detect the newer mtime
+	// on its next tick and re-read rather than silently losing the update.
+	info, statErr := os.Stat(filePath)
+	if err := e.reload(); err != nil {
+		return err
+	}
+	// Initialise lastModified so that the first pollLoop tick skips a
+	// redundant reload when the file has not changed since startup.
+	// If Stat fails here (e.g., a transient FS error), lastModified stays
+	// at its zero value: the next poll tick will see a non-zero mtime and
+	// reload once — safe and self-healing.
+	if statErr == nil {
+		e.mu.Lock()
+		e.lastModified = info.ModTime()
+		e.mu.Unlock()
+	}
+	return nil
 }
 
 // StartHotReload starts a background goroutine that watches for policy file changes.
@@ -266,6 +292,9 @@ func (e *Engine) pollLoop() {
 					}
 				} else {
 					e.lastModified = info.ModTime()
+					if e.onReload != nil {
+						e.onReload()
+					}
 				}
 			}
 		}

@@ -9,7 +9,10 @@ import (
 )
 
 func TestBuildAdapter(t *testing.T) {
-	t.Parallel()
+	// aws-rds requires endpoint and AWS credentials.
+	t.Setenv("DB_TOKEN_SVC_RDS_ENDPOINT", "mydb.cluster-abc.us-east-1.rds.amazonaws.com")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 
 	adapter, err := buildAdapter("aws-rds")
 	if err != nil {
@@ -21,7 +24,8 @@ func TestBuildAdapter(t *testing.T) {
 }
 
 func TestBuildAdapter_Azure(t *testing.T) {
-	t.Parallel()
+	// azure-sql requires server name; IMDS token provider needs no env vars to construct.
+	t.Setenv("DB_TOKEN_SVC_AZURE_SERVER", "myserver.database.windows.net")
 
 	adapter, err := buildAdapter("azure-sql")
 	if err != nil {
@@ -33,7 +37,8 @@ func TestBuildAdapter_Azure(t *testing.T) {
 }
 
 func TestBuildAdapter_GCP(t *testing.T) {
-	t.Parallel()
+	// gcp-cloudsql requires instance connection name; metadata token provider needs no env vars.
+	t.Setenv("DB_TOKEN_SVC_GCP_INSTANCE", "my-project:us-east1:my-instance")
 
 	adapter, err := buildAdapter("gcp-cloudsql")
 	if err != nil {
@@ -49,6 +54,33 @@ func TestBuildAdapter_Unsupported(t *testing.T) {
 
 	if _, err := buildAdapter("unsupported"); err == nil {
 		t.Fatal("expected error for unsupported adapter")
+	}
+}
+
+func TestBuildAdapter_MissingEndpoint(t *testing.T) {
+	t.Setenv("DB_TOKEN_SVC_RDS_ENDPOINT", "")
+
+	_, err := buildAdapter("aws-rds")
+	if err == nil || !strings.Contains(err.Error(), "DB_TOKEN_SVC_RDS_ENDPOINT") {
+		t.Fatalf("expected missing endpoint error, got %v", err)
+	}
+}
+
+func TestBuildAdapter_MissingAzureServer(t *testing.T) {
+	t.Setenv("DB_TOKEN_SVC_AZURE_SERVER", "")
+
+	_, err := buildAdapter("azure-sql")
+	if err == nil || !strings.Contains(err.Error(), "DB_TOKEN_SVC_AZURE_SERVER") {
+		t.Fatalf("expected missing server error, got %v", err)
+	}
+}
+
+func TestBuildAdapter_MissingGCPInstance(t *testing.T) {
+	t.Setenv("DB_TOKEN_SVC_GCP_INSTANCE", "")
+
+	_, err := buildAdapter("gcp-cloudsql")
+	if err == nil || !strings.Contains(err.Error(), "DB_TOKEN_SVC_GCP_INSTANCE") {
+		t.Fatalf("expected missing instance error, got %v", err)
 	}
 }
 
@@ -86,3 +118,19 @@ func TestEnvOrDefault_Set(t *testing.T) {
 		t.Fatalf("expected custom-value, got %q", result)
 	}
 }
+
+func TestEnvIntOrDefault(t *testing.T) {
+	t.Parallel()
+
+	if got := envIntOrDefault("UNLIKELY_ENV_VAR_INT_QXYZ", 42); got != 42 {
+		t.Fatalf("expected 42, got %d", got)
+	}
+}
+
+func TestEnvIntOrDefault_Set(t *testing.T) {
+	t.Setenv("TEST_ENV_VAR_INT_DB_TOKEN", "5432")
+	if got := envIntOrDefault("TEST_ENV_VAR_INT_DB_TOKEN", 0); got != 5432 {
+		t.Fatalf("expected 5432, got %d", got)
+	}
+}
+

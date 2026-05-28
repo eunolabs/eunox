@@ -12,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedis_HandlePubSubMessage_GlobalActivate(t *testing.T) {
@@ -159,6 +160,33 @@ func TestRedis_WithLogger(t *testing.T) {
 	// WithLogger returns the same receiver for chaining.
 	assert.Same(t, r, r2)
 	assert.Equal(t, logger, r.logger)
+}
+
+func TestRedis_Reset_DelError(t *testing.T) {
+	t.Parallel()
+
+	// Start a real miniredis server so we have a valid address to connect to.
+	mr := miniredis.NewMiniRedis()
+	if err := mr.Start(); err != nil {
+		t.Fatalf("miniredis start: %v", err)
+	}
+	addr := mr.Addr()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		PoolSize:    1,
+		DialTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	r := NewRedis(client)
+
+	// Close the server so that the DEL command will fail with a connection error.
+	mr.Close()
+
+	err := r.Reset(t.Context())
+	require.Error(t, err, "Reset must return an error when Redis DEL fails")
+	assert.Contains(t, err.Error(), "kill switch reset")
 }
 
 func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {

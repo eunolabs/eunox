@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 	"time"
 
 	// SQLite driver for durable queue.
@@ -16,25 +15,25 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS posture_queue (
-	id             INTEGER PRIMARY KEY AUTOINCREMENT,
-	event_type     TEXT    NOT NULL CHECK(event_type IN ('observed','revoked')),
-	payload        BLOB   NOT NULL,
-	inserted_at    INTEGER NOT NULL,
-	attempts       INTEGER NOT NULL DEFAULT 0,
-	next_attempt_at INTEGER NOT NULL DEFAULT 0,
-	last_error     TEXT    NOT NULL DEFAULT ''
+id             INTEGER PRIMARY KEY AUTOINCREMENT,
+event_type     TEXT    NOT NULL CHECK(event_type IN ('observed','revoked')),
+payload        BLOB   NOT NULL,
+inserted_at    INTEGER NOT NULL,
+attempts       INTEGER NOT NULL DEFAULT 0,
+next_attempt_at INTEGER NOT NULL DEFAULT 0,
+last_error     TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_posture_queue_next_attempt ON posture_queue(next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS posture_dead_letter (
-	id             INTEGER PRIMARY KEY AUTOINCREMENT,
-	original_id    INTEGER NOT NULL,
-	event_type     TEXT    NOT NULL CHECK(event_type IN ('observed','revoked')),
-	payload        BLOB   NOT NULL,
-	inserted_at    INTEGER NOT NULL,
-	attempts       INTEGER NOT NULL,
-	last_error     TEXT    NOT NULL DEFAULT '',
-	dead_lettered_at INTEGER NOT NULL
+id             INTEGER PRIMARY KEY AUTOINCREMENT,
+original_id    INTEGER NOT NULL,
+event_type     TEXT    NOT NULL CHECK(event_type IN ('observed','revoked')),
+payload        BLOB   NOT NULL,
+inserted_at    INTEGER NOT NULL,
+attempts       INTEGER NOT NULL,
+last_error     TEXT    NOT NULL DEFAULT '',
+dead_lettered_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_letter(dead_lettered_at);
 `
@@ -45,13 +44,14 @@ CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_lett
 // # Throughput Limitations
 //
 // The queue serializes all operations (Push, Peek, Ack, Nack, DeadLetter) through
-// a single mutex-guarded database connection with EXCLUSIVE locking mode. This
+// a single semaphore-guarded database connection with EXCLUSIVE locking mode. This
 // design provides strong data-integrity guarantees and simple crash recovery but
 // imposes the following throughput constraints:
 //
 //   - Maximum sustained throughput: ~100–500 events/s (hardware-dependent)
 //   - Under burst load, enqueue callers contend with the delivery worker's Ack/Nack
-//     writes, causing latency spikes rather than back-pressure signals
+//     writes; the semaphore honours context deadlines so Push callers shed load
+//     gracefully rather than blocking indefinitely
 //   - The exclusive lock prevents concurrent readers, including diagnostic queries
 //
 // # When to Use PostgreSQL
@@ -68,8 +68,12 @@ CREATE INDEX IF NOT EXISTS idx_posture_dlq_dead_lettered_at ON posture_dead_lett
 // potential snapshot isolation issues). This optimization is deferred until
 // profiling demonstrates it as the bottleneck vs. write contention.
 type SQLiteQueue struct {
-	mu sync.Mutex
-	db *sql.DB
+	// sem is a capacity-1 channel used as a context-aware mutex.
+	// Acquire: send a token (sem <- struct{}{}); release: receive (<-sem).
+	// Using a channel instead of sync.Mutex allows Push callers to respect
+	// context cancellation when the delivery worker holds the lock (F-4 fix).
+	sem chan struct{}
+	db  *sql.DB
 }
 
 // NewSQLiteQueue opens (or creates) a SQLite database at the given path and
@@ -105,7 +109,24 @@ func NewSQLiteQueue(path string) (*SQLiteQueue, error) {
 		return nil, fmt.Errorf("posture queue: create schema: %w", err)
 	}
 
-	return &SQLiteQueue{db: db}, nil
+	return &SQLiteQueue{sem: make(chan struct{}, 1), db: db}, nil
+}
+
+// acquire waits until the semaphore is available or ctx is cancelled.
+// All methods call acquire before touching the database so that context
+// cancellation is respected even while another goroutine holds the lock.
+func (q *SQLiteQueue) acquire(ctx context.Context) error {
+	select {
+	case q.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release returns the semaphore token, unblocking the next waiter.
+func (q *SQLiteQueue) release() {
+	<-q.sem
 }
 
 // Push enqueues a new event. Returns the assigned event ID.
@@ -113,8 +134,10 @@ func (q *SQLiteQueue) Push(ctx context.Context, eventType EventType, payload []b
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: push: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return 0, fmt.Errorf("posture queue: push: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: push: %w", err)
@@ -142,8 +165,10 @@ func (q *SQLiteQueue) Peek(ctx context.Context, limit int) ([]QueuedEvent, error
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("posture queue: peek: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("posture queue: peek: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("posture queue: peek: %w", err)
@@ -152,10 +177,10 @@ func (q *SQLiteQueue) Peek(ctx context.Context, limit int) ([]QueuedEvent, error
 	nowMs := time.Now().UnixMilli()
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, event_type, payload, inserted_at, attempts, next_attempt_at, last_error
-		 FROM posture_queue
-		 WHERE next_attempt_at <= ?
-		 ORDER BY next_attempt_at ASC
-		 LIMIT ?`,
+ FROM posture_queue
+ WHERE next_attempt_at <= ?
+ ORDER BY next_attempt_at ASC
+ LIMIT ?`,
 		nowMs, limit,
 	)
 	if err != nil {
@@ -182,8 +207,10 @@ func (q *SQLiteQueue) Ack(ctx context.Context, id int64) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: ack: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return fmt.Errorf("posture queue: ack: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: ack: %w", err)
@@ -201,8 +228,10 @@ func (q *SQLiteQueue) Nack(ctx context.Context, id, nextAttemptAt int64, errMsg 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: nack: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return fmt.Errorf("posture queue: nack: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: nack: %w", err)
@@ -223,8 +252,10 @@ func (q *SQLiteQueue) Depth(ctx context.Context) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: depth: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return 0, fmt.Errorf("posture queue: depth: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: depth: %w", err)
@@ -243,8 +274,10 @@ func (q *SQLiteQueue) DeadLetter(ctx context.Context, event *QueuedEvent) error 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: dead-letter: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return fmt.Errorf("posture queue: dead-letter: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("posture queue: dead-letter: %w", err)
@@ -259,7 +292,7 @@ func (q *SQLiteQueue) DeadLetter(ctx context.Context, event *QueuedEvent) error 
 	nowMs := time.Now().UnixMilli()
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO posture_dead_letter (original_id, event_type, payload, inserted_at, attempts, last_error, dead_lettered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, string(event.Type), event.Payload, event.InsertedAt, event.Attempts, event.LastError, nowMs,
 	)
 	if err != nil {
@@ -289,8 +322,10 @@ func (q *SQLiteQueue) ListDeadLetters(ctx context.Context, limit int) ([]DeadLet
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("posture queue: list dead letters: %w", err)
@@ -298,9 +333,9 @@ func (q *SQLiteQueue) ListDeadLetters(ctx context.Context, limit int) ([]DeadLet
 
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, original_id, event_type, payload, inserted_at, attempts, last_error, dead_lettered_at
-		 FROM posture_dead_letter
-		 ORDER BY dead_lettered_at DESC
-		 LIMIT ?`,
+ FROM posture_dead_letter
+ ORDER BY dead_lettered_at DESC
+ LIMIT ?`,
 		limit,
 	)
 	if err != nil {
@@ -326,8 +361,10 @@ func (q *SQLiteQueue) DeadLetterDepth(ctx context.Context) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	if err := q.acquire(ctx); err != nil {
+		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
+	}
+	defer q.release()
 
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("posture queue: dead letter depth: %w", err)
@@ -341,10 +378,16 @@ func (q *SQLiteQueue) DeadLetterDepth(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// Close releases the database connection.
+// Close releases the database connection. Waits up to 30 seconds for any
+// in-flight operation to complete before closing, matching the lifecycle
+// shutdown timeout used across services in this codebase.
 func (q *SQLiteQueue) Close() error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := q.acquire(ctx); err != nil {
+		return fmt.Errorf("posture queue: close: %w", err)
+	}
+	defer q.release()
 
 	return q.db.Close()
 }

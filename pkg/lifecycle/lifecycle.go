@@ -197,10 +197,17 @@ func (m *Manager) Run(ctx context.Context) error {
 	case err := <-errCh:
 		m.logger.Error("server failed", slog.String("error", err.Error()))
 		shutdownErr := m.shutdown()
-		if shutdownErr != nil {
-			return errors.Join(err, shutdownErr)
+		// Drain any additional server failures that occurred concurrently.
+		// errCh is buffered with len(m.servers) capacity so no send is lost.
+		errs := []error{err}
+		for {
+			select {
+			case e := <-errCh:
+				errs = append(errs, e)
+			default:
+				return errors.Join(append(errs, shutdownErr)...)
+			}
 		}
-		return err
 	case <-ctx.Done():
 		m.logger.Info("context cancelled")
 	}

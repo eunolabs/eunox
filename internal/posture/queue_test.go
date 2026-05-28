@@ -6,6 +6,7 @@ package posture
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -242,4 +243,62 @@ func TestSQLiteQueue_ContextCancelled(t *testing.T) {
 
 	_, err = q.Depth(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSQLiteQueue_Push_RespectsContextCancellation verifies that a Push
+// blocked on the semaphore returns context.Canceled when its context is
+// cancelled while waiting (backpressure / T-6).
+func TestSQLiteQueue_Push_RespectsContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	// Manually hold the semaphore to simulate the delivery worker owning the lock.
+	q.sem <- struct{}{}
+	defer func() { <-q.sem }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Push in background — it will block waiting for the semaphore.
+	done := make(chan error, 1)
+	go func() {
+		_, pushErr := q.Push(ctx, EventObserved, []byte(`{}`))
+		done <- pushErr
+	}()
+
+	// Give the goroutine time to enter the acquire select.
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel the context — Push must unblock and return context.Canceled.
+	cancel()
+
+	select {
+	case pushErr := <-done:
+		assert.ErrorIs(t, pushErr, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Push did not unblock after context cancellation")
+	}
+}
+
+// TestSQLiteQueue_Push_AbortsWhenContextExpires verifies that a Push
+// blocked on the semaphore returns context.DeadlineExceeded when its
+// deadline expires while waiting (backpressure / T-6).
+func TestSQLiteQueue_Push_AbortsWhenContextExpires(t *testing.T) {
+	t.Parallel()
+
+	q, err := NewSQLiteQueue(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = q.Close() }()
+
+	// Manually hold the semaphore.
+	q.sem <- struct{}{}
+	defer func() { <-q.sem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, pushErr := q.Push(ctx, EventObserved, []byte(`{}`))
+	assert.ErrorIs(t, pushErr, context.DeadlineExceeded)
 }
