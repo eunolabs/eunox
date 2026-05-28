@@ -4,7 +4,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 const baseUrl = import.meta.env.BASE_URL;
 const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 ---
-<BaseLayout title="Deploy · eunox" description="Deployment guides for every eunox tier: OSS Apache-2.0 in-process enforcement, and BSL self-host with Redis, Postgres, KMS, and Helm." activePage="deploy">
+<BaseLayout title="Deploy · eunox" description="Deployment guides for every eunox tier: local in-process enforcement, and BSL self-host with Redis, Postgres, KMS, and Helm." activePage="deploy">
 
     <section class="hero hero-compact">
         <div class="hero-eyebrow"><span class="dot"></span>Deploy</div>
@@ -30,8 +30,8 @@ const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
             </thead>
             <tbody>
                 <tr>
-                    <td><strong><a href="#oss">OSS</a></strong></td>
-                    <td>Apache-2.0</td>
+                    <td><strong><a href="#local">Local</a></strong></td>
+                    <td>BSL 1.1</td>
                     <td>None — in-process</td>
                     <td>Individual developers, CI pipelines, local dev</td>
                 </tr>
@@ -52,12 +52,16 @@ const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 
         <hr>
 
-        <h2 id="oss">OSS — Apache-2.0 (no server required)</h2>
+        <h2 id="local">Local enforcement — BSL 1.1 (no server required)</h2>
 
-        <p>The <code>@eunox/mcp</code> package runs entirely in-process. All enforcement, call counting, and audit logging happens locally — no Redis, no Postgres, no gateway process.</p>
+        <p>The <code>eunox-mcp</code> binary runs entirely in-process. All enforcement, call counting, and audit logging happens locally — no Redis, no Postgres, no gateway process.</p>
 
         <h3>Install</h3>
-<pre><code>npm install -g @eunox/mcp</code></pre>
+<pre><code># Download the latest release from https://github.com/edgeobs/eunox/releases
+curl -sSL https://github.com/edgeobs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
+chmod +x eunox-mcp && sudo mv eunox-mcp /usr/local/bin/</code></pre>
+
+        <p>Or download a pre-built binary from the <a href="https://github.com/edgeobs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>.</p>
 
         <h3>Write a policy</h3>
 <pre><code># policy.yaml
@@ -87,13 +91,12 @@ capabilities:
 {'{'}
   "mcpServers": {'{'}
     "filesystem-governed": {'{'}
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "@eunox/mcp",
+        "proxy",
         "--policy", "/path/to/policy.yaml",
-        "--upstream", "npx",
-        "--upstream-args",
-        "@modelcontextprotocol/server-filesystem,/home/user/projects"
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"
       ]
     {'}'}
   {'}'}
@@ -110,7 +113,7 @@ capabilities:
   --gateway-url https://your-gateway.example.com \
   --api-key sk-&lt;prefix&gt;.&lt;secret&gt;</code></pre>
 
-        <p>See the <a href="https://eunolabs.ai/blog/33-deploy-oss" target="_blank" rel="noopener noreferrer">full OSS deployment guide</a> and <a href="https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a> for the complete walkthrough.</p>
+        <p>See the <a href="https://eunolabs.ai/blog/33-deploy-oss" target="_blank" rel="noopener noreferrer">local enforcement deployment guide</a> and <a href="https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a> for the complete walkthrough.</p>
 
         <hr>
 
@@ -168,13 +171,13 @@ docker load &lt; air-gap-images.tar</code></pre>
 
         <p>The full image list is in <a href="https://github.com/edgeobs/eunox/blob/main/k8s/air-gap-images.txt" target="_blank" rel="noopener noreferrer"><code>k8s/air-gap-images.txt</code></a>.</p>
 
-        <h3>Wire @eunox/mcp to the gateway</h3>
+        <h3>Wire eunox-mcp to the gateway</h3>
 <pre><code>{'{'}
   "mcpServers": {'{'}
     "my-server-governed": {'{'}
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y", "@eunox/mcp", "proxy",
+        "proxy",
         "--enforcer-url", "https://gateway.example.com",
         "--enforcer-api-key", "sk-&lt;prefix&gt;.&lt;secret&gt;",
         "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"

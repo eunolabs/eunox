@@ -1,27 +1,27 @@
 ---
-title: "Deploying eunox OSS: from npm install to a governed agent in five minutes"
-description: "Step-by-step guide for the Apache-2.0 OSS tier. Install @eunox/mcp, write a minimal YAML policy, wire the proxy into Claude Desktop or a Go agent, enable the local audit log, and know when to upgrade to a self-hosted gateway."
+title: "Deploying eunox locally: binary install to a governed agent in five minutes"
+description: "Step-by-step guide for local in-process enforcement with the eunox-mcp Go binary. Write a minimal YAML policy, wire the proxy into Claude Desktop or a Go agent, enable the local audit log, and know when to upgrade to a self-hosted gateway."
 pubDate: "2026-05-28"
 ---
 
-_This is the deployment guide for the **OSS (Apache-2.0)** tier. If you need shared state across multiple agents — shared kill-switch, shared call counters, queryable audit ledger — see [post 34: deploying the self-host stack](./34-deploy-self-host.md). For a full tier comparison, see [`docs/pricing.md`](https://github.com/edgeobs/eunox/blob/main/docs/pricing.md)._
+_This is the deployment guide for **local in-process enforcement** (no server required). If you need shared state across multiple agents — shared kill-switch, shared call counters, queryable audit ledger — see [post 34: deploying the self-host stack](./34-deploy-self-host.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/edgeobs/eunox/blob/main/docs/tiers.md)._
 
 ---
 
-The OSS tier is the simplest way to run eunox. All enforcement happens in-process inside the `@eunox/mcp` proxy — no server, no Redis, no Postgres. You get:
+Local enforcement is the simplest way to run eunox. All enforcement happens in-process inside the `eunox-mcp` proxy — no server, no Redis, no Postgres. You get:
 
 - A policy decision point (PDP) that wraps any MCP server and enforces capability conditions on every tool call, before the upstream is ever contacted.
 - A local HMAC-chained audit log written to disk.
 - `eunox-mcp validate-token` and `eunox-mcp stats` CLI commands for local inspection.
 - Unlimited agents and enforcement events — the only limit is your machine.
 
-**License:** Apache-2.0. No usage restrictions, no server-side component required.
+**License:** BSL 1.1.
 
 ---
 
 ## Prerequisites
 
-- Node.js ≥ 18 (for `@eunox/mcp`)
+- Go 1.25+ **or** a pre-built binary from the [latest GitHub release](https://github.com/edgeobs/eunox/releases/latest)
 - An MCP server you want to wrap (the eunox proxy sits in front of it)
 
 ---
@@ -29,14 +29,12 @@ The OSS tier is the simplest way to run eunox. All enforcement happens in-proces
 ## Step 1 — Install the proxy
 
 ```bash
-npm install -g @eunox/mcp
+# Download the latest release from https://github.com/edgeobs/eunox/releases
+curl -sSL https://github.com/edgeobs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
+chmod +x eunox-mcp && sudo mv eunox-mcp /usr/local/bin/
 ```
 
-Or as a project dependency:
-
-```bash
-npm install @eunox/mcp
-```
+Or download a pre-built binary from the [latest GitHub release](https://github.com/edgeobs/eunox/releases/latest), make it executable, and place it on your `PATH`.
 
 ---
 
@@ -80,12 +78,12 @@ Open `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "filesystem-governed": {
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "@eunox/mcp",
+        "proxy",
         "--policy", "/path/to/policy.yaml",
-        "--upstream", "npx",
-        "--upstream-args", "@modelcontextprotocol/server-filesystem,/home/user/projects"
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"
       ]
     }
   }
@@ -170,7 +168,7 @@ Outputs a summary of enforcement decisions (allow/deny counts, top tool calls, c
 
 ## When to upgrade
 
-The OSS tier is the right choice when:
+Local enforcement is the right choice when:
 
 - You have one agent process (or a few independent agents that don't share state).
 - You don't need a kill-switch that spans multiple agent processes simultaneously.

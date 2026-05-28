@@ -35,7 +35,7 @@ Self-hosting means you run **all** of the following infrastructure yourself, usi
 | **Postgres**          | BYO (≥ 14)                                                      | Durable truth: audit ledger, kill-switch persistence, revocation durability  |
 | **KMS / signing key** | BYO (Azure Key Vault, AWS KMS, GCP Cloud KMS, or local for dev) | Signs capability tokens (issuer) and audit evidence (gateway)                |
 
-`@eunox/mcp` itself (the agent-side proxy) is Apache-2.0 and does not require a
+`eunox-mcp` itself (the agent-side proxy, built from this repository) is BSL 1.1 and does not require a
 self-hosted gateway. You only need this guide if you want persistent shared state
 — shared kill-switch, shared call counters, and a queryable audit ledger — across
 more than one agent process.
@@ -49,7 +49,7 @@ below maps every Cloud feature to its self-host equivalent.
 
 | Feature                                    | Cloud (Managed)         | Self-host (BSL)                                          |
 | ------------------------------------------ | ----------------------- | -------------------------------------------------------- |
-| Local enforcement (`@eunox/mcp` only)      | ✅                      | ✅                                                       |
+| Local enforcement (`eunox-mcp` only)      | ✅                      | ✅                                                       |
 | stdio + HTTP proxy transports              | ✅                      | ✅                                                       |
 | All condition types                        | ✅                      | ✅                                                       |
 | Local HMAC audit log                       | ✅                      | ✅                                                       |
@@ -77,12 +77,12 @@ below maps every Cloud feature to its self-host equivalent.
 
 ### The key difference: no managed minter
 
-In the managed Cloud offering, `@eunox/mcp` sends an `sk-...` API key; the cloud
+In the managed Cloud offering, `eunox-mcp` sends an `sk-...` API key; the cloud
 minter verifies it and mints a short-lived signed JWT before the request reaches
 the gateway.
 
 **Self-hosters must issue their own JWT capability tokens** via the
-`capability-issuer` service (or any compatible issuer). The `@eunox/mcp`
+`capability-issuer` service (or any compatible issuer). The `eunox-mcp`
 remote-enforcer mode accepts a pre-issued JWT in the `Authorization` header
 instead of an `sk-...` API key when pointed at a self-hosted gateway. The gateway
 verifier path is identical — the cryptographic-token invariant is preserved, only
@@ -107,7 +107,7 @@ the issuance front-door changes.
 │           │                   │  GET  /api/v1/audit/records      │  │
 │           ▼                   │  POST /admin/kill-switch/...     │  │
 │  ┌────────────────┐           │                                  │  │
-│  │  @eunox/mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
+│  │  eunox-mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
 │  │  (agent proxy) │           └──────────┬───────────────────────┘  │
 │  └────────────────┘                      │  R/W                     │
 │                                          ▼                          │
@@ -220,7 +220,7 @@ requiredCapabilities:
 Validate the manifest before deploying:
 
 ```bash
-npx -y @eunox/mcp validate-policy /srv/eunox/policies/agent.yaml
+eunox-mcp validate-policy /srv/eunox/policies/agent.yaml
 ```
 
 #### Step 3 — Configure the capability issuer
@@ -329,10 +329,10 @@ curl -s -X POST http://localhost:3001/api/v1/issue \
 # → { "token": "eyJ...", "expiresAt": 1747000000, "tokenId": "jti-...", "capabilities": [...] }
 ```
 
-Store the returned `token` value; it is what `@eunox/mcp` will forward in
+Store the returned `token` value; it is what `eunox-mcp` will forward in
 `Authorization: Bearer` when calling `POST /api/v1/enforce`.
 
-#### Step 7 — Configure @eunox/mcp to use the self-hosted gateway
+#### Step 7 — Configure eunox-mcp to use the self-hosted gateway
 
 In your `claude_desktop_config.json` (or equivalent MCP host config), pass the
 pre-issued JWT instead of an `sk-...` API key:
@@ -341,10 +341,8 @@ pre-issued JWT instead of an `sk-...` API key:
 {
   "mcpServers": {
     "my-server": {
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y",
-        "@eunox/mcp",
         "proxy",
         "--enforcer-url",
         "http://localhost:3002",
@@ -362,7 +360,7 @@ pre-issued JWT instead of an `sk-...` API key:
 ```
 
 > **Token expiry:** The JWT expires after `DEFAULT_TOKEN_TTL` seconds. The
-> `--enforcer-api-key` is a static bearer token — `@eunox/mcp` does not
+> `--enforcer-api-key` is a static bearer token — `eunox-mcp` does not
 > automatically re-issue it. Before the token expires, re-issue a fresh JWT
 > from the issuer (§6.1) and update the config, then restart the proxy.
 
@@ -703,21 +701,19 @@ The response body contains:
 ### 6.2 Inspect a token
 
 ```bash
-npx -y @eunox/mcp validate-token <token>
+eunox-mcp validate-token <token>
 # Prints: issuer DID, agentId, conditions, expiry, and signature status
 ```
 
-### 6.3 Configure @eunox/mcp with a pre-issued token
+### 6.3 Configure eunox-mcp with a pre-issued token
 
 ```jsonc
 // claude_desktop_config.json or equivalent
 {
   "mcpServers": {
     "my-governed-server": {
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y",
-        "@eunox/mcp",
         "proxy",
         "--enforcer-url",
         "http://gateway.internal:3002",
@@ -736,9 +732,9 @@ npx -y @eunox/mcp validate-token <token>
 }
 ```
 
-`@eunox/mcp` includes the token as `Authorization: Bearer <token>` on every
+`eunox-mcp` includes the token as `Authorization: Bearer <token>` on every
 `POST /api/v1/enforce` call. The gateway verifies the JWT signature and expiry on
-each request. Token expiry is not automatically handled by `@eunox/mcp` — re-issue
+each request. Token expiry is not automatically handled by `eunox-mcp` — re-issue
 a fresh JWT from the issuer before the token expires and update the config, then
 restart the proxy.
 
@@ -831,7 +827,7 @@ item in this checklist:
 
 ---
 
-## 10. Upgrading from @eunox/mcp local mode
+## 10. Upgrading from eunox-mcp local mode
 
 See [`docs/upgrade-to-hosted.md`](./upgrade-to-hosted.md) for
 the step-by-step upgrade path, including the manual policy migration and the
@@ -1315,7 +1311,7 @@ The enterprise self-host stack includes four additional services beyond the base
 │          │                └──────────────────┬──────────────────────────┘    │
 │          ▼                                   │ partner JWT                   │
 │  ┌───────────────────┐                       │                               │
-│  │  @eunox/mcp        │── JWT ──────────────► │                               │
+│  │  eunox-mcp        │── JWT ──────────────► │                               │
 │  │  (agent proxy)    │                       ▼                               │
 │  │  + Runtime        │             ┌─────────────────────────────────────┐   │
 │  │  (in-process)     │             │  Tool Gateway :3002                 │   │

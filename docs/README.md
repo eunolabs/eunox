@@ -12,7 +12,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | [repo-guide.md](./repo-guide.md) | Repository structure, build / lint / test, contributor setup.                    |
 | [agent-sdk.md](./agent-sdk.md)   | Agent Runtime SDK: token management, tool invocation, attenuate/renew endpoints. |
 | [architecture.md](./architecture.md) | Current package map and architecture overview.                               |
-| [pricing.md](./pricing.md)       | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).         |
+| [tiers.md](./tiers.md)       | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).         |
 
 ## 2. Architecture
 
@@ -65,7 +65,7 @@ Design and operational documentation for eunox. Docs are organized by purpose.
 | Doc                                            | What it is                                                                        |
 | ---------------------------------------------- | --------------------------------------------------------------------------------- |
 | [hosted-service.md](./hosted-service.md)       | Hosted service architecture, subscription model, payment components, and execution plan. |
-| [pricing.md](./pricing.md)                     | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).          |
+| [tiers.md](./tiers.md)                     | Pricing tiers, feature matrix, and billing reference (OSS → Enterprise).          |
 
 ## 6. Security
 

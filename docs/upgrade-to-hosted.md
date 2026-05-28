@@ -135,13 +135,13 @@ curl -s -X POST "${GATEWAY_URL}/admin/v1/policies" \
   -H "X-Admin-Key: ${ADMIN_KEY}" \
   -d "{
     \"policyId\": \"${POLICY_ID}\",
-    \"manifest\": $(cat ./eunox.policy.yaml | npx js-yaml)
+    \"manifest\": $(cat ./eunox.policy.yaml | python3 -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin)))')
   }" | jq .
 # Expected: { "policyId": "…", "updatedKeys": 1, "capabilityCount": 3 }
 ```
 
-> **Note:** `js-yaml` is a dev dependency of `@eunox/mcp` and converts the
-> YAML to JSON. You can also write the manifest directly as JSON.
+> **Note:** The command above uses Python's `yaml` module to convert the YAML policy to JSON.
+> You can also write the manifest directly as JSON.
 
 ### Step 3 — Update Claude Desktop config
 

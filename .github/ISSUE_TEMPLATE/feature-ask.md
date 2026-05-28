@@ -7,7 +7,7 @@ labels: stage-2-signal
 assignees: ""
 ---
 
-## What would you like `@eunox/mcp` to do?
+## What would you like `eunox-mcp` to do?
 
 <!-- A clear description of the feature you need. -->
 
@@ -23,7 +23,7 @@ assignees: ""
 
 ## Environment
 
-- `@eunox/mcp` version:
+- `eunox-mcp` version:
 - Transport: stdio / HTTP
 - Upstream MCP server (if known):
 - Agent framework (LangChain.js, raw MCP client, Claude Desktop, Cursor, other):

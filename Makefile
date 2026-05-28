@@ -10,9 +10,15 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 
 all: lint test build
 
-## Build all service binaries
+## Build all service binaries to ./bin/
 build:
-	$(GO) build ./...
+	mkdir -p bin
+	$(GO) build -o bin/gateway           ./cmd/gateway
+	$(GO) build -o bin/issuer            ./cmd/issuer
+	$(GO) build -o bin/minter            ./cmd/minter
+	$(GO) build -o bin/db-token-svc      ./cmd/db-token-svc
+	$(GO) build -o bin/storage-grant-svc ./cmd/storage-grant-svc
+	$(GO) build -o bin/posture-emitter   ./cmd/posture-emitter
 
 ## Run tests with race detector
 test:
@@ -58,5 +64,6 @@ check-license:
 
 ## Remove build artifacts
 clean:
+	rm -rf bin/
 	rm -f coverage.out
 	$(GO) clean ./...

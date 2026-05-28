@@ -32,7 +32,7 @@ assignees: ""
 
 ## Environment
 
-- `@eunox/mcp` version:
+- `eunox-mcp` version:
 - Transport: stdio / HTTP
 - Upstream MCP server (if known):
 - Agent framework (LangChain.js, raw MCP client, Claude Desktop, Cursor, other):
