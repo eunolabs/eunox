@@ -125,10 +125,9 @@ EVIDENCE_SIGNING_ALGORITHM=ES256
 **`/srv/eunox/policies/agent.yaml`:**
 
 ```yaml
-agentId: "my-agent"
-name: "My Agent"
+name: "my-agent"
 version: "0.1.0"
-requiredCapabilities:
+capabilities:
   - resource: read_file
     actions: [call]
     conditions:

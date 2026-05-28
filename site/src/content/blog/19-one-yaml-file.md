@@ -30,38 +30,34 @@ A YAML file that says `allowedOperations: [SELECT, EXPLAIN, SHOW]` communicates 
 
 ## The manifest structure
 
-The capability manifest is a YAML (or JSON) document that validates against the `AgentCapabilityManifest` type in the `internal/agentruntime` Go package. The required fields at the top level are:
+The capability manifest is a YAML (or JSON) document that validates against the `LocalManifest` type consumed by `eunox-mcp`. The required fields at the top level are:
 
 ```yaml
-agentId: "sales-research-bot" # stable, kebab-case, machine-readable identifier
-name: "Sales Research Bot" # human-readable display name
-version: "0.1.0" # semver — bump this when the manifest changes
-requiredCapabilities: [] # the actual policy — what this agent can do
+name: "sales-research-bot"   # stable, kebab-case identifier for this manifest
+version: "0.1.0"             # semver — bump this when the manifest changes
+capabilities: []             # the actual policy — what this agent can do
 ```
 
 Then the optional fields:
 
 ```yaml
-optionalCapabilities: [] # capabilities the agent will use if available
-metadata:
-  description: "Synthesizes account-research briefings."
-  owner: "revops-oncall@example.com"
-  tags: ["revops", "research"]
-  runtime: "node:20"
+description: "Synthesizes account-research briefings."
+defaultTtl: 3600  # session TTL hint in seconds (used by the hosted gateway)
+audience: "https://gateway.example.com"  # intended recipient (hosted mode)
 ```
 
-The `agentId` field is worth pausing on. It's a stable, machine-readable identifier for the agent, not a human display name. It's the identifier that appears in every audit record for sessions running under this manifest. When something goes wrong, your incident response team will be correlating `agentId` values across the audit trail. Make it meaningful but also stable — changing it mid-deployment breaks that audit correlation.
+The `name` field is worth pausing on. It's a stable, machine-readable identifier for the manifest, not a human display name. It appears in log output and diagnostics for sessions running under this manifest. When something goes wrong, your incident response team will be correlating `name` and `version` values across log output. Make it meaningful but also stable — changing it mid-deployment makes audit correlation harder.
 
-The `version` field solves a subtle problem: if you change the policy and forget to bump the version, you can't tell from the audit record which policy was in effect for a given session. We enforce that deployed tokens carry the manifest's `version` in their JWT payload. If you need to know "what policy was this session running under?", the answer is in the token and in the audit record — a specific version string that maps to a specific commit in your git history.
+The `version` field solves a subtle problem: if you change the policy and forget to bump the version, you can't tell from the audit record which policy was in effect for a given session. The audit log records the session ID and tool name for every decision — pair that with the manifest version in your git history to reconstruct the exact policy in force at any point in time.
 
 ---
 
 ## One capability entry is one enforcement unit
 
-The `requiredCapabilities` array is a list of capability constraints. Each entry says: "for this resource, these actions are permitted, subject to these conditions."
+The `capabilities` array is a list of capability constraints. Each entry says: "for this resource, these actions are permitted, subject to these conditions."
 
 ```yaml
-requiredCapabilities:
+capabilities:
   - resource: "api://crm/customers/*"
     actions: ["read"]
     conditions:
@@ -189,7 +185,7 @@ This also means the YAML can live in source control alongside the agent code, wi
 
 I want to be direct about this: if your policy manifest isn't in version control, your governance story has a hole in it.
 
-The audit log (covered in [post 11](./11-tamper-evident-audit-logs.md)) records which `agentId` and manifest `version` was in effect for each session. That's useful for forensics and compliance. But it's only useful if you can look up version `0.3.1` in your git history and see exactly what that version permitted. If the YAML is living in a shared S3 bucket or in a database without change tracking, you've lost the ability to answer "what was this agent allowed to do?" with any confidence.
+The audit log (covered in [post 11](./11-tamper-evident-audit-logs.md)) records the manifest `name` and `version` for every session. That's useful for forensics and compliance. But it's only useful if you can look up version `0.3.1` in your git history and see exactly what that version permitted. If the YAML is living in a shared S3 bucket or in a database without change tracking, you've lost the ability to answer "what was this agent allowed to do?" with any confidence.
 
 The intended workflow is:
 

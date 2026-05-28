@@ -330,11 +330,11 @@ Having walked through all five, I want to highlight the patterns that appear acr
 
 A few things to always do when adapting a reference policy:
 
-1. **Change the `agentId`.** The reference policies use generic IDs like `postgres-read-agent`. Your deployment should have a specific, meaningful ID that will appear in every audit record.
+1. **Change the `name`.** The reference policies use generic names like `postgres-read-agent`. Your deployment should have a specific, meaningful name that will appear in every log entry and diagnostic output.
 
 2. **Bump the version.** Start at `0.1.0` and increment meaningfully when you change the policy.
 
-3. **Update the `metadata.owner`.** Point to the team or individual who owns this agent's policy. When something goes wrong, you want to know who to call.
+3. **Add a `description`.** A short description of the policy's purpose makes it easier for reviewers and incident responders to understand what this agent is and what it should be doing.
 
 4. **Review every comment about unlisted tools.** For each MCP server, there are tools that the reference policy intentionally doesn't constrain. Decide whether those need constraints in your context.
 
@@ -351,7 +351,7 @@ The five reference policies all use eunox's default-allow model: unlisted tools 
 You can achieve this by adding a catch-all constraint that blocks everything not specifically listed. The cleanest way is a capability entry with a `timeWindow` condition set in the past:
 
 ```yaml
-# Catch-all deny for unlisted tools — add this entry last in requiredCapabilities
+# Catch-all deny for unlisted tools — add this entry last in capabilities
 # The resource wildcard is not supported; you'd need to enumerate each tool.
 ```
 

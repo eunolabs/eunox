@@ -79,11 +79,11 @@ Here's a sensible starting policy for a filesystem server:
 ```yaml
 # ~/.eunox/eunox.policy.yaml
 
-agentId: "claude-desktop"
-name: "Claude Desktop (local)"
+name: "claude-desktop"
 version: "1.0.0"
+description: "Local Claude Desktop session with policy enforcement"
 
-requiredCapabilities:
+capabilities:
   - resource: "read_file"
     actions: [call]
     conditions:
@@ -102,10 +102,6 @@ requiredCapabilities:
       - type: maxCalls
         count: 20
         windowSeconds: 3600
-
-metadata:
-  description: "Local Claude Desktop session with policy enforcement"
-  owner: "you@local"
 ```
 
 Let me walk through the decisions in here.

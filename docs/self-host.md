@@ -204,12 +204,10 @@ Create `/srv/eunox/policies/agent.yaml` following the pattern in
 [`capability-manifest-guide.md`](./capability-manifest-guide.md):
 
 ```yaml
-agentId: "my-agent"
-name: "My Agent"
+name: "my-agent"
 version: "0.1.0"
-metadata:
-  description: "Example self-host policy"
-requiredCapabilities:
+description: "Example self-host policy"
+capabilities:
   - resource: read_file
     actions: [call]
     conditions:
@@ -220,7 +218,7 @@ requiredCapabilities:
 Validate the manifest before deploying:
 
 ```bash
-eunox-mcp validate-policy /srv/eunox/policies/agent.yaml
+eunox-mcp validate /srv/eunox/policies/agent.yaml
 ```
 
 #### Step 3 — Configure the capability issuer

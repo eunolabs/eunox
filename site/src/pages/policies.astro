@@ -55,11 +55,10 @@ eunox-mcp proxy --policy ./eunox.policy.yaml -- &lt;upstream&gt;</code></pre>
 
         <h2 id="filesystem">Filesystem</h2>
         <p>Stops the agent from reading sensitive file types and confines writes to a sandbox directory. <code>argumentSchema</code> is a top-level field on the constraint (not a condition); <code>maxCalls</code> uses <code>count</code>.</p>
-<pre><code>agentId: filesystem-agent
-name:    Filesystem Agent
+<pre><code>name:    filesystem-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: read_file
     actions: [call]
     conditions:
@@ -87,11 +86,10 @@ requiredCapabilities:
 
         <h2 id="postgres">Postgres</h2>
         <p>Reads only, and never from sensitive tables.</p>
-<pre><code>agentId: postgres-agent
-name:    Postgres Read-Only Agent
+<pre><code>name:    postgres-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: query
     actions: [call]
     conditions:
@@ -105,11 +103,10 @@ requiredCapabilities:
 
         <h2 id="github">GitHub</h2>
         <p>Read-heavy, write-rate-limited — protects against runaway issue or PR creation.</p>
-<pre><code>agentId: github-agent
-name:    GitHub Agent
+<pre><code>name:    github-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: search_repositories
     actions: [call]
   - resource: get_file_contents
@@ -131,11 +128,10 @@ requiredCapabilities:
 
         <h2 id="slack">Slack</h2>
         <p>Restricts DMs to your own domain — a single <code>recipientDomain</code> condition stops agents from leaking conversations. Channel posting (<code>post_message</code>) addresses Slack channel IDs (e.g. <code>C12345</code>), so a domain gate doesn't apply there.</p>
-<pre><code>agentId: slack-agent
-name:    Slack Agent
+<pre><code>name:    slack-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: send_dm
     actions: [call]
     conditions:
@@ -154,11 +150,10 @@ requiredCapabilities:
 
         <h2 id="fetch">Fetch — lexical SSRF guard</h2>
         <p>Blocks <code>http://</code>, userinfo authorities, and private RFC-1918 ranges including the cloud metadata endpoint <code>169.254.169.254</code>. The guard is implemented purely with <code>argumentSchema</code> + <code>maxCalls</code> — no custom condition module required. Read it as a <em>defence-in-depth</em> guard rather than a complete SSRF solution — pair with network-level controls in production.</p>
-<pre><code>agentId: fetch-agent
-name:    Fetch Agent
+<pre><code>name:    fetch-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: fetch
     actions: [call]
     argumentSchema:

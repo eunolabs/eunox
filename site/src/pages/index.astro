@@ -57,11 +57,10 @@ const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
                     <div class="policy-body"><pre><span class="y-comment"># eunox.policy.yaml — AgentCapabilityManifest</span>
 <span class="y-comment"># Validate: eunox-mcp validate ./eunox.policy.yaml</span>
 
-<span class="y-key">agentId</span>: <span class="y-str">filesystem-agent</span>
-<span class="y-key">name</span>:    <span class="y-str">Filesystem Agent</span>
+<span class="y-key">name</span>:    <span class="y-str">filesystem-agent</span>
 <span class="y-key">version</span>: <span class="y-str">0.1.0</span>
 
-<span class="y-key">requiredCapabilities</span>:
+<span class="y-key">capabilities</span>:
   - <span class="y-key">resource</span>: <span class="y-str">read_file</span>
     <span class="y-key">actions</span>: [<span class="y-str">call</span>]
     <span class="y-key">conditions</span>:

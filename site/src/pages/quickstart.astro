@@ -62,11 +62,10 @@ eunox-mcp --version</code></pre>
 
         <h2 id="step-2">2. Author a policy</h2>
         <p>A policy is a single YAML file describing which tools are allowed and the conditions on each call. Save the following as <code>eunox.policy.yaml</code>:</p>
-<pre><code>agentId: filesystem-agent
-name:    Filesystem Agent
+<pre><code>name:    filesystem-agent
 version: 0.1.0
 
-requiredCapabilities:
+capabilities:
   - resource: read_file
     actions: [call]
     conditions:

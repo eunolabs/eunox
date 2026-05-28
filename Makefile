@@ -13,12 +13,13 @@ all: lint test build
 ## Build all service binaries to ./bin/
 build:
 	mkdir -p bin
-	$(GO) build -o bin/gateway           ./cmd/gateway
-	$(GO) build -o bin/issuer            ./cmd/issuer
-	$(GO) build -o bin/minter            ./cmd/minter
-	$(GO) build -o bin/db-token-svc      ./cmd/db-token-svc
-	$(GO) build -o bin/storage-grant-svc ./cmd/storage-grant-svc
-	$(GO) build -o bin/posture-emitter   ./cmd/posture-emitter
+	$(GO) build -o bin/eunox-gateway           	./cmd/gateway
+	$(GO) build -o bin/eunox-issuer            	./cmd/issuer
+	$(GO) build -o bin/eunox-minter            	./cmd/minter
+	$(GO) build -o bin/eunox-db-token-svc      	./cmd/db-token-svc
+	$(GO) build -o bin/eunox-storage-grant-svc 	./cmd/storage-grant-svc
+	$(GO) build -o bin/eunox-posture-emitter   	./cmd/posture-emitter
+	$(GO) build -o bin/eunox-mcp         		./cmd/mcp
 
 ## Run tests with race detector
 test:

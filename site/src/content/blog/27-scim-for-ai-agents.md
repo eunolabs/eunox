@@ -162,8 +162,8 @@ The capability template is the bridge between the SCIM-side world (roles, groups
 # config/capability-templates/ops-agent.yaml
 role: ops-agent
 manifest:
-  agentId: "ops-agent"
-  tools:
+  name: "ops-agent"
+  capabilities:
     - resource: "query_db"
       conditions:
         - type: allowedOperations

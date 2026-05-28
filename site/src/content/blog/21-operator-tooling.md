@@ -31,7 +31,7 @@ curl -X POST http://localhost:3003/admin/kill-switch/session/sess-abc-123/kill \
 
 After this call, any subsequent tool call from session `sess-abc-123` returns `KILL_SWITCH_ACTIVE` and is denied. Active tool calls in flight complete normally (the kill switch takes effect at the next tool call boundary), but the session is effectively terminated from a policy perspective.
 
-**Agent-level kill** targets all sessions running a specific agent, identified by `agentId` (the field from the capability manifest). This is appropriate when you've identified a problem with a specific agent deployment — you want to stop all instances of it without touching unrelated agents on the same gateway.
+**Agent-level kill** targets all sessions running a specific agent, identified by the manifest `name` field (e.g. `sales-research-bot`). This is appropriate when you've identified a problem with a specific agent deployment — you want to stop all instances of it without touching unrelated agents on the same gateway.
 
 ```bash
 curl -X POST http://localhost:3003/admin/kill-switch/agent/sales-research-bot/kill \
