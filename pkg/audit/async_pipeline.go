@@ -32,6 +32,12 @@ type AsyncPipelineConfig struct {
 	// call sequence to the inner pipeline. Default: 1 s.
 	FlushInterval time.Duration
 
+	// WriteTimeout caps how long a single inner-pipeline Append call may
+	// block during the background drain. This prevents a slow or stalled
+	// downstream backend from blocking the graceful-shutdown drain forever.
+	// Default: 30 s.
+	WriteTimeout time.Duration
+
 	// Logger receives operational log messages. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -78,6 +84,9 @@ func NewAsyncPipeline(inner Pipeline, cfg AsyncPipelineConfig) *AsyncPipeline {
 	}
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = 1 * time.Second
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = 30 * time.Second
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -190,9 +199,12 @@ func (p *AsyncPipeline) drainAvailable(ctx context.Context) {
 func (p *AsyncPipeline) writeEntry(ctx context.Context, entry *LogEntry) {
 	writeCtx := ctx
 	if writeCtx == nil || writeCtx.Err() != nil {
-		// Use a background context if the parent is already done so that
-		// in-flight writes have a chance to complete during graceful shutdown.
-		writeCtx = context.Background()
+		// Use a background context with a bounded timeout when the parent is
+		// already done so that in-flight writes can complete during graceful
+		// shutdown without blocking forever on a slow backend.
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(context.Background(), p.cfg.WriteTimeout)
+		defer cancel()
 	}
 	if err := p.inner.Append(writeCtx, entry); err != nil {
 		p.cfg.Logger.Error("audit: async pipeline write failed",

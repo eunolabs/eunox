@@ -6,8 +6,10 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
@@ -753,5 +755,19 @@ func (app *App) emitEnforceAuditEvent(
 	}
 
 	// Fire-and-forget: enforcement correctness is independent of audit writes.
-	_ = app.deps.Audit.Pipeline.Append(ctx, entry)
+	// Log a warning when the async buffer is full so operators can detect
+	// sustained audit pressure and tune BufferSize accordingly.
+	if err := app.deps.Audit.Pipeline.Append(ctx, entry); err != nil {
+		if errors.Is(err, audit.ErrAsyncPipelineBufferFull) {
+			logger := slog.Default()
+			if app.deps.Logger != nil {
+				logger = app.deps.Logger
+			}
+			logger.Warn("audit: enforce event dropped, async pipeline buffer full",
+				slog.String("request_id", requestID),
+				slog.String("tenant_id", entry.TenantID),
+				slog.String("outcome", entry.Outcome),
+			)
+		}
+	}
 }
