@@ -433,3 +433,32 @@ func writePolicy(t *testing.T, path string, pf File) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 }
+
+// TestEngine_HotReload_NoSpuriousFirstTick verifies the D-3/S-4 fix:
+// LoadFromFile sets lastModified so that the first poll tick does NOT reload
+// an unchanged file.
+func TestEngine_HotReload_NoSpuriousFirstTick(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policies.json")
+
+	initial := File{
+		Version: "1.0",
+		Policies: []RoleCapabilityPolicy{
+			{Role: "dev", MaxTTLSeconds: 900},
+		},
+	}
+	writePolicy(t, path, initial)
+
+	reloadCount := 0
+	engine := New(
+		WithPollInterval(20*time.Millisecond),
+		WithOnReload(func() { reloadCount++ }),
+	)
+	require.NoError(t, engine.LoadFromFile(path))
+	engine.StartHotReload()
+	defer engine.Stop()
+
+	// Wait for 3+ poll ticks; the file hasn't changed so reloadCount must stay 0.
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 0, reloadCount, "poll tick should not reload unchanged file after LoadFromFile")
+}

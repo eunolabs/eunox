@@ -335,11 +335,11 @@ No tests for behavior of `Push` when the delivery worker is stalled, exposing th
 | P2 | S-1 | Kill-switch resilient | Remove duplicate `refreshState` call; expose `HealthStatus()` | ✅ **Fixed** |
 | P2 | F-1 | Policy engine | Reject empty `capabilities` request; do not grant full policy defaults | ✅ **Fixed** (breaking change) |
 | P2 | B-7 | Minter Postgres | Replace string-match with `pgconn.PgError` type assertion | ✅ **Fixed** |
-| P3 | U-1 | dbtokensvc/storagegrantsvc | Provide bundled real cloud provider adapter implementations | ❌ **Tracked for future** |
-| P3 | S-3 | Lifecycle manager | Use `errors.Join` to preserve both error values on concurrent server failure | ❌ **Tracked for future** |
-| P3 | D-1 | Enforcement engine | Remove dead value-form `RedactFieldsCondition` type assertion | ❌ **Tracked for future** |
-| P3 | D-3 / S-4 | Policy engine | Set `lastModified` in `LoadFromFile` | ❌ **Tracked for future** |
+| P3 | U-1 | dbtokensvc/storagegrantsvc | Provide bundled real cloud provider adapter implementations | ✅ **Fixed** (env/IMDS/metadata providers in `cmd/db-token-svc/providers.go`, `cmd/storage-grant-svc/providers.go`) |
+| P3 | S-3 | Lifecycle manager | Use `errors.Join` to preserve both error values on concurrent server failure | ✅ **Fixed** |
+| P3 | D-1 | Enforcement engine | Remove dead value-form `RedactFieldsCondition` type assertion | ✅ **Fixed** |
+| P3 | D-3 / S-4 | Policy engine | Set `lastModified` in `LoadFromFile` | ✅ **Fixed** |
 | P4 | T-1 | Tests | Revocation + kill-switch in `handleValidate` | ✅ **Fixed** |
 | P4 | T-2 | Tests | Cross-URL DPoP replay test (B-4 attack vector) | ✅ **Fixed** (`TestVerifyDPoP_CrossURLReplay`) |
 | P4 | T-3 | Tests | Revoked token cannot be renewed | ✅ **Fixed** (`TestRenew_RevokedToken`) |
-| P4 | T-4–T-6 | Tests | Remaining test gaps (killswitch Reset error, SigV4 golden, posture backpressure) | ❌ **Tracked for future** |
+| P4 | T-4–T-6 | Tests | Remaining test gaps (killswitch Reset error, SigV4 golden, posture backpressure) | ✅ **Fixed** (`TestRedis_Reset_DelError`, `TestGenerateAuthTokenAt_*`, `TestSQLiteQueue_Push_*`) |

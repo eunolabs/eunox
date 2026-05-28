@@ -55,6 +55,7 @@ type Engine struct {
 	startOnce     sync.Once
 	defaultMaxTTL int
 	onReloadError func(error)
+	onReload      func() // called on every successful hot-reload; primarily for testing
 }
 
 // Option configures the policy Engine.
@@ -78,6 +79,14 @@ func WithDefaultMaxTTL(seconds int) Option {
 func WithOnReloadError(fn func(error)) Option {
 	return func(e *Engine) {
 		e.onReloadError = fn
+	}
+}
+
+// WithOnReload sets a callback that is invoked after every successful hot-reload.
+// This is primarily intended for testing and observability.
+func WithOnReload(fn func()) Option {
+	return func(e *Engine) {
+		e.onReload = fn
 	}
 }
 
@@ -276,6 +285,9 @@ func (e *Engine) pollLoop() {
 					}
 				} else {
 					e.lastModified = info.ModTime()
+					if e.onReload != nil {
+						e.onReload()
+					}
 				}
 			}
 		}

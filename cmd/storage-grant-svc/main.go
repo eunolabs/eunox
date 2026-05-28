@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -128,23 +129,49 @@ func run() error {
 func buildAdapter(name string) (storagegrantsvc.CloudStorageAdapter, error) {
 	switch name {
 	case "aws-s3":
-		return storagegrantsvc.NewAWSS3Adapter(
-			envOrDefault("AWS_REGION", "us-east-1"),
-			envOrDefault("STORAGE_GRANT_SVC_BUCKET", "my-bucket"),
-		), nil
+		bucket := os.Getenv("STORAGE_GRANT_SVC_BUCKET")
+		if bucket == "" {
+			return nil, errors.New("STORAGE_GRANT_SVC_BUCKET must be set for aws-s3 adapter")
+		}
+		return storagegrantsvc.NewRealAWSS3Adapter(storagegrantsvc.RealAWSS3AdapterConfig{
+			Region:             envOrDefault("AWS_REGION", "us-east-1"),
+			DefaultBucket:      bucket,
+			CredentialProvider: &envAWSCredentialProvider{},
+		})
 	case "azure-blob":
-		return storagegrantsvc.NewAzureBlobAdapter(
-			envOrDefault("STORAGE_GRANT_SVC_AZURE_ACCOUNT", "myaccount"),
-			envOrDefault("STORAGE_GRANT_SVC_AZURE_CONTAINER", "mycontainer"),
-		), nil
+		accountName := os.Getenv("STORAGE_GRANT_SVC_AZURE_ACCOUNT")
+		if accountName == "" {
+			return nil, errors.New("STORAGE_GRANT_SVC_AZURE_ACCOUNT must be set for azure-blob adapter")
+		}
+		tokenProvider := newIMDSAzureStorageTokenProvider()
+		return storagegrantsvc.NewRealAzureBlobAdapter(storagegrantsvc.RealAzureBlobAdapterConfig{
+			AccountName:           accountName,
+			DefaultContainer:      os.Getenv("STORAGE_GRANT_SVC_AZURE_CONTAINER"),
+			DelegationKeyProvider: newRESTAzureDelegationKeyProvider(tokenProvider),
+		})
 	case "gcp-gcs":
-		return storagegrantsvc.NewGCPGCSAdapter(
-			envOrDefault("GCP_PROJECT_ID", "my-project"),
-			envOrDefault("STORAGE_GRANT_SVC_GCP_BUCKET", "my-bucket"),
-		), nil
+		signer, err := loadServiceAccountSigner()
+		if err != nil {
+			return nil, fmt.Errorf("gcp-gcs adapter: %w", err)
+		}
+		return storagegrantsvc.NewRealGCPGCSAdapter(storagegrantsvc.RealGCPGCSAdapterConfig{
+			DefaultBucket: os.Getenv("STORAGE_GRANT_SVC_GCP_BUCKET"),
+			Signer:        signer,
+		})
 	default:
 		return nil, fmt.Errorf("unsupported STORAGE_GRANT_SVC_ADAPTER %q", name)
 	}
+}
+
+// envIntOrDefault parses an integer from the named environment variable.
+// If the variable is unset or cannot be parsed, fallback is returned.
+func envIntOrDefault(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 func buildVerifier() (storagegrantsvc.TokenVerifier, error) {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -136,24 +137,50 @@ func run() error {
 func buildAdapter(name string) (dbtokensvc.CloudDBAdapter, error) {
 	switch name {
 	case "aws-rds":
-		return dbtokensvc.NewAWSRDSAdapter(
-			envOrDefault("AWS_REGION", "us-east-1"),
-			envOrDefault("DB_TOKEN_SVC_RDS_ENDPOINT", "localhost"),
-			5432,
-		), nil
+		endpoint := os.Getenv("DB_TOKEN_SVC_RDS_ENDPOINT")
+		if endpoint == "" {
+			return nil, errors.New("DB_TOKEN_SVC_RDS_ENDPOINT must be set for aws-rds adapter")
+		}
+		return dbtokensvc.NewRealAWSRDSAdapter(dbtokensvc.RealAWSRDSAdapterConfig{
+			Region:             envOrDefault("AWS_REGION", "us-east-1"),
+			Endpoint:           endpoint,
+			Port:               envIntOrDefault("DB_TOKEN_SVC_RDS_PORT", 5432),
+			CredentialProvider: &envAWSCredentialProvider{},
+		})
 	case "azure-sql":
-		return dbtokensvc.NewAzureSQLAdapter(
-			envOrDefault("DB_TOKEN_SVC_AZURE_SERVER", "localhost.database.windows.net"),
-			1433,
-		), nil
+		serverName := os.Getenv("DB_TOKEN_SVC_AZURE_SERVER")
+		if serverName == "" {
+			return nil, errors.New("DB_TOKEN_SVC_AZURE_SERVER must be set for azure-sql adapter")
+		}
+		return dbtokensvc.NewRealAzureSQLAdapter(dbtokensvc.RealAzureSQLAdapterConfig{
+			ServerName:    serverName,
+			Port:          envIntOrDefault("DB_TOKEN_SVC_AZURE_PORT", 1433),
+			TokenProvider: newIMDSAzureTokenProvider(),
+		})
 	case "gcp-cloudsql":
-		return dbtokensvc.NewGCPCloudSQLAdapter(
-			envOrDefault("DB_TOKEN_SVC_GCP_INSTANCE", "project:region:instance"),
-			5432,
-		), nil
+		instanceConn := os.Getenv("DB_TOKEN_SVC_GCP_INSTANCE")
+		if instanceConn == "" {
+			return nil, errors.New("DB_TOKEN_SVC_GCP_INSTANCE must be set for gcp-cloudsql adapter (format: project:region:instance)")
+		}
+		return dbtokensvc.NewRealGCPCloudSQLAdapter(dbtokensvc.RealGCPCloudSQLAdapterConfig{
+			InstanceConnection: instanceConn,
+			Port:               envIntOrDefault("DB_TOKEN_SVC_GCP_PORT", 5432),
+			TokenProvider:      newMetadataGCPTokenProvider(),
+		})
 	default:
 		return nil, fmt.Errorf("unsupported DB_TOKEN_SVC_ADAPTER %q", name)
 	}
+}
+
+// envIntOrDefault parses an integer from the named environment variable.
+// If the variable is unset or cannot be parsed, fallback is returned.
+func envIntOrDefault(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 func buildVerifier() (dbtokensvc.TokenVerifier, error) {
