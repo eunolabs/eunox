@@ -93,16 +93,20 @@ prepends the service prefix). See `docs/deployment.md §Gateway` for the full li
 ## Alert Thresholds
 
 Wire the following Prometheus alerts. Metric names use the `eunox_` prefix.
+Metrics marked _(planned)_ are not yet emitted by the gateway and will fire no
+alerts until they are added; treat those rules as forward-looking configuration.
 
 ### P1 — Immediate Action Required
 
 ```yaml
+# NOTE: redis_health_state is planned — not yet emitted by the gateway.
 - alert: GatewayKillSwitchRedisDown
   expr: redis_health_state{component="killswitch"} == 1
   for: 30s
   annotations:
     summary: "Gateway kill-switch Redis degraded — all enforce/proxy calls are being blocked"
 
+# NOTE: redis_health_state is planned — not yet emitted by the gateway.
 - alert: GatewayRevocationRedisDown
   expr: redis_health_state{component="revocation"} == 1
   for: 30s
@@ -119,6 +123,7 @@ Wire the following Prometheus alerts. Metric names use the `eunox_` prefix.
 ### P2 — Degraded but Serving
 
 ```yaml
+# NOTE: redis_health_state is planned — not yet emitted by the gateway.
 - alert: GatewayRateLimiterRedisDown
   expr: redis_health_state{component="ratelimit"} == 1
   for: 5m
@@ -131,6 +136,7 @@ Wire the following Prometheus alerts. Metric names use the `eunox_` prefix.
   annotations:
     summary: "Gateway P99 enforce latency > 500ms"
 
+# NOTE: eunox_audit_write_errors_total is planned — not yet emitted by the gateway.
 - alert: GatewayAuditWriteErrors
   expr: rate(eunox_audit_write_errors_total[10m]) > 0.1
   for: 10m
@@ -141,6 +147,7 @@ Wire the following Prometheus alerts. Metric names use the `eunox_` prefix.
 ### P3 — Advisory
 
 ```yaml
+# NOTE: redis_health_state is planned — not yet emitted by the gateway.
 - alert: GatewayCallCounterRedisDown
   expr: redis_health_state{component="callcounter"} == 1
   for: 15m
@@ -184,7 +191,7 @@ Wire the following Prometheus alerts. Metric names use the `eunox_` prefix.
    - Note the outage window and reconcile billing from audit logs after recovery.
 
 5. **Redis recovery:**
-   - Verify `redis_health_state` metrics return to 0 for all components.
+   - Verify `redis_health_state` metrics _(planned — not yet emitted)_ return to 0 for all components.
    - Check `/health/ready` returns 200.
    - Review audit logs for the outage window for under-counted usage.
 
@@ -213,7 +220,7 @@ activation and deactivation procedure.
 
 Quick deactivation:
 ```bash
-curl -X DELETE https://gateway.internal:3003/admin/v1/kill-switch \
+curl -X POST https://gateway.internal:3003/admin/kill-switch/global/deactivate \
   -H "Authorization: ******"
 ```
 
@@ -273,7 +280,7 @@ Set `GATEWAY_EUNOX_DEPLOYMENT_TIER=multi-replica` to enforce Redis requirements 
 ```bash
 GATEWAY_NODE_ENV=production
 GATEWAY_EUNOX_DEPLOYMENT_TIER=multi-replica
-GATEWAY_REDIS_URL=redis+sentinel://sentinel:26379/eunox-master
+GATEWAY_REDIS_URL=redis-sentinel://sentinel:26379/eunox-master
 GATEWAY_ISSUER_JWKS_URL=https://issuer.internal/api/v1/jwks
 GATEWAY_ADMIN_HOST=127.0.0.1    # bind admin port to localhost only
 ```

@@ -204,17 +204,20 @@ a configurable TTL (default: 5 minutes) and wraps fetches in a circuit breaker.
 | Scenario | HTTP Behavior | Rationale |
 |----------|--------------|-----------|
 | JWKS unreachable, cached keys present | Enforcement proceeds normally until the cache TTL expires | Fail-open for the cache window; avoids disruption during transient network blips |
-| JWKS unreachable, cache expired | Token verification fails → **401 Unauthorized** on all enforce/proxy calls | Cannot verify issuer authenticity; fail-closed to prevent accepting unsigned or maliciously signed tokens |
-| JWKS circuit breaker open | Returns `JWKS fetch blocked by circuit breaker` error → **401** | Prevents thundering-herd retries against a down issuer |
+| JWKS unreachable, cache expired (`POST /api/v1/enforce`) | Token verification fails → **200 OK** with `EnforceResponse{decision:"deny"}` | `/enforce` always returns 200; the denial is expressed in the response body |
+| JWKS unreachable, cache expired (`ANY /proxy/*`) | Token verification fails → **401 Unauthorized** | The proxy path returns a plain HTTP error rather than an enforcement-response body |
+| JWKS circuit breaker open (`POST /api/v1/enforce`) | Returns `JWKS fetch blocked by circuit breaker` error → **200 OK** with deny decision | Same as cache-expired path on `/enforce` |
+| JWKS circuit breaker open (`ANY /proxy/*`) | Returns `JWKS fetch blocked by circuit breaker` error → **401 Unauthorized** | Prevents thundering-herd retries against a down issuer |
 | JWKS reachable but returns malformed JSON | Same as unreachable (parse error) | Treat malformed key set as unavailable |
 
 **Health surface:** JWKS unavailability is not surfaced on `/health/ready` by default
-because the cache may still be valid. Monitor `eunox_jwks_fetch_errors_total` to
-detect sustained failures before the cache window expires.
+because the cache may still be valid. Monitor `eunox_jwks_fetch_errors_total`
+_(planned — not yet emitted)_ to detect sustained failures before the cache window
+expires.
 
-**Operator action:** If the cache has expired and enforcement is failing with 401s,
-the issuer service is the root cause. See `docs/runbooks/gateway-triage.md` §"All
-enforcement calls return 401".
+**Operator action:** If the cache has expired, `/proxy` calls will return 401 and
+`/enforce` calls will return 200 with a deny decision. The issuer service is the
+root cause. See `docs/runbooks/gateway-triage.md` §"All enforcement calls return 401".
 
 ### PostgreSQL / Audit Database Unavailable
 
@@ -229,10 +232,10 @@ logged but does not affect the HTTP response.
 | Audit query store unavailable (read path) | `GET /api/v1/audit*` returns **503 Service Unavailable** | Query routes cannot serve results; enforcement is unaffected |
 | PostgreSQL unreachable at startup (audit only) | Gateway starts normally; audit writes fail until DB recovers | The gateway binary does not hold a startup dependency on the audit DB |
 
-**Operator action:** Monitor `eunox_audit_write_errors_total`. Sustained audit
-failures mean the audit ledger has a gap; reconcile via log replay when the DB
-recovers. See `docs/audit-chain-architecture.md` for the write-ahead buffer and
-flush guarantee.
+**Operator action:** Monitor `eunox_audit_write_errors_total` _(planned — not yet
+emitted)_. Sustained audit failures mean the audit ledger has a gap; reconcile
+via log replay when the DB recovers. See `docs/audit-chain-architecture.md` for
+the write-ahead buffer and flush guarantee.
 
 ### DPoP JTI Store Unavailable
 
@@ -266,7 +269,7 @@ partner federation flows.
 |----------|--------------|-----------|
 | ION endpoint unreachable, partner DID cached | Partner verification proceeds using cached DID document | Short-circuit serves the common case |
 | ION endpoint unreachable, DID not cached | Partner token verification fails → **401 Unauthorized** on cross-org calls | Cannot resolve partner public key; fail-closed |
-| `GET /healthz/did-ion` called during outage | Returns **503 Service Unavailable** with `{"status":"degraded"}` | Surfaces the dependency health to external health checks |
+| `GET /healthz/did-ion` called during outage | Returns **503 Service Unavailable** with `{"status":"unhealthy","error":"<error message>"}` | Surfaces the dependency health to external health checks |
 | ION endpoint unreachable, local-issuer tokens only | **No impact** | ION resolution is only exercised for partner tokens; local token verification uses the JWKS cache described above |
 
 **Health surface:** `/healthz/did-ion` is the dedicated liveness probe for the
@@ -275,12 +278,12 @@ ION endpoint. Wire this into your monitoring stack if you use partner federation
 ### Backend Service Unavailable
 
 The gateway proxies authorized requests to a configurable backend
-(`GATEWAY_BACKEND_URL`). The proxy path is reached only after all enforcement
+(`GATEWAY_BACKEND_SERVICE_URL`). The proxy path is reached only after all enforcement
 checks pass.
 
 | Scenario | HTTP Behavior | Rationale |
 |----------|--------------|-----------|
-| Backend not configured (`GATEWAY_BACKEND_URL` empty) | **502 Bad Gateway** with `no backend configured` | Misconfiguration error; enforcement is unaffected |
+| Backend not configured (`GATEWAY_BACKEND_SERVICE_URL` empty) | **502 Bad Gateway** with `no backend configured` | Misconfiguration error; enforcement is unaffected |
 | Backend unreachable (connection refused / timeout) | **502 Bad Gateway** | Standard reverse-proxy behavior; the enforcement decision has already been logged |
 | Backend returns 5xx | **5xx forwarded to caller** | The gateway does not retry; the caller is responsible for retry logic |
 

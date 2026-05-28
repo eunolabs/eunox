@@ -16,12 +16,12 @@ The framework is described in [`docs/chaos-testing-strategy.md`](./chaos-testing
 
 | Category | Total | Passed | Failed | Skipped |
 |----------|-------|--------|--------|---------|
-| Injector unit tests | 13 | 13 | 0 | 0 |
+| Injector unit tests | 17 | 17 | 0 | 0 |
 | Scenario tests | 9 | 9 | 0 | 0 |
 | Redis failure mode tests | 4 | 4 | 0 | 0 |
-| Kill-switch resilience tests | 13 | 13 | 0 | 0 |
+| Kill-switch resilience tests | 12 | 12 | 0 | 0 |
 | Revocation resilience tests | 4 | 4 | 0 | 0 |
-| **Total** | **43** | **43** | **0** | **0** |
+| **Total** | **46** | **46** | **0** | **0** |
 
 **Release gate status: ✅ PASS**
 
@@ -43,6 +43,7 @@ The framework is described in [`docs/chaos-testing-strategy.md`](./chaos-testing
 | `TestInjector_ClearAll` | ✅ PASS | All faults cleared atomically |
 | `TestInjector_Disable` | ✅ PASS | Disabled injector never fires regardless of configured faults |
 | `TestInjector_Enable` | ✅ PASS | Re-enabled injector resumes fault injection |
+| `TestInjector_HasFault` | ✅ PASS | `HasFault` returns false before a fault is set and true after |
 | `TestInjector_ConcurrentAccess` | ✅ PASS | No data races under 50 concurrent goroutines (`-race`) |
 | `TestInjector_ConcurrentSetAndInject` | ✅ PASS | Concurrent `SetFault` + `MaybeInject` produces no races |
 | `TestInjector_UnknownFaultType` | ✅ PASS | Unknown fault type returns error rather than panicking |
@@ -215,7 +216,6 @@ all layers; no goroutine leaks detected.
 | `TestRedis_HandlePubSubMessage_AgentKill` | Redis pub/sub kills specific agent | ✅ PASS |
 | `TestRedis_Reset_DelError` | `DEL` failure during reset propagates error | ✅ PASS |
 | `TestRedis_WithLogger_LogsRefreshFailure` | Refresh failure is logged, not silent | ✅ PASS |
-| `TestScenario_ConcurrentKillSwitchActivation` | No data races during concurrent activation | ✅ PASS |
 
 ---
 

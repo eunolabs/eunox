@@ -86,11 +86,11 @@ signals:
 rate(eunox_gateway_enforce_total{decision="deny"}[5m])
   / rate(eunox_gateway_enforce_total[5m])
 
-# Redis health (0=healthy, 1=degraded)
-redis_health_state
+# Redis health (0=healthy, 1=degraded) — planned, not yet emitted
+# redis_health_state
 
-# JWKS fetch errors
-rate(eunox_jwks_fetch_errors_total[5m])
+# JWKS fetch errors — planned, not yet emitted
+# rate(eunox_jwks_fetch_errors_total[5m])
 
 # P99 latency
 histogram_quantile(0.99, rate(eunox_gateway_enforce_duration_seconds_bucket[5m]))
@@ -170,7 +170,7 @@ unavailable. **This is a P1 incident.** Legitimate traffic is being blocked.
 │   │
 │   └── YES → Kill-switch Redis is unreachable
 │             │
-│             ├── Check: redis_health_state{component="killswitch"} == 1?
+│             ├── Check: redis_health_state{component="killswitch"} == 1? (planned — not yet emitted)
 │             │   └── YES → Redis connectivity loss
 │             │             Action: See docs/gateway-operator-runbook.md §Redis Outage
 │             │
@@ -182,7 +182,7 @@ unavailable. **This is a P1 incident.** Legitimate traffic is being blocked.
 │   │
 │   └── YES → Revocation Redis is unreachable AND local cache is exhausted
 │             │
-│             ├── Check: redis_health_state{component="revocation"} == 1?
+│             ├── Check: redis_health_state{component="revocation"} == 1? (planned — not yet emitted)
 │             │   └── YES → Redis connectivity loss
 │             │             Note: 60 s stale TTL (REDIS_FAILOVER_STALE_TTL_SECONDS)
 │             │             provides a grace window; 503 means cache also exhausted
@@ -207,9 +207,9 @@ kubectl exec -n eunox-system deployment/gateway -- \
 kubectl exec -n eunox-system <gateway-pod> -- \
   redis-cli -u $GATEWAY_REDIS_URL PING
 
-# Check Prometheus for degraded components
-curl -sf http://prometheus.internal/api/v1/query \
-  --data-urlencode 'query=redis_health_state' | jq '.data.result'
+# Check Prometheus for degraded components (redis_health_state is planned — not yet emitted)
+# curl -sf http://prometheus.internal/api/v1/query \
+#   --data-urlencode 'query=redis_health_state' | jq '.data.result'
 ```
 
 ---
@@ -230,7 +230,7 @@ correctly denied. This is the expected behavior for a capability policy violatio
 │             │
 │             ├── Was this intentional? Check kill-switch status:
 │             │   curl -H "Authorization: ******" \
-│             │     https://gateway.internal:3003/admin/v1/kill-switch
+│             │     https://gateway.internal:3003/admin/kill-switch/status
 │             │
 │             ├── Intentional (security incident):
 │             │   Action: Follow docs/runbooks/kill-switch.md
@@ -265,7 +265,7 @@ correctly denied. This is the expected behavior for a capability policy violatio
 │       │   Check: Is GATEWAY_TRUSTED_PROXY_CIDRS configured correctly?
 │       │
 │       └── Max calls: Call count limit reached for this capability
-│           Check: GET /admin/v1/usage for the agent's call count
+│           Check: GET /admin/usage for the agent's call count
 │           Action: Increase max_calls in the capability policy, or wait for reset
 │
 └── Body: "enforcement engine error" (500 disguised as 403 in some paths)?
@@ -327,7 +327,7 @@ misconfigured.
 │
 ├── Affects all agents globally?
 │   │
-│   ├── Check: Is redis_health_state{component="ratelimit"} == 1?
+│   ├── Check: Is redis_health_state{component="ratelimit"} == 1? (planned — not yet emitted)
 │   │   └── YES → Rate-limiter Redis degraded; per-instance fallback active.
 │   │             Effective limit = RATE_LIMIT_MAX_REQUESTS × replica_count.
 │   │             This means limits are HIGHER, not lower.
