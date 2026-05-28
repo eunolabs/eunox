@@ -5,7 +5,6 @@ package killswitch
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 
@@ -362,10 +361,4 @@ func (p *PartitionedKillSwitch) publishAgentEvent(ctx context.Context, agentID, 
 			slog.String("error", err.Error()),
 		)
 	}
-}
-
-// agentChannel returns the per-agent pub/sub channel name for a given agentID.
-// Exported for use in tests.
-func agentChannel(agentID string) string {
-	return fmt.Sprintf("%s%s", perAgentChannelPrefix, agentID)
 }
