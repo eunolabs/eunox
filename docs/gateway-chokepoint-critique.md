@@ -153,13 +153,13 @@ These items close the gap between the technical foundation that exists and the
 customer-facing evidence that does not. They are primarily documentation and
 commitment work, not engineering.
 
-| ID | Task | Effort | Depends on |
-|----|------|--------|-----------|
-| P1-1 | Publish **gateway degraded-mode specification**: for each failure mode (Redis outage, PostgreSQL outage, DPoP store unavailable, DID endpoint unavailable), document the exact HTTP behavior, which requests succeed/fail, and why. Extend `docs/redis-failure-modes.md` to cover non-Redis failure paths. | S | — |
-| P1-2 | Write **gateway operator runbook** (parallel to `docs/issuer-operator-runbook.md`): SLA targets, health check endpoints, alert thresholds, escalation steps, and recovery procedures for each degraded mode. | M | P1-1 |
-| P1-3 | Publish **chaos engineering results**: run the existing chaos framework against a staging environment, capture results, and add a `docs/chaos-results.md` with pass/fail matrix. This is the evidence that converts "we have chaos tests" into "the tests pass." | M | — |
-| P1-4 | Add a **multi-AZ reference architecture diagram** to `docs/deployment.md` or `docs/diagrams.md`: two gateway replicas across two AZs, Redis Sentinel or Cluster, PostgreSQL primary + read replica, labeled failure domains, RTO/RPO table. | S | — |
-| P1-5 | Write a **gateway triage runbook** for agent-workflow failures: decision tree covering "was it the gateway policy / gateway availability / backend / token expiry / rate limit / condition violation," with the exact log fields and metrics to inspect at each branch. This directly addresses the debugging complexity objection. | M | P1-1 |
+| ID | Task | Effort | Depends on | Status |
+|----|------|--------|-----------|--------|
+| P1-1 | Publish **gateway degraded-mode specification**: for each failure mode (Redis outage, PostgreSQL outage, DPoP store unavailable, DID endpoint unavailable), document the exact HTTP behavior, which requests succeed/fail, and why. Extend `docs/redis-failure-modes.md` to cover non-Redis failure paths. | S | — | ✅ Done — `docs/redis-failure-modes.md §Non-Redis Failure Modes` |
+| P1-2 | Write **gateway operator runbook** (parallel to `docs/issuer-operator-runbook.md`): SLA targets, health check endpoints, alert thresholds, escalation steps, and recovery procedures for each degraded mode. | M | P1-1 | ✅ Done — `docs/gateway-operator-runbook.md` |
+| P1-3 | Publish **chaos engineering results**: run the existing chaos framework against a staging environment, capture results, and add a `docs/chaos-results.md` with pass/fail matrix. This is the evidence that converts "we have chaos tests" into "the tests pass." | M | — | ✅ Done — `docs/chaos-results.md` (43/43 tests pass) |
+| P1-4 | Add a **multi-AZ reference architecture diagram** to `docs/deployment.md` or `docs/diagrams.md`: two gateway replicas across two AZs, Redis Sentinel or Cluster, PostgreSQL primary + read replica, labeled failure domains, RTO/RPO table. | S | — | ✅ Done — `docs/deployment.md §Multi-AZ Reference Architecture` |
+| P1-5 | Write a **gateway triage runbook** for agent-workflow failures: decision tree covering "was it the gateway policy / gateway availability / backend / token expiry / rate limit / condition violation," with the exact log fields and metrics to inspect at each branch. This directly addresses the debugging complexity objection. | M | P1-1 | ✅ Done — `docs/runbooks/gateway-triage.md` |
 
 ---
 

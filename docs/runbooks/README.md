@@ -10,6 +10,7 @@ This directory contains operational runbooks for the Eunox platform. Each runboo
 | [Key Rotation](./key-rotation.md)           | Rotating signing keys, API keys, and HMAC secrets    | P2       |
 | [Disaster Recovery](./disaster-recovery.md) | Recovery procedures for data loss or service failure | P1       |
 | [Capacity Planning](./capacity-planning.md) | Scaling guidelines and resource forecasting          | P3       |
+| [Gateway Triage](./gateway-triage.md)       | Decision tree for diagnosing gateway/enforcement failures | P1    |
 
 ## Conventions
 
