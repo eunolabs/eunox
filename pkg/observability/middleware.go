@@ -124,7 +124,7 @@ func RequestMetrics(requestDuration *prometheus.HistogramVec, requestTotal *prom
 // TracePropagation returns middleware that extracts and propagates W3C trace context.
 // Span names use the matched Chi route pattern to avoid high-cardinality names from
 // dynamic path segments (e.g. IDs). The raw URL path is kept as the http.url.path
-// attribute. Falls back to the raw path when no route pattern is available.
+// attribute. Falls back to "METHOD /unknown" when no route pattern is available.
 func TracePropagation(serviceName string) func(http.Handler) http.Handler {
 	tracer := otel.Tracer(serviceName)
 	propagator := otel.GetTextMapPropagator()
@@ -132,7 +132,10 @@ func TracePropagation(serviceName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-			ctx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path,
+			// Start the span with a placeholder name. The name is updated to the
+			// matched route pattern after the handler runs to avoid creating
+			// high-cardinality span names from dynamic path segments.
+			ctx, span := tracer.Start(ctx, r.Method+" /unknown",
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(
 					semconv.HTTPRequestMethodKey.String(r.Method),
@@ -144,13 +147,15 @@ func TracePropagation(serviceName string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 
 			// Update the span name with the matched route pattern after routing is
-			// complete to avoid high-cardinality names from dynamic path segments.
+			// complete. Falls back to the raw path if no pattern is matched.
+			spanName := r.Method + " " + r.URL.Path
 			if rctx := chi.RouteContext(r.Context()); rctx != nil {
 				if pattern := rctx.RoutePattern(); pattern != "" {
-					span.SetName(r.Method + " " + pattern)
+					spanName = r.Method + " " + pattern
 					span.SetAttributes(semconv.HTTPRouteKey.String(pattern))
 				}
 			}
+			span.SetName(spanName)
 		})
 	}
 }
