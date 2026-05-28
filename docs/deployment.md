@@ -2,6 +2,11 @@
 
 > **Audience:** Platform operators deploying eunox services to production.
 > For local development, see the [repo guide](./repo-guide.md).
+>
+> **Related blog posts:**
+>
+> - [Post 33: Deploying eunox OSS](https://eunolabs.ai/blog/33-deploy-oss) — 5-minute OSS quickstart (`@eunox/mcp`, local enforcement, no server required)
+> - [Post 34: Deploying the self-host stack](https://eunolabs.ai/blog/34-deploy-self-host) — Docker Compose dev setup, Helm production deployment, Redis HA, KMS, air-gap
 
 ---
 

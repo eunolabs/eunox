@@ -68,7 +68,7 @@ npm run build:site
 
 ## Blog posts
 
-Blog posts live in `src/content/blog/` as Markdown files with YAML front matter (`title`, `description`, `pubDate`, `audience`). The canonical source of blog content is `../blogs/` — when editing a post, update the version in `src/content/blog/`.
+Blog posts live in `src/content/blog/` as Markdown files with YAML front matter (`title`, `description`, `pubDate`, `audience`). This directory is the single source of truth for all published blog content.
 
 ## License
 

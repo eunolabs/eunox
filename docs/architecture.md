@@ -648,7 +648,7 @@ flowchart TB
         IssuerPod["capability-issuer<br/>HPA 2..N"]
         GatewayPod["tool-gateway<br/>HPA 2..N"]
         RuntimePod["agent-runtime pods<br/>(per agent / per workload)"]
-        Web["web/ static dashboard<br/>(stub)"]
+        Web["site/ Astro website<br/>(landing, docs, blog)"]
     end
 
     subgraph AzureRefImpl["Azure reference implementation"]

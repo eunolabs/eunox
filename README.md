@@ -53,8 +53,7 @@ eunox/
 ├── k8s/                    # Kubernetes manifests & Helm charts
 ├── infra/                  # Infrastructure (Docker Compose, Terraform, etc.)
 ├── docs/                   # Documentation
-├── web/                    # Static website
-├── site/                   # Astro blog/site
+├── site/                   # Astro site (landing page, blog, docs hub)
 ├── blogs/                  # Blog content
 ├── Makefile
 ├── go.mod
@@ -132,7 +131,7 @@ reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
 
 ## Documentation
 
-- 🌐 **Website:** [`web/`](./web/) — landing page, quick start, features
+- 🌐 **Website:** [`site/`](./site/) — landing page, quick start, features, deploy guides
 - 🏗 **Architecture:** [`docs/architecture.md`](./docs/architecture.md)
 - 🚀 **Deployment:** [`docs/deployment.md`](./docs/deployment.md)
 - 🔧 **Self-hosting:** [`docs/self-host.md`](./docs/self-host.md)
