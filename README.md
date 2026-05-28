@@ -1,13 +1,14 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c1bf707c-85dd-4f5d-aeff-a77188af871e" alt="eunox" height="96">
+  <img src="https://github.com/edgeobs/eunox/blob/main/site/public/eunolabs.png?raw=true" alt="eunox" height="160">
 </p>
 
 <h1 align="center">eunox</h1>
 
 <p align="center">
-  <strong>Policy proxy for AI agents — Go implementation.</strong><br>
+  <strong>Zero-trust enforcement gateway for AI agents</strong><br>
   One YAML file enforces what every agent is allowed to do —
-  <em>before</em> the tool call reaches your backend.
+  <em>before</em> the tool call reaches your backend with a
+  tamper-evident audit trail.
 </p>
 
 <p align="center">
@@ -20,10 +21,7 @@
 
 ## What is eunox?
 
-eunox is the **Go reimplementation** of the Eunox Platform enterprise services.
-It provides a policy proxy for AI agents that speak the
-[Model Context Protocol](https://spec.modelcontextprotocol.io/), delivering
-improved performance, lower memory usage, and simplified deployment.
+Eunox — from Eunomia, the Greek goddess of law and order — is a zero-trust enforcement gateway for AI agents. Every tool call is authorized against a cryptographically signed, time-limited capability token before it reaches your backend. No ambient authority, no implicit trust, no exceptions — and a tamper-evident audit trail your compliance team can actually use.
 
 ## Services
 
