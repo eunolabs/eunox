@@ -1,5 +1,5 @@
 ---
-export type ActivePage = '' | 'quickstart' | 'features' | 'how-it-works' | 'policies' | 'docs' | 'blog';
+export type ActivePage = '' | 'quickstart' | 'features' | 'how-it-works' | 'policies' | 'deploy' | 'docs' | 'blog';
 
 interface Props {
   title: string;
@@ -38,6 +38,7 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
             <a href={withBase('/features')} class:list={["nav-link", { active: activePage === 'features' }]}>Features</a>
             <a href={withBase('/how-it-works')} class:list={["nav-link", { active: activePage === 'how-it-works' }]}>How it works</a>
             <a href={withBase('/policies')} class:list={["nav-link", { active: activePage === 'policies' }]}>Policies</a>
+            <a href={withBase('/deploy')} class:list={["nav-link", { active: activePage === 'deploy' }]}>Deploy</a>
             <a href={withBase('/docs')} class:list={["nav-link", { active: activePage === 'docs' }]}>Docs</a>
             <a href={withBase('/blog')} class:list={["nav-link", { active: activePage === 'blog' }]}>Blog</a>
             <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer" class="btn-github">
@@ -66,6 +67,7 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
                     <li><a href={withBase('/features')}>Features</a></li>
                     <li><a href={withBase('/how-it-works')}>How it works</a></li>
                     <li><a href={withBase('/policies')}>Reference policies</a></li>
+                    <li><a href={withBase('/deploy')}>Deploy</a></li>
                     <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/pricing.md" target="_blank" rel="noopener noreferrer">Pricing</a></li>
                 </ul>
             </div>

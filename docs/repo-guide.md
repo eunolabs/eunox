@@ -74,8 +74,7 @@ eunox/
 ├── k8s/                    # Kubernetes manifests & Helm charts
 ├── infra/                  # Docker Compose, Terraform, cloud configs
 ├── docs/                   # Documentation (all filenames lowercase kebab-case)
-├── web/                    # Static website
-├── site/                   # Astro blog/site
+├── site/                   # Astro site (landing page, blog, docs hub)
 └── blogs/                  # Blog content
 ```
 
