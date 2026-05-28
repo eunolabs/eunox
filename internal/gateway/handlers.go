@@ -276,6 +276,7 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	// Build the enforcement request.  Propagate source IP from the request
 	// context field (if provided by the caller) or fall back to the network
 	// peer, so that IPRangeCondition evaluations are accurate.
+	// "sourceIp" is the JSON key from capability.EnforceRequestContext (json:"sourceIp,omitempty").
 	sourceIP := app.extractClientIP(r)
 	if ip, ok := req.Context["sourceIp"].(string); ok && ip != "" {
 		sourceIP = ip

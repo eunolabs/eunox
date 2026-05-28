@@ -74,9 +74,13 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 	return nil
 }
 
-// parseDPoPJTI decodes the payload of a DPoP proof JWT (without verifying the
-// signature — the caller must have already verified the signature via
-// verifyDPoPBinding before calling this function) and returns the jti claim.
+// parseDPoPJTI decodes the payload of a DPoP proof JWT and returns the jti
+// claim.  The signature is NOT verified here — when a token carries a JKT
+// confirmation claim, verifyDPoPBinding has already verified it before this
+// function is called.  When there is no JKT (unbound DPoP), signature
+// verification is skipped entirely and replay detection via jti is the only
+// protection; jti extraction is still valid in that case because we are only
+// reading a public claim from the payload, not trusting it for authentication.
 func parseDPoPJTI(proofJWT string) (string, error) {
 	parts := strings.Split(proofJWT, ".")
 	if len(parts) != 3 {

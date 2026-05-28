@@ -450,15 +450,24 @@ func (app *App) handleRenew(w http.ResponseWriter, r *http.Request) {
 	// be used to obtain a fresh non-revoked token — this would permanently
 	// bypass revocation.  The check is performed after signature verification
 	// so that only well-formed tokens reach the revocation store.
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-			return
-		}
-		if revoked {
-			writeJSON(w, http.StatusUnauthorized, errorResponse("token has been revoked"))
-			return
+	if app.deps.Revocation != nil {
+		if claims.JWTID == "" {
+			// Tokens without a jti cannot be tracked in the revocation store.
+			// Log a warning so operators can detect issuers or libraries that
+			// omit the jti claim.
+			if app.deps.Logger != nil {
+				app.deps.Logger.Warn("skipping revocation check on renew: capability token has no jti claim")
+			}
+		} else {
+			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+			if revErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+				return
+			}
+			if revoked {
+				writeJSON(w, http.StatusUnauthorized, errorResponse("token has been revoked"))
+				return
+			}
 		}
 	}
 
