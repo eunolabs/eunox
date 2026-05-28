@@ -6,8 +6,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,7 +19,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/eunolabs/eunox/internal/migrate"
 	"github.com/eunolabs/eunox/internal/minter"
+	"github.com/eunolabs/eunox/migrations"
 	"github.com/eunolabs/eunox/pkg/config"
 	"github.com/eunolabs/eunox/pkg/database"
 	"github.com/eunolabs/eunox/pkg/observability"
@@ -104,6 +108,9 @@ func run() error {
 		if _, err := database.PoolMetrics(db, metrics.Registry, "minter"); err != nil {
 			return fmt.Errorf("register pool metrics: %w", err)
 		}
+		if err := runMigrations(ctx, db, "minter", migrations.Minter(), logger); err != nil {
+			return fmt.Errorf("minter database migration: %w", err)
+		}
 		store = minter.NewPostgresKeyStore(db)
 		readinessChecks = append(readinessChecks, func(ctx context.Context) error {
 			return db.PingContext(ctx)
@@ -115,6 +122,20 @@ func run() error {
 		}
 		store = minter.NewInMemoryStore()
 		logger.Warn("using in-memory key store (development only — data is not persisted)")
+	}
+
+	// Run audit database migrations when an audit DB is configured.
+	// The audit pipeline itself is wired separately; migrations run here so
+	// that the schema is ready before any writer connects.
+	if cfg.AuditDBURL != "" {
+		auditDB, err := database.OpenPool("pgx", cfg.AuditDBURL, &cfg.DBPool)
+		if err != nil {
+			return fmt.Errorf("open audit database pool: %w", err)
+		}
+		defer func() { _ = auditDB.Close() }()
+		if err := runMigrations(ctx, auditDB, "audit", migrations.Audit(), logger); err != nil {
+			return fmt.Errorf("audit database migration: %w", err)
+		}
 	}
 
 	// Build app.
@@ -175,6 +196,35 @@ func run() error {
 	}
 
 	logger.Info("shutdown complete")
+	return nil
+}
+
+// runMigrations applies all pending up migrations for the given schema against
+// db. It is safe to call on every startup: already-applied migrations are
+// detected via the schema_migrations tracking table and skipped.
+func runMigrations(ctx context.Context, db *sql.DB, schema string, source fs.FS, logger *slog.Logger) error {
+	runner, err := migrate.NewRunner(&migrate.Config{
+		Source:   source,
+		Store:    migrate.NewPostgresStateStore(db, schema),
+		Executor: migrate.NewPostgresSQLExecutor(db),
+		Locker:   migrate.NewPostgresAdvisoryLocker(db, schema),
+		Logger:   logger,
+	})
+	if err != nil {
+		return err
+	}
+	applied, err := runner.MigrateUp(ctx)
+	if err != nil {
+		return err
+	}
+	if applied > 0 {
+		logger.Info("database migrations applied",
+			slog.String("schema", schema),
+			slog.Int("count", applied),
+		)
+	} else {
+		logger.Info("database schema is up to date", slog.String("schema", schema))
+	}
 	return nil
 }
 
