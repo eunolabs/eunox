@@ -200,3 +200,32 @@ grouped by theme and roughly ordered from introductory to in-depth.
     in the base image, gateway compromise). Concludes with a prioritised
     implementation checklist. Audience: principal engineers and platform
     security architects deploying agent workloads in production.
+
+---
+
+## Compliance and law
+
+32. **AI laws and acts around the globe: what every AI platform builder needs to know**
+    Survey of major AI regulations across jurisdictions (EU AI Act, US executive
+    orders, UK AI Safety Institute, and more) and what they mean for teams
+    building or deploying AI systems that operate cross-border. Covers auditability
+    obligations, incident-reporting requirements, and how the eunox audit trail
+    satisfies most regulatory evidence demands out of the box.
+
+---
+
+## Deployment guides
+
+33. **Deploying eunox OSS: from `npm install` to a governed agent in five minutes**
+    Step-by-step deployment guide for the Apache-2.0 OSS tier. Covers installing
+    `@eunox/mcp`, writing a minimal YAML policy, wiring the proxy into Claude
+    Desktop, Cursor, and a programmatic Go agent, enabling the local HMAC audit
+    log, and upgrading to a hosted gateway when you outgrow the local-only model.
+
+34. **Deploying the eunox Self-Host stack: Redis, Postgres, KMS, and Helm**
+    Step-by-step deployment guide for the BSL 1.1 self-host tier. Covers the
+    Docker Compose single-node development setup, the production Helm umbrella
+    chart (`k8s/helm/euno/`), environment-variable configuration for each service,
+    Redis HA requirements, Postgres schema bootstrap, KMS integration options
+    (Azure Key Vault, AWS KMS, GCP Cloud KMS), and the air-gap image bundle for
+    restricted-network deployments.

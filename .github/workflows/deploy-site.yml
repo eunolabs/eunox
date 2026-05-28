@@ -1,8 +1,8 @@
 name: Deploy to Cloudflare Pages
 
 # Deploys the Astro site in site/ to Cloudflare Pages (free tier) whenever
-# changes land on main inside the site/ or blogs/ directories, or when this
-# workflow file is modified.
+# changes land on main inside the site/ directory, or when this workflow file
+# is modified.
 #
 # Prerequisites:
 #  1. Create a Cloudflare Pages project named "eunolabs-site" in the dashboard
@@ -21,7 +21,6 @@ on:
     branches: [main]
     paths:
       - "site/**"
-      - "blogs/**"
       - ".github/workflows/deploy-site.yml"
   # Allow a manual redeploy from the Actions tab without a code push.
   workflow_dispatch:

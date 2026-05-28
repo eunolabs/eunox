@@ -1,10 +1,10 @@
 ---
 title: "Pluggable Adapters: Building a Cloud-Portable Identity and Signing Layer"
-description: 'Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.'
+description: 'Part of the "Architecture deep-dives" series. [Post 9](./09-capability-tokens.md) introduced capability tokens; [post 10](./10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable.'
 pubDate: "2026-05-31"
 ---
 
-_Part of the "Architecture deep-dives" series. [Post 9](../../blogs/09-capability-tokens.md) introduced capability tokens; [post 10](../../blogs/10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable._
+_Part of the "Architecture deep-dives" series. [Post 9](./09-capability-tokens.md) introduced capability tokens; [post 10](./10-tool-gateway-reference-monitor.md) covered the enforcement pipeline. This one goes behind both to explain what the capability issuer and gateway actually talk to when they validate an identity or sign a JWT — and why that plumbing is designed to be completely swappable._
 
 ---
 
