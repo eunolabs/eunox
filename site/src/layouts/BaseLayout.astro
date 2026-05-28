@@ -7,7 +7,7 @@ interface Props {
   activePage?: ActivePage;
 }
 
-const { title, description = 'Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. BSL-1.1 · Apache-2.0 OSS tier.', activePage = '' } = Astro.props;
+const { title, description = 'Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. BSL-1.1.', activePage = '' } = Astro.props;
 const baseUrl = import.meta.env.BASE_URL;
 const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 
@@ -57,8 +57,8 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
                     <img src={withBase('/eunolabs.png')} alt="eunox" style="height:30px">
                     <span class="wordmark">eunox</span>
                 </a>
-                <p>Capability-native zero-trust governance for AI agents. BSL-1.1 · Apache-2.0 OSS tier.</p>
-                <span class="footer-license">BSL-1.1 / Apache-2.0</span>
+                <p>Capability-native zero-trust governance for AI agents. BSL-1.1.</p>
+                <span class="footer-license">BSL-1.1</span>
             </div>
             <div class="footer-col">
                 <h5>Product</h5>
@@ -68,7 +68,7 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
                     <li><a href={withBase('/how-it-works')}>How it works</a></li>
                     <li><a href={withBase('/policies')}>Reference policies</a></li>
                     <li><a href={withBase('/deploy')}>Deploy</a></li>
-                    <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/pricing.md" target="_blank" rel="noopener noreferrer">Pricing</a></li>
+                    <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/tiers.md" target="_blank" rel="noopener noreferrer">Pricing</a></li>
                 </ul>
             </div>
             <div class="footer-col">

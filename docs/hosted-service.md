@@ -8,7 +8,7 @@
 >
 > - [`docs/architecture.md`](./architecture.md) — current system context and component map
 > - [`docs/multi-tenancy.md`](./multi-tenancy.md) — tenant isolation model and threat model
-> - [`docs/pricing.md`](./pricing.md) — tier definitions and feature matrix
+> - [`docs/tiers.md`](./tiers.md) — tier definitions and feature matrix
 > - [`docs/upgrade-to-hosted.md`](./upgrade-to-hosted.md) — self-hosted → cloud migration path
 > - [`docs/deployment.md`](./deployment.md) — build and configuration reference
 
@@ -193,7 +193,7 @@ key minting, billing) remain in the primary region for simplicity.
 ### 3.1 Tiers and entitlements
 
 The subscription model maps directly onto the tiers described in
-[`docs/pricing.md`](./pricing.md). The table below focuses on the system-level
+[`docs/tiers.md`](./tiers.md). The table below focuses on the system-level
 entitlement flags that the billing service writes to the tenant record:
 
 | Entitlement flag             | Free   | Team  | Enterprise   |

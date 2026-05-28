@@ -4,7 +4,7 @@ description: "Step-by-step deployment guide for the BSL 1.1 self-host tier. Cove
 pubDate: "2026-05-28"
 ---
 
-_This is the deployment guide for the **Self-Host (BSL 1.1)** tier. If you only need in-process enforcement for a single agent with no shared state, start with [post 33: deploying eunox OSS](./33-deploy-oss.md). For a full tier comparison, see [`docs/pricing.md`](https://github.com/edgeobs/eunox/blob/main/docs/pricing.md)._
+_This is the deployment guide for the **Self-Host (BSL 1.1)** tier. If you only need in-process enforcement for a single agent with no shared state, start with [post 33: deploying eunox OSS](./33-deploy-oss.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/edgeobs/eunox/blob/main/docs/tiers.md)._
 
 ---
 
@@ -319,17 +319,17 @@ The complete list of images is in `k8s/air-gap-images.txt`. For DID resolution i
 
 ---
 
-## Part 5 — Wiring @eunox/mcp to the self-hosted gateway
+## Part 5 — Wiring eunox-mcp to the self-hosted gateway
 
-Once the stack is running, configure `@eunox/mcp` to use your gateway instead of local enforcement. In `claude_desktop_config.json`:
+Once the stack is running, configure `eunox-mcp` to use your gateway instead of local enforcement. In `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "my-server-governed": {
-      "command": "npx",
+      "command": "eunox-mcp",
       "args": [
-        "-y", "@eunox/mcp", "proxy",
+        "proxy",
         "--enforcer-url", "https://gateway.example.com",
         "--enforcer-api-key", "<your-issued-jwt>",
         "--",
@@ -352,4 +352,4 @@ The JWT is issued by the capability issuer (`POST /api/v1/issue`). For team envi
 - **Health checks:** [`docs/health-checks.md`](https://github.com/edgeobs/eunox/blob/main/docs/health-checks.md) — liveness and readiness endpoint reference.
 - **Issuer runbook:** [`docs/issuer-operator-runbook.md`](https://github.com/edgeobs/eunox/blob/main/docs/issuer-operator-runbook.md) — day-two operations for the capability issuer.
 
-_Previous: [post 33 — deploying eunox OSS](./33-deploy-oss.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/edgeobs/eunox/blob/main/docs/blog-articles.md)._
+_Previous: [post 33 — deploying eunox locally](./33-deploy-oss.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/edgeobs/eunox/blob/main/docs/blog-articles.md)._

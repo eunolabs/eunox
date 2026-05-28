@@ -1,5 +1,5 @@
 ---
-title: "The BUSL / Apache split: open-source AI security with a sustainable license model"
+title: "BUSL-1.1: open-source AI security with a sustainable license model"
 description: "developers evaluating eunox for integration or deployment, and anyone curious about how AI infrastructure companies think about licensing"
 pubDate: "2026-06-18"
 ---
@@ -10,9 +10,9 @@ _Audience: developers evaluating eunox for integration or deployment, and anyone
 
 Licensing is one of those topics that developers historically avoided until it became unavoidable. Then HashiCorp relicensed Terraform. Redis changed its license. Elasticsearch sued Amazon. Suddenly everyone started reading the license file.
 
-If you've looked at eunox's repository structure and noticed that parts of the codebase are Apache 2.0 and other parts are BUSL-1.1, you might have questions. What does the split mean? What can you do with each part? Why did we structure it this way? And what does "non-competing use" actually mean in practice?
+If you've looked at eunox's repository and noticed it's licensed under BUSL-1.1, you might have questions. What does that mean? What can you do with it? And what does "non-competing use" actually mean in practice?
 
-This post is the honest answer to those questions. I'll explain the decision, the Go monorepo architecture it created, what you can and can't do under each license, and why I think this model is actually better for the ecosystem than the alternatives.
+This post is the honest answer to those questions. I'll explain the decision, the Go monorepo architecture, what you can and can't do under BUSL-1.1, and why I think this model is actually better for the ecosystem than a fully closed alternative.
 
 ---
 
@@ -32,7 +32,7 @@ The choice of BUSL for the platform components wasn't made lightly. We went back
 
 ## The Go monorepo architecture
 
-The license split is reflected directly in the repository structure, but it now shows up as a Go monorepo rather than two top-level folders. The repository is BUSL-1.1 overall, with the `eunox-mcp` OSS tier and public contracts surfaced through `pkg/`. The three relevant top-level directories are:
+The license split is reflected directly in the repository structure, but it now shows up as a Go monorepo rather than two top-level folders. The repository is BUSL-1.1 overall, with the `eunox-mcp` local enforcement client and public contracts surfaced through `pkg/`. The three relevant top-level directories are:
 
 ```
 cmd/        ← service entrypoints
@@ -44,26 +44,19 @@ The hosted services live under `cmd/` and `internal/`: the gateway, issuer, mint
 
 The public contracts live in `pkg/`. That's where the shared capability, policy, crypto, audit, and related Go packages live.
 
-And the developer-facing OSS tier is the `eunox-mcp` binary — the local enforcement client you run alongside your agent. The split is no longer "everything in `public/` versus everything in `eunox/`"; it's "public contracts and the OSS local client versus the hosted platform services."
+And the developer-facing local enforcement client is the `eunox-mcp` binary — the proxy you run alongside your agent. The split is no longer "everything in `public/` versus everything in `eunox/`"; it's "public contracts and the local enforcement client versus the hosted platform services."
 
 ---
 
-## Why the core types must be open
+## Why the core types must be readable
 
-The most important decision in the whole licensing structure is this: the shared `pkg/` Go packages are Apache 2.0.
+The most important property of the shared `pkg/` Go packages is that they are readable and self-deployable under BUSL-1.1.
 
 These packages contain the types that define the capability manifest schema — `AgentCapabilityManifest`, `Capability`, `Condition`, the condition interfaces, the OCSF event types. These are the contract between agents, policies, and enforcement. If you're building an AI agent that consumes capability tokens, or a policy authoring tool, or a SIEM integration, or a third-party gateway, you need these types.
 
-If those shared `pkg/` packages were BUSL, the entire ecosystem would be hamstrung. Every tool that needed to parse a capability manifest would need either a BUSL commercial license or would have to reverse-engineer the schema from documentation. That's a terrible outcome for interoperability, and it would mean eunox becomes the only entity that can build things that understand eunox policies. That's not a healthy ecosystem, and it would kill adoption.
+BUSL-1.1 permits reading, evaluation, modification, and self-deployment. What it does not permit is packaging the software as a managed service you sell to third parties. For the shared contract packages, this is the right call — they should be freely inspectable and usable, and the commercial restriction is narrow enough not to interfere with normal development and integration work.
 
-The Apache 2.0 license on the shared packages means:
-
-- Any developer can import the shared `pkg/` Go packages in their agent code with no restrictions
-- Third parties can build compatible policy authoring tools that understand the manifest format
-- Academic researchers can work with the schema for analysis and experimentation
-- Organisations can build their own enforcement implementations if they choose — the contract is public and reusable
-
-The [schema parity post](../docs/blog/16-schema-parity-over-version-drift.md) explains the design decision to keep `eunox-mcp`, the Go runtime SDK, and the gateway all sharing a single type definition. The Apache license on that shared type is what makes that ecosystem property durable.
+The [schema parity post](../docs/blog/16-schema-parity-over-version-drift.md) explains the design decision to keep `eunox-mcp`, the Go runtime SDK, and the gateway all sharing a single type definition under BUSL-1.1.
 
 ---
 
@@ -110,38 +103,36 @@ Third, it creates a natural archive of the evolution of the platform. The 2028 v
 
 ## The `eunox-mcp` binary and what you can do with it
 
-The `eunox-mcp` binary — the OSS local enforcement client you run alongside your agent — is Apache 2.0. Full stop. You can:
+The `eunox-mcp` binary — the local enforcement client you run alongside your agent — is BUSL-1.1. You can:
 
-- Install it in any application, commercial or not
-- Redistribute it in a product you sell
-- Modify it and ship the modified version
-- Build closed-source products on top of it
+- Install it in your own applications and infrastructure
+- Self-host it in your organisation without restriction
+- Modify and deploy it for your own use
+- Study and audit the source code
 
-This is deliberate. The local enforcement client is the thing that developers install alongside their applications. If there were any license friction at the developer integration layer, adoption would drop off a cliff. The whole point of `eunox-mcp` is to be a zero-friction drop-in. Apache 2.0 is the right license for that.
+The commercial restriction applies only if you package it as a managed service you offer to third parties. For the vast majority of users — individual developers, teams, and organisations deploying eunox to govern their own AI agents — BUSL-1.1 behaves like open source. Read it, use it, deploy it.
 
-The commercial restriction only applies to the platform components — the services that operators run to support the hosted governance model. An organisation that self-hosts the gateway for their own use is fine. A company that packages the gateway as a product they sell to others needs the commercial license.
-
----
-
-## The Go runtime SDK and future adapter situation
-
-The same Apache 2.0 logic applies to the Go runtime SDK and any adapters we publish for specific agent frameworks. The runtime SDK, the upcoming framework-specific adapters, any future integrations — all Apache 2.0. Adapters are developer-facing integration code. They should be unrestricted.
-
-When building on these adapters: you can include them in your commercial product, you can modify them, you can fork them. If you're integrating them with the hosted gateway, the gateway's BUSL terms apply to the gateway service, not to the adapter code itself.
+The commercial restriction only applies to the platform components when offered as a service. An organisation that self-hosts the gateway for their own use is fine. A company that packages the gateway as a product they sell to others needs the commercial license.
 
 ---
 
-## The trust argument for open licensing of the enforcement core
+## The Go runtime SDK and adapters
 
-There's a security-specific reason why the `eunox-mcp` binary should be open source, and it goes beyond the commercial adoption argument.
+The same logic applies to the Go runtime SDK and any adapters we publish for specific agent frameworks. They are all BUSL-1.1 and follow the same use terms as the rest of the repository. You can include them in your own products and systems for your own use; the restriction is on external commercial hosted-service offering.
+
+When building on these adapters: you can include them in your own deployments, modify them, and fork them for internal use. If you're integrating them with the hosted gateway, the gateway's BUSL terms apply to the gateway service, not to the adapter code itself.
+
+---
+
+## The trust argument for readable enforcement code
+
+There's a security-specific reason why the `eunox-mcp` binary should be readable, and it goes beyond the commercial adoption argument.
 
 `eunox-mcp` is a security enforcement client. It evaluates policy conditions, makes allow/deny decisions, and writes audit records. These are exactly the kinds of operations where you want an auditable, inspectable codebase.
 
-When an organisation deploys `eunox-mcp` in a sensitive production system, their security team should be able to read the enforcement code and verify that it does what we claim it does. "Trust our documentation" is not a sufficient answer for a security control. "Read the code" is. Apache 2.0 ensures they can always do this, without needing a commercial relationship.
+When an organisation deploys `eunox-mcp` in a sensitive production system, their security team should be able to read the enforcement code and verify that it does what we claim it does. "Trust our documentation" is not a sufficient answer for a security control. "Read the code" is. BUSL-1.1 ensures they can always do this — the source is public and the code is self-deployable.
 
-This also applies to security researchers. Responsible disclosure requires that researchers can study the code, find vulnerabilities, and report them. A researcher who discovers a bypass in the condition evaluation logic needs to be able to read the code to understand and document the bypass clearly. Open source enables this.
-
-The BUSL-licensed platform components don't get quite the same benefit — they're also readable (BUSL permits reading and evaluation), but they can't be freely distributed as-is. For the server-side enforcement code, we've decided that readability and self-deployability is the priority, and the commercial restriction is acceptable given that the server is primarily relevant for organisations with the infrastructure to run it.
+This also applies to security researchers. Responsible disclosure requires that researchers can study the code, find vulnerabilities, and report them. A researcher who discovers a bypass in the condition evaluation logic needs to be able to read the code to understand and document the bypass clearly. The BUSL source-available model enables this.
 
 ---
 

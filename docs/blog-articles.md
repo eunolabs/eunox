@@ -216,9 +216,9 @@ grouped by theme and roughly ordered from introductory to in-depth.
 
 ## Deployment guides
 
-33. **Deploying eunox OSS: from `npm install` to a governed agent in five minutes**
+33. **Deploying eunox OSS: from `go install` to a governed agent in five minutes**
     Step-by-step deployment guide for the Apache-2.0 OSS tier. Covers installing
-    `@eunox/mcp`, writing a minimal YAML policy, wiring the proxy into Claude
+    `eunox-mcp`, writing a minimal YAML policy, wiring the proxy into Claude
     Desktop, Cursor, and a programmatic Go agent, enabling the local HMAC audit
     log, and upgrading to a hosted gateway when you outgrow the local-only model.
 
