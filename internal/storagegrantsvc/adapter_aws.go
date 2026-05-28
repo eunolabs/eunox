@@ -102,9 +102,14 @@ func (a *RealAWSS3Adapter) MintGrant(ctx context.Context, req *MintStorageGrantR
 	}, nil
 }
 
-// presignS3URL generates a presigned S3 URL using SigV4.
+// presignS3URL generates a presigned S3 URL using SigV4 using the current time.
 func (a *RealAWSS3Adapter) presignS3URL(creds *AWSCredentials, bucket, path, permission string, ttl time.Duration) string {
-	now := time.Now().UTC()
+	return a.presignS3URLAt(creds, bucket, path, permission, ttl, time.Now().UTC())
+}
+
+// presignS3URLAt generates a presigned S3 URL at a fixed point in time.
+// Accepting the timestamp as a parameter enables deterministic, golden-output tests.
+func (a *RealAWSS3Adapter) presignS3URLAt(creds *AWSCredentials, bucket, path, permission string, ttl time.Duration, now time.Time) string {
 	datestamp := now.Format("20060102")
 	amzdate := now.Format("20060102T150405Z")
 

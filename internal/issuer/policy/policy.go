@@ -98,7 +98,17 @@ func New(opts ...Option) *Engine {
 // LoadFromFile loads policies from a JSON file.
 func (e *Engine) LoadFromFile(filePath string) error {
 	e.filePath = filePath
-	return e.reload()
+	if err := e.reload(); err != nil {
+		return err
+	}
+	// Initialise lastModified so that the first pollLoop tick skips a
+	// redundant reload when the file has not changed since startup.
+	if info, err := os.Stat(filePath); err == nil {
+		e.mu.Lock()
+		e.lastModified = info.ModTime()
+		e.mu.Unlock()
+	}
+	return nil
 }
 
 // StartHotReload starts a background goroutine that watches for policy file changes.

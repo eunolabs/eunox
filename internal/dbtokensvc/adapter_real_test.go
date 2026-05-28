@@ -5,6 +5,9 @@ package dbtokensvc
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -486,4 +489,222 @@ func (m *mockGCPTokenProvider) GetAccessToken(_ context.Context, scopes []string
 		return nil, m.err
 	}
 	return m.token, nil
+}
+
+// --- Golden / deterministic tests for SigV4 signing (T-5) ---
+
+// TestGenerateAuthTokenAt_Deterministic verifies that generateAuthTokenAt produces
+// identical output for identical inputs, enabling golden-value assertions in CI.
+func TestGenerateAuthTokenAt_Deterministic(t *testing.T) {
+	creds := &AWSCredentials{
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+	fixedTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	adapter, err := NewRealAWSRDSAdapter(RealAWSRDSAdapterConfig{
+		Region:   "us-east-1",
+		Endpoint: "test.cluster.us-east-1.rds.amazonaws.com",
+		Port:     5432,
+		CredentialProvider: &StaticAWSCredentialProvider{Creds: *creds},
+	})
+	if err != nil {
+		t.Fatalf("NewRealAWSRDSAdapter: %v", err)
+	}
+
+	got1 := adapter.generateAuthTokenAt(creds, "testuser", 900*time.Second, fixedTime)
+	got2 := adapter.generateAuthTokenAt(creds, "testuser", 900*time.Second, fixedTime)
+
+	if got1 != got2 {
+		t.Errorf("generateAuthTokenAt is not deterministic:\n  call1: %q\n  call2: %q", got1, got2)
+	}
+}
+
+// TestGenerateAuthTokenAt_Golden verifies the SigV4 presigned token format and
+// that the signature produced matches an independently-derived reference value.
+// The reference is computed by the testComputeRDSSignature helper below, which
+// reimplements the same HMAC-SHA256 key hierarchy to guard against silent
+// algorithm regressions that would cause real auth failures.
+func TestGenerateAuthTokenAt_Golden(t *testing.T) {
+	creds := &AWSCredentials{
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+	const (
+		region   = "us-east-1"
+		endpoint = "test.cluster.us-east-1.rds.amazonaws.com"
+		port     = 5432
+		dbUser   = "testuser"
+		expiry   = 900
+	)
+	fixedTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	adapter, err := NewRealAWSRDSAdapter(RealAWSRDSAdapterConfig{
+		Region:             region,
+		Endpoint:           endpoint,
+		Port:               port,
+		CredentialProvider: &StaticAWSCredentialProvider{Creds: *creds},
+	})
+	if err != nil {
+		t.Fatalf("NewRealAWSRDSAdapter: %v", err)
+	}
+
+	token := adapter.generateAuthTokenAt(creds, dbUser, expiry*time.Second, fixedTime)
+
+	// Structural checks.
+	expectedPrefix := fmt.Sprintf("%s:%d/?", endpoint, port)
+	if !strings.HasPrefix(token, expectedPrefix) {
+		t.Errorf("token prefix: want %q, got %q", expectedPrefix, token[:min(80, len(token))])
+	}
+
+	parts := strings.SplitN(token, "/?", 2)
+	if len(parts) != 2 {
+		t.Fatalf("token missing /?  separator: %q", token)
+	}
+	params, err := url.ParseQuery(parts[1])
+	if err != nil {
+		t.Fatalf("parse token query: %v", err)
+	}
+
+	dateStamp := fixedTime.Format("20060102")
+	amzDate := fixedTime.Format("20060102T150405Z")
+	credentialScope := fmt.Sprintf("%s/%s/rds-db/aws4_request", dateStamp, region)
+
+	checks := []struct{ key, want string }{
+		{"X-Amz-Algorithm", "AWS4-HMAC-SHA256"},
+		{"X-Amz-Date", amzDate},
+		{"X-Amz-Expires", fmt.Sprintf("%d", expiry)},
+		{"X-Amz-SignedHeaders", "host"},
+		{"Action", "connect"},
+		{"DBUser", dbUser},
+		{"X-Amz-Credential", creds.AccessKeyID + "/" + credentialScope},
+	}
+	for _, c := range checks {
+		if got := params.Get(c.key); got != c.want {
+			t.Errorf("param %q: want %q, got %q", c.key, c.want, got)
+		}
+	}
+
+	sig := params.Get("X-Amz-Signature")
+	if len(sig) != 64 {
+		t.Errorf("signature length: want 64, got %d (%q)", len(sig), sig)
+	}
+
+	// Cross-validate: independently derive the expected signature using only
+	// the raw HMAC-SHA256 primitives. This guards against a silent regression
+	// in the canonical-request or string-to-sign construction.
+	expectedSig := testComputeRDSSignature(
+		creds, dbUser, endpoint, port, region, expiry, fixedTime,
+	)
+	if sig != expectedSig {
+		t.Errorf("signature mismatch with cross-validation reference:\n  want: %q\n   got: %q", expectedSig, sig)
+	}
+}
+
+// TestGenerateAuthTokenAt_SessionToken ensures the security token is included
+// in the presigned URL when temporary credentials are used.
+func TestGenerateAuthTokenAt_SessionToken(t *testing.T) {
+	creds := &AWSCredentials{
+		AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+		SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		SessionToken:    "AQoDYXdzEJr//SESSION/TOKEN",
+	}
+	adapter, err := NewRealAWSRDSAdapter(RealAWSRDSAdapterConfig{
+		Region:             "eu-west-1",
+		Endpoint:           "db.abc.eu-west-1.rds.amazonaws.com",
+		Port:               5432,
+		CredentialProvider: &StaticAWSCredentialProvider{Creds: *creds},
+	})
+	if err != nil {
+		t.Fatalf("NewRealAWSRDSAdapter: %v", err)
+	}
+
+	fixedTime := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	token := adapter.generateAuthTokenAt(creds, "admin", 15*time.Minute, fixedTime)
+
+	parts := strings.SplitN(token, "/?", 2)
+	params, _ := url.ParseQuery(parts[1])
+	if got := params.Get("X-Amz-Security-Token"); got != creds.SessionToken {
+		t.Errorf("X-Amz-Security-Token: want %q, got %q", creds.SessionToken, got)
+	}
+}
+
+// testComputeRDSSignature is an independent cross-validation reference for the
+// SigV4 presigned token signature. It derives the canonical request and string-
+// to-sign from first principles so that any divergence from the production
+// generateAuthTokenAt will be caught as a test failure.
+func testComputeRDSSignature(
+	creds *AWSCredentials,
+	dbUser, endpoint string, port int,
+	region string, expirySeconds int,
+	now time.Time,
+) string {
+	hmacSHA256 := func(key, data []byte) []byte {
+		mac := hmac.New(sha256.New, key)
+		mac.Write(data)
+		return mac.Sum(nil)
+	}
+	sha256hex := func(data []byte) string {
+		h := sha256.Sum256(data)
+		return hex.EncodeToString(h[:])
+	}
+	percentEncode := func(value string) string {
+		const hexChars = "0123456789ABCDEF"
+		var b strings.Builder
+		for i := 0; i < len(value); i++ {
+			c := value[i]
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+				c == '-' || c == '_' || c == '.' || c == '~' {
+				b.WriteByte(c)
+			} else {
+				b.WriteByte('%')
+				b.WriteByte(hexChars[c>>4])
+				b.WriteByte(hexChars[c&0x0F])
+			}
+		}
+		return b.String()
+	}
+
+	datestamp := now.UTC().Format("20060102")
+	amzdate := now.UTC().Format("20060102T150405Z")
+
+	credentialScope := fmt.Sprintf("%s/%s/rds-db/aws4_request", datestamp, region)
+	credential := fmt.Sprintf("%s/%s", creds.AccessKeyID, credentialScope)
+
+	// Build canonical query string (sorted by key, then percent-encoded).
+	rawParams := map[string]string{
+		"Action":             "connect",
+		"DBUser":             dbUser,
+		"X-Amz-Algorithm":   "AWS4-HMAC-SHA256",
+		"X-Amz-Credential":  credential,
+		"X-Amz-Date":        amzdate,
+		"X-Amz-Expires":     fmt.Sprintf("%d", expirySeconds),
+		"X-Amz-SignedHeaders": "host",
+	}
+	sortedKeys := []string{
+		"Action", "DBUser", "X-Amz-Algorithm", "X-Amz-Credential",
+		"X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders",
+	}
+	var pairs []string
+	for _, k := range sortedKeys {
+		pairs = append(pairs, percentEncode(k)+"="+percentEncode(rawParams[k]))
+	}
+	canonicalQueryString := strings.Join(pairs, "&")
+
+	canonicalHeaders := fmt.Sprintf("host:%s:%d\n", endpoint, port)
+	canonicalRequest := strings.Join([]string{
+		"GET", "/", canonicalQueryString, canonicalHeaders, "host", "UNSIGNED-PAYLOAD",
+	}, "\n")
+
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256", amzdate, credentialScope, sha256hex([]byte(canonicalRequest)),
+	}, "\n")
+
+	// Derive signing key.
+	kDate := hmacSHA256([]byte("AWS4"+creds.SecretAccessKey), []byte(datestamp))
+	kRegion := hmacSHA256(kDate, []byte(region))
+	kService := hmacSHA256(kRegion, []byte("rds-db"))
+	kSigning := hmacSHA256(kService, []byte("aws4_request"))
+
+	return hex.EncodeToString(hmacSHA256(kSigning, []byte(stringToSign)))
 }

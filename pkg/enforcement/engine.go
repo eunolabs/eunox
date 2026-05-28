@@ -133,20 +133,18 @@ func (e *Engine) ValidateAction(ctx context.Context, req *capability.EnforceRequ
 
 		// RedactFields produces an obligation, not a denial
 		if condType == capability.ConditionTypeRedactFields {
-			if rc, ok := cond.(*capability.RedactFieldsCondition); ok {
-				obligations = append(obligations, capability.Obligation{
-					Type:  "redactFields",
-					Paths: rc.Fields,
-				})
-				continue
+			rc, ok := cond.(*capability.RedactFieldsCondition)
+			if !ok {
+				// unmarshalCondition always returns *RedactFieldsCondition for this
+				// condition type; a value-form assertion here would be dead code.
+				// If this invariant is ever violated it is a programming error.
+				panic(fmt.Sprintf("enforcement: ConditionTypeRedactFields yielded unexpected type %T", cond))
 			}
-			if rc, ok := cond.(capability.RedactFieldsCondition); ok {
-				obligations = append(obligations, capability.Obligation{
-					Type:  "redactFields",
-					Paths: rc.Fields,
-				})
-				continue
-			}
+			obligations = append(obligations, capability.Obligation{
+				Type:  "redactFields",
+				Paths: rc.Fields,
+			})
+			continue
 		}
 
 		e.mu.RLock()
