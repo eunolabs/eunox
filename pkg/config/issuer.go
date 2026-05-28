@@ -24,6 +24,11 @@ type IssuerConfig struct {
 	RateLimitPerMinute int    `env:"RATE_LIMIT_PER_MINUTE" default:"60" min:"1"`
 	RedisURL           string `env:"REDIS_URL"`
 
+	// Revocation — shared with the gateway so that tokens revoked by the
+	// gateway are also rejected by /renew.  Falls back to REDIS_URL when
+	// unset.  Recommended to set explicitly in multi-replica deployments.
+	RevocationRedisURL string `env:"REVOCATION_REDIS_URL"`
+
 	// OIDC
 	OIDCIssuerURL string `env:"OIDC_ISSUER_URL"`
 

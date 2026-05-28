@@ -5,10 +5,11 @@ package gateway
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/edgeobs/eunox/pkg/capability"
 )
@@ -25,10 +26,14 @@ type DPoPJTIStore interface {
 	MarkUsed(ctx context.Context, jti string) (alreadyUsed bool, err error)
 }
 
-// verifyDPoP verifies a DPoP proof against the token's confirmation claim.
-// When the token carries a cnf.jkt claim, full DPoP proof verification is
-// performed (RFC 9449): JWT parsing, JWK thumbprint comparison, htm/htu
-// matching, iat validation, and signature verification.
+// verifyDPoP verifies a DPoP proof against the token's confirmation claim and
+// records the proof's JTI for replay detection (RFC 9449 §11.1).
+//
+// Replay protection uses the `jti` claim extracted from the proof JWT, not a
+// hash of the full proof.  A hash of proof+method+URL incorrectly allows the
+// same DPoP JWT to be replayed to a different URL (different hash = treated as
+// new proof).  RFC 9449 requires `jti` to be unique and stored independently
+// of the target URL.
 func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, claims *capability.TokenPayload) error {
 	if dpop.Proof == "" {
 		return errors.New("empty DPoP proof")
@@ -38,17 +43,26 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 		return errors.New("DPoP proof must include httpMethod and httpUrl")
 	}
 
-	// If the token has a confirmation claim with JKT, perform full binding verification.
+	// If the token has a confirmation claim with JKT, perform full binding
+	// verification (signature + thumbprint + htm/htu + iat).
 	if claims.Confirmation != nil && claims.Confirmation.JKT != "" {
 		if err := verifyDPoPBinding(dpop.Proof, claims.Confirmation.JKT, dpop.HTTPMethod, dpop.HTTPURL); err != nil {
 			return err
 		}
 	}
 
-	// Check replay using the DPoP proof as a unique identifier.
+	// Replay protection: store the proof's JTI claim, not a hash of the full
+	// proof.  This prevents the B-4 attack where the same DPoP JWT is replayed
+	// to a different URL (which would produce a different hash).
 	if app.dpopStore != nil {
-		proofID := computeDPoPID(dpop)
-		alreadyUsed, err := app.dpopStore.MarkUsed(ctx, proofID)
+		jti, err := parseDPoPJTI(dpop.Proof)
+		if err != nil {
+			return fmt.Errorf("DPoP replay check: cannot extract jti from proof: %w", err)
+		}
+		if jti == "" {
+			return errors.New("DPoP proof missing required jti claim")
+		}
+		alreadyUsed, err := app.dpopStore.MarkUsed(ctx, jti)
 		if err != nil {
 			return fmt.Errorf("DPoP replay check error: %w", err)
 		}
@@ -60,14 +74,23 @@ func (app *App) verifyDPoP(ctx context.Context, dpop *capability.DPoPProof, clai
 	return nil
 }
 
-// computeDPoPID generates a unique identifier from the DPoP proof for replay detection.
-// Each field is length-prefixed to avoid hash collisions from field concatenation.
-func computeDPoPID(dpop *capability.DPoPProof) string {
-	input := fmt.Sprintf("%d:%s|%d:%s|%d:%s",
-		len(dpop.Proof), dpop.Proof,
-		len(dpop.HTTPMethod), dpop.HTTPMethod,
-		len(dpop.HTTPURL), dpop.HTTPURL,
-	)
-	h := sha256.Sum256([]byte(input))
-	return base64.RawURLEncoding.EncodeToString(h[:])
+// parseDPoPJTI decodes the payload of a DPoP proof JWT (without verifying the
+// signature — the caller must have already verified the signature via
+// verifyDPoPBinding before calling this function) and returns the jti claim.
+func parseDPoPJTI(proofJWT string) (string, error) {
+	parts := strings.Split(proofJWT, ".")
+	if len(parts) != 3 {
+		return "", errors.New("DPoP proof is not a valid JWT (expected 3 parts)")
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("DPoP proof payload decode error: %w", err)
+	}
+	var payload struct {
+		JTI string `json:"jti"`
+	}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return "", fmt.Errorf("DPoP proof payload parse error: %w", err)
+	}
+	return payload.JTI, nil
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/google/uuid"
 )
 
@@ -202,12 +203,14 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 
 // handleValidate handles POST /api/v1/validate.
 //
-// Capability matching is delegated to the enforcement engine so that glob
-// resource patterns (e.g. "tools/*") and specificity scoring are identical to
-// those used by /api/v1/enforce.  Revocation and kill-switch are checked so
-// that a pre-flight validate reflects the same security posture as enforce.
-// The call-counter increment is intentionally omitted — validate is a stateless
-// pre-flight check and must not consume quota.
+// Full condition evaluation is performed (time windows, IP ranges, allowed
+// operations, etc.) using the same enforcement engine as /enforce.  The
+// call-counter (MaxCalls) is explicitly skipped via enforcement.WithDryRun so
+// that preflight checks do not consume quota.
+//
+// Revocation and kill-switch are checked so that the preflight result is
+// consistent with /enforce.  DPoP replay protection is intentionally omitted —
+// /validate is a read-only preflight and does not consume proof JTIs.
 func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
@@ -270,22 +273,43 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build an EnforceRequest so the engine's glob-aware matching is used.
-	// Resource maps to ToolName; Action maps to Context.Operation.
-	// NOTE: /validate is a stateless preflight check, so we use FindMatchingCapability
-	// directly to avoid condition evaluation and side effects (e.g. counter increments).
+	// Build the enforcement request.  Propagate source IP from the request
+	// context field (if provided by the caller) or fall back to the network
+	// peer, so that IPRangeCondition evaluations are accurate.
+	sourceIP := app.extractClientIP(r)
+	if ip, ok := req.Context["sourceIp"].(string); ok && ip != "" {
+		sourceIP = ip
+	}
+
 	enforceReq := &capability.EnforceRequest{
 		ToolName: req.Resource,
-		Context:  capability.EnforceRequestContext{Operation: req.Action},
+		Context: capability.EnforceRequestContext{
+			Operation: req.Action,
+			SourceIP:  sourceIP,
+		},
 	}
 
-	matched := app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
+	// Run the full enforcement engine with dry-run flag so that conditions
+	// (time window, IP range, allowed operations, etc.) are evaluated but
+	// MaxCalls counters are not incremented.
+	engineResp, engineErr := app.deps.Engine.ValidateAction(enforcement.WithDryRun(r.Context()), enforceReq, claims.Capabilities)
+	if engineErr != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse("enforcement engine error"))
+		return
+	}
 
+	allowed := engineResp.Decision == capability.DecisionAllow
 	validateResp := capability.ValidateActionResponse{
-		Allowed:           matched != nil,
-		MatchedCapability: matched,
+		Allowed: allowed,
 	}
-	if matched == nil {
+
+	switch {
+	case allowed:
+		// Populate MatchedCapability for callers that use it to inspect obligations.
+		validateResp.MatchedCapability = app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
+	case engineResp.Denial != nil:
+		validateResp.Reason = engineResp.Denial.Message
+	default:
 		validateResp.Reason = "no matching capability for requested action"
 	}
 

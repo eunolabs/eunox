@@ -23,6 +23,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/identity"
 	"github.com/edgeobs/eunox/pkg/observability"
 	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/edgeobs/eunox/pkg/revocation"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
@@ -147,11 +148,13 @@ func run() error {
 	}
 
 	// Build issuer app
+	revStore := buildRevocationStore(&cfg, logger)
 	deps := issuer.Dependencies{
 		PolicyEngine: policyEngine,
 		Identity:     idVerifier,
 		KeyStore:     keyStore,
 		RateLimiter:  limiter,
+		Revocation:   revStore,
 		Logger:       logger,
 		Metrics:      metrics,
 	}
@@ -378,4 +381,38 @@ func buildRateLimiter(cfg *config.IssuerConfig, logger *slog.Logger) issuer.Rate
 	}
 
 	return ratelimit.NewInMemory(limiterCfg)
+}
+
+// buildRevocationStore returns the revocation store for the issuer.
+//
+// Preference order:
+//  1. REVOCATION_REDIS_URL — a dedicated Redis instance / cluster for revocation.
+//  2. REDIS_URL            — reuse the rate-limiter Redis (acceptable for single-node).
+//  3. InMemory             — development / single-replica fallback.  Revocations
+//     issued by the gateway will NOT be visible to the issuer in this mode.
+func buildRevocationStore(cfg *config.IssuerConfig, logger *slog.Logger) revocation.Store {
+	redisURL := cfg.RevocationRedisURL
+	if redisURL == "" {
+		redisURL = cfg.RedisURL
+	}
+
+	if redisURL != "" {
+		opts, err := redis.ParseURL(redisURL)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("invalid revocation redis URL, falling back to in-memory revocation store",
+					slog.String("error", err.Error()),
+				)
+			}
+		} else {
+			client := redis.NewClient(opts)
+			return revocation.NewRedis(client)
+		}
+	}
+
+	if logger != nil {
+		logger.Warn("no Redis URL configured for revocation; using in-memory store — " +
+			"gateway revocations will NOT be visible to the issuer in this mode")
+	}
+	return revocation.NewInMemory()
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/capability"
 	"github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/edgeobs/eunox/pkg/identity"
+	"github.com/edgeobs/eunox/pkg/revocation"
 )
 
 // --- Test Helpers ---
@@ -106,14 +107,16 @@ func testApp(t *testing.T, opts ...func(*testAppConfig)) *App {
 		Identity:     &mockIdentity{verifyFunc: cfg.identityFunc},
 		KeyStore:     ks,
 		RateLimiter:  &mockRateLimiter{allowFunc: cfg.rateLimitFunc},
+		Revocation:   cfg.revocationStore,
 	}
 
 	return New(&appCfg, &deps)
 }
 
 type testAppConfig struct {
-	identityFunc  func(ctx context.Context, token string) (*identity.UserContext, error)
-	rateLimitFunc func(ctx context.Context, key string) (bool, error)
+	identityFunc    func(ctx context.Context, token string) (*identity.UserContext, error)
+	rateLimitFunc   func(ctx context.Context, key string) (bool, error)
+	revocationStore revocation.Store
 }
 
 func withIdentity(fn func(ctx context.Context, token string) (*identity.UserContext, error)) func(*testAppConfig) {
@@ -125,6 +128,12 @@ func withIdentity(fn func(ctx context.Context, token string) (*identity.UserCont
 func withRateLimit(fn func(ctx context.Context, key string) (bool, error)) func(*testAppConfig) {
 	return func(c *testAppConfig) {
 		c.rateLimitFunc = fn
+	}
+}
+
+func withRevocation(store revocation.Store) func(*testAppConfig) {
+	return func(c *testAppConfig) {
+		c.revocationStore = store
 	}
 }
 
@@ -530,6 +539,60 @@ func TestRenew_SubjectMismatch(t *testing.T) {
 		IDToken: "fresh-token",
 	})
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestRenew_RevokedToken (T-3): a capability token that has been explicitly revoked
+// must be rejected on /api/v1/renew with 401 Unauthorized (U-2 fix).
+func TestRenew_RevokedToken(t *testing.T) {
+	revStore := revocation.NewInMemory()
+	app := testApp(t, withRevocation(revStore))
+
+	// Issue an original capability token.
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		TTL:          300,
+	})
+	require.Equal(t, http.StatusOK, issueResp.Code)
+
+	var originalResp IssueResponse
+	require.NoError(t, json.Unmarshal(issueResp.Body.Bytes(), &originalResp))
+	require.NotEmpty(t, originalResp.TokenID)
+
+	// Revoke the token in the store.
+	require.NoError(t, revStore.Revoke(context.Background(), originalResp.TokenID, 10*time.Minute))
+
+	// Renewal attempt must be rejected with 401.
+	w := doPost(app, "/api/v1/renew", RenewRequest{
+		Token:   originalResp.Token,
+		IDToken: "fresh-id-token",
+	})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestRenew_NonRevokedToken_WithRevocationStore ensures that a valid, non-revoked
+// token can still be renewed when a revocation store is configured.
+func TestRenew_NonRevokedToken_WithRevocationStore(t *testing.T) {
+	revStore := revocation.NewInMemory()
+	app := testApp(t, withRevocation(revStore))
+
+	// Issue an original capability token.
+	issueResp := doPost(app, "/api/v1/issue", IssueRequest{
+		Token:        "valid-id-token",
+		Capabilities: defaultTestCaps,
+		TTL:          300,
+	})
+	require.Equal(t, http.StatusOK, issueResp.Code)
+
+	var originalResp IssueResponse
+	require.NoError(t, json.Unmarshal(issueResp.Body.Bytes(), &originalResp))
+
+	// Renewal must succeed — the token is NOT revoked.
+	w := doPost(app, "/api/v1/renew", RenewRequest{
+		Token:   originalResp.Token,
+		IDToken: "fresh-id-token",
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // --- JWKS Tests ---
