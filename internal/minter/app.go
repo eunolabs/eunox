@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,6 +35,14 @@ type Config struct {
 	// MaxRequestBodySize is the maximum size of request bodies in bytes.
 	// Defaults to 1 MB (1048576) if not set.
 	MaxRequestBodySize int64
+
+	// TrustedProxyCIDRs is the list of CIDR blocks (e.g. "10.0.0.0/8") whose
+	// requests are permitted to set the X-Forwarded-For header.  When this list
+	// is non-empty and the immediate peer (RemoteAddr) matches one of the CIDRs,
+	// the rightmost untrusted IP in XFF is used as the client IP for rate
+	// limiting.  When the list is empty, XFF is ignored and RemoteAddr is always
+	// used.
+	TrustedProxyCIDRs []string
 }
 
 // Dependencies holds the injected backends for the minter.
@@ -41,17 +50,18 @@ type Dependencies struct {
 	Store       KeyStore
 	Auth        AdminAuthenticator
 	Anomaly     AnomalyDetector
-	PingLimiter ratelimit.Limiter
+	PingLimiter ratelimit.DetailedLimiter
 	Logger      *slog.Logger
 	Metrics     *observability.MetricsRegistry
 }
 
 // App is the API-Key Minter HTTP application.
 type App struct {
-	config  Config
-	deps    Dependencies
-	router  chi.Router
-	metrics *minterMetrics
+	config           Config
+	deps             Dependencies
+	router           chi.Router
+	metrics          *minterMetrics
+	trustedProxyNets []*net.IPNet
 }
 
 type minterMetrics struct {
@@ -61,15 +71,27 @@ type minterMetrics struct {
 	pingDuration *prometheus.HistogramVec
 }
 
-// New creates a new minter App.
-func New(cfg Config, deps *Dependencies) *App {
+// New creates a new minter App.  It returns an error if any of the
+// TrustedProxyCIDRs are malformed — this is treated as a fatal configuration
+// error so that a typo in this security-critical setting causes a clear startup
+// failure rather than silently disabling XFF handling.
+func New(cfg *Config, deps *Dependencies) (*App, error) {
 	app := &App{
-		config: cfg,
+		config: *cfg,
 		deps:   *deps,
 	}
+
+	for _, cidr := range cfg.TrustedProxyCIDRs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TrustedProxyCIDR %q: %w", cidr, err)
+		}
+		app.trustedProxyNets = append(app.trustedProxyNets, ipNet)
+	}
+
 	app.metrics = app.initMetrics()
 	app.router = app.buildRouter()
-	return app
+	return app, nil
 }
 
 // Handler returns the http.Handler for the minter.
@@ -181,13 +203,15 @@ func (app *App) handlePing(w http.ResponseWriter, r *http.Request) {
 
 	// Rate limit by IP.
 	if app.deps.PingLimiter != nil {
-		clientIP := extractClientIP(r)
-		allowed, err := app.deps.PingLimiter.Allow(r.Context(), clientIP)
+		clientIP := app.extractClientIP(r)
+		result, err := app.deps.PingLimiter.Check(r.Context(), clientIP)
 		if err != nil {
 			app.writeError(w, http.StatusInternalServerError, "internal_error", "rate limiter error")
 			return
 		}
-		if !allowed {
+		if !result.Allowed {
+			retryAfter := int(result.RetryAfter.Seconds()) + 1
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			app.recordPingMetric("rate_limited", start)
 			app.writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 			return
@@ -373,13 +397,7 @@ func (app *App) handleListKeys(w http.ResponseWriter, r *http.Request) {
 		offset = parsed
 	}
 
-	total, err := app.deps.Store.CountKeys(r.Context(), tenantID)
-	if err != nil {
-		app.writeError(w, http.StatusInternalServerError, "list_failed", "failed to count keys")
-		return
-	}
-
-	keys, err := app.deps.Store.ListKeys(r.Context(), tenantID, limit, offset)
+	total, keys, err := app.deps.Store.CountAndListKeys(r.Context(), tenantID, limit, offset)
 	if err != nil {
 		app.writeError(w, http.StatusInternalServerError, "list_failed", "failed to list keys")
 		return
@@ -569,12 +587,50 @@ func (app *App) recordPingMetric(status string, start time.Time) {
 	app.metrics.pingDuration.WithLabelValues(status).Observe(time.Since(start).Seconds())
 }
 
-func extractClientIP(r *http.Request) string {
+// extractClientIP returns the real client IP address for rate limiting.
+//
+// X-Forwarded-For is only trusted when the immediate peer (r.RemoteAddr) is
+// within one of the configured TrustedProxyCIDRs.  When no trusted proxies are
+// configured, or the peer is not trusted, RemoteAddr is used directly.
+func (app *App) extractClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
+
+	if len(app.trustedProxyNets) > 0 {
+		if remoteIP := net.ParseIP(host); remoteIP != nil && app.isTrustedProxy(remoteIP) {
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				// Walk the XFF chain backwards (right to left), returning the
+				// first IP that is not in the trusted proxy list.  This prevents
+				// a client from spoofing the leftmost entry when a trusted proxy
+				// appends to (rather than overwrites) an incoming XFF header.
+				parts := strings.Split(xff, ",")
+				for i := len(parts) - 1; i >= 0; i-- {
+					ip := net.ParseIP(strings.TrimSpace(parts[i]))
+					if ip == nil {
+						continue
+					}
+					if !app.isTrustedProxy(ip) {
+						return ip.String()
+					}
+				}
+			}
+		}
+	}
+
 	return host
+}
+
+// isTrustedProxy reports whether ip is within one of the configured trusted
+// proxy CIDRs.
+func (app *App) isTrustedProxy(ip net.IP) bool {
+	for _, network := range app.trustedProxyNets {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func generateShortID() (string, error) {

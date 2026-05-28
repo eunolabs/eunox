@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -526,6 +527,69 @@ func TestCachingResolver(t *testing.T) {
 		assert.Contains(t, err.Error(), "Service Unavailable")
 		assert.Equal(t, 2, upstreamCalls) // Upstream was called and failed.
 	})
+}
+
+// TestCachingResolver_Singleflight verifies that concurrent Resolve calls for
+// the same DID result in exactly one upstream fetch (CI-6: singleflight
+// deduplication).  Without the singleflight group, N goroutines calling
+// Resolve simultaneously for an uncached DID would each fan out to the inner
+// resolver; with it, only the first in-flight call reaches the inner resolver
+// and all others coalesce on its result.
+func TestCachingResolver_Singleflight(t *testing.T) {
+	const goroutines = 20
+	const did = "did:web:singleflight.test"
+
+	// upstreamCalls is incremented inside a mutex so the final count is
+	// accurate even under the Go race detector.
+	var (
+		mu           sync.Mutex
+		upstreamCalls int
+	)
+
+	// slow inner resolver: blocks until released so goroutines can pile up.
+	ready := make(chan struct{})
+	inner := &mockResolver{
+		resolveFunc: func(_ context.Context, d string) (*Document, error) {
+			<-ready // wait until all goroutines have been started
+			mu.Lock()
+			upstreamCalls++
+			mu.Unlock()
+			return &Document{ID: d}, nil
+		},
+	}
+
+	resolver := NewCachingResolver(inner, WithCacheTTL(5*time.Minute))
+
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	docs := make([]*Document, goroutines)
+
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			docs[idx], errs[idx] = resolver.Resolve(context.Background(), did)
+		}(i)
+	}
+
+	// Give all goroutines time to reach the inner resolver's block.
+	time.Sleep(20 * time.Millisecond)
+	close(ready) // release all at once
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "goroutine %d returned error", i)
+		require.NotNil(t, docs[i])
+		assert.Equal(t, did, docs[i].ID)
+	}
+
+	mu.Lock()
+	calls := upstreamCalls
+	mu.Unlock()
+
+	// The singleflight group must have deduplicated all concurrent calls into
+	// exactly one upstream fetch.
+	assert.Equal(t, 1, calls, "singleflight must deduplicate %d concurrent calls into 1 upstream fetch", goroutines)
 }
 
 func TestMultiResolver(t *testing.T) {

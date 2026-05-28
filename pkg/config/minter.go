@@ -23,6 +23,10 @@ type MinterConfig struct {
 	RateLimitMax        int         `env:"MINTER_RATE_LIMIT_MAX" default:"100" min:"1"`
 	RateLimitWindowSecs int         `env:"MINTER_RATE_LIMIT_WINDOW_SECONDS" default:"60" min:"1"`
 
+	// TrustedProxyCIDRs is the list of CIDR blocks (e.g. "10.0.0.0/8") whose
+	// X-Forwarded-For headers are trusted for client IP extraction.
+	TrustedProxyCIDRs []string `env:"MINTER_TRUSTED_PROXY_CIDRS"`
+
 	// Database connection pool
 	DBPool DatabasePoolConfig
 

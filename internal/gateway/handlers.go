@@ -204,9 +204,10 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 //
 // Capability matching is delegated to the enforcement engine so that glob
 // resource patterns (e.g. "tools/*") and specificity scoring are identical to
-// those used by /api/v1/enforce.  Redis side-effects (kill-switch, revocation,
-// call-counter) are intentionally omitted — this endpoint is a stateless
-// capability pre-flight check only.
+// those used by /api/v1/enforce.  Revocation and kill-switch are checked so
+// that a pre-flight validate reflects the same security posture as enforce.
+// The call-counter increment is intentionally omitted — validate is a stateless
+// pre-flight check and must not consume quota.
 func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
@@ -235,6 +236,40 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check revocation so that a revoked token is denied here, just as it
+	// would be by /enforce.
+	if app.deps.Revocation != nil && claims.JWTID != "" {
+		revoked, err := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+			return
+		}
+		if revoked {
+			writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
+				Allowed: false,
+				Reason:  "token has been revoked",
+			})
+			return
+		}
+	}
+
+	// Check kill switch so that a blocked subject is denied here, just as it
+	// would be by /enforce.
+	if app.deps.KillSwitch != nil {
+		blocked, err := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, "")
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse("kill switch check unavailable"))
+			return
+		}
+		if blocked {
+			writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
+				Allowed: false,
+				Reason:  "kill switch is active",
+			})
+			return
+		}
+	}
+
 	// Build an EnforceRequest so the engine's glob-aware matching is used.
 	// Resource maps to ToolName; Action maps to Context.Operation.
 	// NOTE: /validate is a stateless preflight check, so we use FindMatchingCapability
@@ -247,8 +282,8 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 	matched := app.deps.Engine.FindMatchingCapability(enforceReq, claims.Capabilities)
 
 	validateResp := capability.ValidateActionResponse{
-		Allowed:            matched != nil,
-		MatchedCapability:  matched,
+		Allowed:           matched != nil,
+		MatchedCapability: matched,
 	}
 	if matched == nil {
 		validateResp.Reason = "no matching capability for requested action"

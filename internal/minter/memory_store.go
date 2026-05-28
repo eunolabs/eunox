@@ -89,6 +89,39 @@ func (s *InMemoryStore) ListKeys(_ context.Context, tenantID string, limit, offs
 	return result, nil
 }
 
+// CountAndListKeys implements KeyStore.
+// It holds the read lock across both the count and the list so that the two
+// values are consistent with each other — preventing the TOCTOU race that
+// arises from separate CountKeys and ListKeys calls.
+func (s *InMemoryStore) CountAndListKeys(_ context.Context, tenantID string, limit, offset int) (int, []*APIKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*APIKey, 0, len(s.keys))
+	for _, k := range s.keys {
+		if k.TenantID == tenantID {
+			result = append(result, k)
+		}
+	}
+	total := len(result)
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].KeyID < result[j].KeyID
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+
+	if offset >= len(result) {
+		return total, nil, nil
+	}
+	result = result[offset:]
+	if limit > 0 && limit < len(result) {
+		result = result[:limit]
+	}
+	return total, result, nil
+}
+
 // RevokeKey implements KeyStore.
 // It marks the key as revoked and returns a copy of the key with RevokedAt set.
 // The returned snapshot is safe for the caller to use without re-querying the store,

@@ -242,6 +242,12 @@ Resolved items from this review cycle (each addressed, tested, and merged to the
 | DI-2 | Stale-on-error window added to `CachingResolver` — serves last-valid document during upstream outage | ✅ Resolved (pre-existing) |
 | DI-3 | `IdempotencyStore` background cleanup ticker replaces piggybacked O(N) scan in `Set()` | ✅ Resolved |
 | DI-4 | PostgreSQL driver migrated from `lib/pq` to `pgx/v5/stdlib`; pool metrics exposed as Prometheus gauges | ✅ Resolved |
+| CI-1 | Revocation + kill-switch checks added to `handleValidate`; both fail-closed (503) on error | ✅ Resolved |
+| CI-2 | `CountAndListKeys` atomic method added to `KeyStore` interface; `InMemoryStore` uses single `RLock`; `PostgresKeyStore` uses a read-committed `BeginTx` transaction | ✅ Resolved |
+| CI-3 | `TrustedProxyCIDRs` added to minter `Config`; `New()` parses CIDRs at startup (returns error on invalid CIDR); `extractClientIP` converted to method with XFF walking for trusted proxies | ✅ Resolved |
+| CI-4 | `PingLimiter` type changed to `DetailedLimiter`; `Retry-After` header set on all 429 ping responses using `result.RetryAfter.Seconds() + 1` | ✅ Resolved |
+| CI-5 | `testcontainers-go` moved to `tests/integration/` sub-module (`github.com/edgeobs/eunox/tests/integration`); root `go.mod` no longer includes testcontainers; integration tests use `POSTGRES_TEST_DSN` env var | ✅ Resolved |
+| CI-6 | `singleflight.Group` added to `CachingResolver`; concurrent `Resolve` calls for the same DID coalesce into one upstream fetch | ✅ Resolved |
 
 ### Implementation notes
 
@@ -253,18 +259,24 @@ Resolved items from this review cycle (each addressed, tested, and merged to the
 
 **DI-4 (pgx migration):** `go.mod` no longer references `github.com/lib/pq`. Driver name updated from `"postgres"` to `"pgx"` in `database.OpenPool`. `database.PoolMetrics(db, reg, service)` registers a `prometheus.Collector` backed by `*sql.DB.Stats()` that emits five metrics: `db_pool_open_connections`, `db_pool_in_use_connections`, `db_pool_idle_connections`, `db_pool_wait_count_total`, and `db_pool_wait_duration_seconds_total`. `isUniqueViolation` uses `pgconn.PgError` (same SQLSTATE `23505`, different type).
 
+**CI-1 (validate revocation/kill-switch):** `handleValidate` now checks revocation (`Revocation.IsRevoked`) before the kill-switch (`KillSwitch.ShouldBlock`), then delegates to the enforcement engine. Both checks are guarded: revocation is skipped if `JWTID` is empty; kill-switch is called with an empty session ID since the validate endpoint has no session context. Errors from either store return 503 (fail-closed), matching the pattern in `handleEnforce`. Call counters are intentionally not incremented on validate — the endpoint is a stateless preflight, not a billable tool invocation.
+
+**CI-2 (atomic CountAndListKeys):** `KeyStore` gains a `CountAndListKeys(ctx, tenantID, limit, offset int) (int, []*APIKey, error)` method. `InMemoryStore` holds a single `RLock` across the count + page slice, eliminating the TOCTOU window between two separate calls. `PostgresKeyStore` runs both queries inside a single `sql.LevelRepeatableRead` read-only transaction so `COUNT(*)` and `SELECT` see the same consistent snapshot (PostgreSQL REPEATABLE READ uses a snapshot taken at the start of the transaction, so both statements reflect the same committed state). The old `CountKeys` and `ListKeys` methods are retained for backward compatibility. `handleListKeys` is updated to call the new method.
+
+**CI-3 (trusted-proxy XFF):** `minter.Config.TrustedProxyCIDRs []string` is parsed into `[]*net.IPNet` at `New()` time — a malformed CIDR is a fatal startup error (config mistake must be visible, not silently ignored). `extractClientIP` is now an `(*App)` method: when the immediate peer's IP falls in a trusted CIDR it walks the XFF header right-to-left, skipping additional trusted hops, and returns the first untrusted IP. When the list is empty or the peer is not trusted, `RemoteAddr` is used directly. `MINTER_TRUSTED_PROXY_CIDRS` is the corresponding env var (comma-separated).
+
+**CI-4 (Retry-After):** `Dependencies.PingLimiter` type changed from `ratelimit.Limiter` to `ratelimit.DetailedLimiter`. `handlePing` calls `Check()` and, on rate-limit denial, sets `Retry-After: <seconds>` using `int(result.RetryAfter.Seconds()) + 1` (rounds up to the next whole second, matching the pattern in `admin_ratelimit.go`).
+
+**CI-5 (module separation):** Container helpers (`StartPostgres`, `StartRedis`) moved to `tests/integration/testutil/` in a new sub-module `github.com/edgeobs/eunox/tests/integration`. This module owns testcontainers-go as a direct dependency. `pkg/testutil/containers_integration.go` and the associated stub `containers.go` are deleted; the root `go.mod` no longer lists testcontainers. `internal/minter/postgres_store_integration_test.go` is updated to read `POSTGRES_TEST_DSN` from the environment and call `t.Skip` when it is not set, removing the Docker dependency from the root module's test suite. Run integration tests from `tests/integration/` with a live PostgreSQL DSN.
+
+**CI-6 (singleflight):** `CachingResolver` gains an `sf singleflight.Group` field. `Resolve` wraps the `r.inner.Resolve` call in `r.sf.Do(did, ...)` so that N concurrent goroutines resolving the same uncached DID issue exactly one upstream HTTP request; the remaining callers coalesce on its result. The first caller's `context.Context` is used for the in-flight request — if that context is cancelled the error propagates to all coalesced callers, an acceptable trade-off given that DID documents are long-lived and retried quickly. `golang.org/x/sync` was already an indirect dep; no new module dependency is introduced.
+
 ### Remaining open items
 
 The following findings from this cycle have **not** been addressed and remain as follow-up work:
 
 | ID | Description | Effort |
 |---|---|---|
-| CI-1 | Document revocation/kill-switch exclusion on `/api/v1/validate`; add checks if security-critical use cases require it | S |
-| CI-2 | Wrap `CountKeys` + `ListKeys` in a transaction or adopt cursor-based pagination | S |
-| CI-3 | Add trusted-proxy XFF extraction to minter `extractClientIP` | S |
-| CI-4 | Emit `Retry-After` header on all 429 responses | S |
-| CI-5 | Move `testcontainers-go` to a separate test module | S |
-| CI-6 | Use `singleflight` in `CachingResolver.Resolve` to deduplicate concurrent DID fetches | S |
 | OQ-1 | Clarify `Proofs.Signatures` enforcement contract; add verification if required | L |
 | OQ-2 | Define OTLP configuration interface; document in `DEPLOYMENT.md` | M |
 | OQ-3 | Document posture-emitter scaling model; define path to shared store if replicated | S |

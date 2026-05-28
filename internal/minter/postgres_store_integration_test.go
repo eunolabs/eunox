@@ -15,8 +15,6 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-
-	"github.com/edgeobs/eunox/pkg/testutil"
 )
 
 // migratePostgres applies the minter schema to a test database by loading
@@ -40,26 +38,28 @@ func migratePostgres(t *testing.T, dsn string) {
 	}
 }
 
-// newTestPostgresStore starts a PostgreSQL container and returns a ready-to-use
-// PostgresKeyStore.  The caller must close the *sql.DB when done.
+// newTestPostgresStore opens a PostgresKeyStore against the database pointed
+// to by POSTGRES_TEST_DSN.  Set that environment variable to a PostgreSQL DSN
+// before running integration tests, e.g.:
+//
+//	POSTGRES_TEST_DSN="postgres://eunox:pass@localhost:5432/eunox_test?sslmode=disable" \
+//	  go test -tags=integration ./internal/minter/...
+//
+// If POSTGRES_TEST_DSN is not set the test is skipped.
 func newTestPostgresStore(t *testing.T) (*PostgresKeyStore, *sql.DB) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	t.Cleanup(cancel)
-
-	pg, err := testutil.StartPostgres(ctx, testutil.PostgresContainerConfig{})
-	if err != nil {
-		t.Fatalf("start postgres: %v", err)
+	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_TEST_DSN not set; skipping postgres integration test")
 	}
-	t.Cleanup(func() { _ = pg.Terminate(context.Background()) })
 
-	migratePostgres(t, pg.DSN)
+	migratePostgres(t, dsn)
 
-	db, err := sql.Open("pgx", pg.DSN)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open pool: %v", err)
 	}
@@ -391,5 +391,70 @@ func TestPostgresKeyStore_KeyWithExpiry(t *testing.T) {
 	}
 	if !got.IsExpired(expires.Add(time.Second)) {
 		t.Error("key should be expired after ExpiresAt")
+	}
+}
+
+// TestPostgresKeyStore_CountAndListKeys verifies that CountAndListKeys returns
+// a consistent total + page within a single read-committed transaction, and
+// that pagination boundaries are correct.
+func TestPostgresKeyStore_CountAndListKeys(t *testing.T) {
+	store, _ := newTestPostgresStore(t)
+	ctx := context.Background()
+
+	const n = 6
+	for i := range n {
+		key := &APIKey{
+			KeyID:     fmt.Sprintf("cal-key-%d", i),
+			TenantID:  "cal-tenant",
+			CreatedAt: time.Now().UTC(),
+		}
+		if err := store.CreateKey(ctx, key); err != nil {
+			t.Fatalf("CreateKey %d: %v", i, err)
+		}
+	}
+
+	// Full page (limit > n).
+	total, page, err := store.CountAndListKeys(ctx, "cal-tenant", 20, 0)
+	if err != nil {
+		t.Fatalf("CountAndListKeys full: %v", err)
+	}
+	if total != n {
+		t.Errorf("full: total = %d, want %d", total, n)
+	}
+	if len(page) != n {
+		t.Errorf("full: page len = %d, want %d", len(page), n)
+	}
+
+	// Second page (offset = 3, limit = 3).
+	total2, page2, err := store.CountAndListKeys(ctx, "cal-tenant", 3, 3)
+	if err != nil {
+		t.Fatalf("CountAndListKeys page2: %v", err)
+	}
+	if total2 != n {
+		t.Errorf("page2: total = %d, want %d", total2, n)
+	}
+	if len(page2) != 3 {
+		t.Errorf("page2: len = %d, want 3", len(page2))
+	}
+
+	// Past-end page (offset beyond total).
+	total3, page3, err := store.CountAndListKeys(ctx, "cal-tenant", 10, 100)
+	if err != nil {
+		t.Fatalf("CountAndListKeys past-end: %v", err)
+	}
+	if total3 != n {
+		t.Errorf("past-end: total = %d, want %d", total3, n)
+	}
+	if len(page3) != 0 {
+		t.Errorf("past-end: len = %d, want 0", len(page3))
+	}
+
+	// Different tenant must not appear in the count.
+	total4, _, err := store.CountAndListKeys(ctx, "other-tenant", 10, 0)
+	if err != nil {
+		t.Fatalf("CountAndListKeys other-tenant: %v", err)
+	}
+	if total4 != 0 {
+		t.Errorf("other-tenant: total = %d, want 0", total4)
 	}
 }
