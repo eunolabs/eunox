@@ -103,10 +103,11 @@ The same `mcpServers` config format applies. Add the entry to your IDE's MCP con
 If your MCP client connects over HTTP/SSE rather than stdio, start the proxy in server mode:
 
 ```bash
-eunox-mcp serve \
+eunox-mcp proxy \
+  --transport http \
+  --port 3002 \
   --policy ./policy.yaml \
-  --upstream-url http://localhost:8080 \
-  --port 3002
+  -- node ./my-mcp-server.js
 ```
 
 Point your agent at `http://localhost:3002` instead of the upstream directly.
@@ -118,17 +119,21 @@ If you are writing a Go agent, you can embed the enforcement engine directly usi
 ```go
 import "github.com/edgeobs/eunox/internal/agentruntime"
 
-rt, err := agentruntime.New(agentruntime.Config{
-    PolicyPath: "./policy.yaml",
-    AuditLog:   "./audit.log",
+rt, err := agentruntime.New(&agentruntime.Config{
+    IssuerURL:     "https://issuer.example.com",
+    GatewayURL:    "https://gateway.example.com",
+    IdentityToken: getIdentityToken(), // Your OIDC/Azure AD token
 })
 if err != nil {
     log.Fatal(err)
 }
-defer rt.Close()
+defer rt.Stop()
 
 // Every tool call goes through the runtime:
-decision, err := rt.Enforce(ctx, toolCall)
+result, err := rt.InvokeTool(ctx, &agentruntime.ToolRequest{
+    ToolName:  "read_file",
+    Arguments: map[string]interface{}{"path": "/home/user/projects/main.go"},
+})
 ```
 
 See [`docs/agent-sdk.md`](https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md) for the full SDK reference.
@@ -137,18 +142,18 @@ See [`docs/agent-sdk.md`](https://github.com/edgeobs/eunox/blob/main/docs/agent-
 
 ## Step 4 — Enable the local audit log
 
-Set `EUNOX_AUDIT_LOG_PATH` to a file path before starting the proxy:
+The proxy automatically writes HMAC-chained audit records to `~/.eunox/audit.jsonl`. Each enforcement event is appended as a newline-delimited JSON record. Records are HMAC-chained: each record's `prev_hash` field covers the previous record, producing a tamper-evident append-only log.
+
+To write the log to a custom path, pass `--audit-log`:
 
 ```bash
-EUNOX_AUDIT_LOG_PATH=./audit.jsonl eunox-mcp serve --policy ./policy.yaml ...
+eunox-mcp proxy --policy ./policy.yaml --audit-log ./audit.jsonl -- npx @modelcontextprotocol/server-filesystem /home/user/projects
 ```
 
-Each enforcement event is appended as a newline-delimited JSON record. Records are HMAC-chained: each record's `prev_hash` field covers the previous record, producing a tamper-evident append-only log.
-
-Verify the chain at any time:
+Inspect individual records at any time:
 
 ```bash
-eunox-mcp validate-log ./audit.jsonl
+eunox-mcp validate-token --since 2026-05-01
 ```
 
 ---
@@ -182,7 +187,7 @@ To upgrade, run:
 ```bash
 eunox-mcp upgrade-to-hosted \
   --gateway-url https://your-gateway.example.com \
-  --api-key <your-issued-jwt>
+  --api-key sk-<prefix>.<secret>
 ```
 
 This command patches your existing `policy.yaml` to use the remote enforcer and migrates local audit records. See [`docs/upgrade-to-hosted.md`](https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md) for the full upgrade walkthrough.
@@ -197,7 +202,7 @@ The proxy logs every enforcement decision at `DEBUG` level. Set `EUNOX_LOG_LEVEL
 
 **Policy parse error on startup**
 
-Run `eunox-mcp validate-policy ./policy.yaml` to get a structured error report before starting the proxy.
+Run `eunox-mcp validate ./policy.yaml` to get a structured error report before starting the proxy.
 
 **Audit log grows unbounded**
 

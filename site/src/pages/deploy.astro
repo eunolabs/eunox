@@ -100,14 +100,15 @@ capabilities:
 {'}'}</code></pre>
 
         <h3>Enable the local audit log</h3>
-<pre><code>EUNOX_AUDIT_LOG_PATH=./audit.jsonl eunox-mcp serve --policy ./policy.yaml ...</code></pre>
+        <p>The proxy writes HMAC-chained audit records to <code>~/.eunox/audit.jsonl</code> automatically. Use <code>--audit-log</code> to override the path:</p>
+<pre><code>eunox-mcp proxy --policy ./policy.yaml --audit-log ./audit.jsonl -- npx @modelcontextprotocol/server-filesystem /home/user/projects</code></pre>
 
-        <p>Records are HMAC-chained for tamper-evidence. Verify the chain with <code>eunox-mcp validate-log ./audit.jsonl</code>.</p>
+        <p>Records are HMAC-chained for tamper-evidence. Inspect the log with <code>eunox-mcp validate-token</code> or summarise with <code>eunox-mcp stats</code>.</p>
 
         <h3>Upgrade when you need shared state</h3>
 <pre><code>eunox-mcp upgrade-to-hosted \
   --gateway-url https://your-gateway.example.com \
-  --api-key &lt;your-issued-jwt&gt;</code></pre>
+  --api-key sk-&lt;prefix&gt;.&lt;secret&gt;</code></pre>
 
         <p>See the <a href="https://eunolabs.ai/blog/33-deploy-oss" target="_blank" rel="noopener noreferrer">full OSS deployment guide</a> and <a href="https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a> for the complete walkthrough.</p>
 
@@ -175,7 +176,7 @@ docker load &lt; air-gap-images.tar</code></pre>
       "args": [
         "-y", "@eunox/mcp", "proxy",
         "--enforcer-url", "https://gateway.example.com",
-        "--enforcer-api-key", "&lt;your-issued-jwt&gt;",
+        "--enforcer-api-key", "sk-&lt;prefix&gt;.&lt;secret&gt;",
         "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
       ]
     {'}'}
