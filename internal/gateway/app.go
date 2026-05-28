@@ -329,6 +329,7 @@ func (app *App) buildRouter() chi.Router {
 	// Global middleware
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
+	r.Use(observability.TracePropagation("gateway"))
 
 	if app.deps.Logger != nil {
 		r.Use(observability.RequestLogging(app.deps.Logger))

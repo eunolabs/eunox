@@ -1,5 +1,54 @@
 # Posture Queue Scaling Guide
 
+## Deployment Model
+
+### Singleton-sidecar topology
+
+The posture emitter is designed as a **singleton sidecar**: exactly **one instance
+per compute node** (VM, bare-metal host, or Kubernetes node). It collects AI
+asset observations that are local to that node and delivers them to the configured
+cloud security platform (CSPM) plugin.
+
+Running multiple replicas of the posture emitter on the same node is explicitly
+**unsupported**: the SQLite queue uses `LOCKING_MODE=EXCLUSIVE`, which prevents
+more than one process from opening the database file simultaneously.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Node A                                             │
+│  ┌──────────────┐   events   ┌──────────────────┐   │
+│  │ AI workloads ├───────────►│ posture-emitter  ├──►│ CSPM
+│  └──────────────┘            │ (one per node)   │   │ plugin
+│                              └──────────────────┘   │
+└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  Node B                                             │
+│  ┌──────────────┐   events   ┌──────────────────┐   │
+│  │ AI workloads ├───────────►│ posture-emitter  ├──►│ CSPM
+│  └──────────────┘            │ (one per node)   │   │ plugin
+│                              └──────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Kubernetes deployment**: use a `DaemonSet` so that exactly one pod is scheduled
+per node. Set `hostPath` for `POSTURE_QUEUE_PATH` so the SQLite file persists
+across pod restarts on the same node.
+
+**VM / bare-metal deployment**: run the emitter as a `systemd` unit (or equivalent
+init process). The SQLite file path should point to a directory on local storage
+(not network-attached) to avoid filesystem locking incompatibilities.
+
+### Horizontal scaling path
+
+Horizontal scaling (multiple replicas sharing work) requires the PostgreSQL queue
+migration described in the [PostgreSQL Migration Path](#postgresql-migration-path)
+section. Once the PostgreSQL backend is in place, the SQLite-exclusivity constraint
+is lifted and standard replica-set topologies (e.g., a Kubernetes `Deployment`)
+become viable.
+
+Until then, **scale out by adding nodes** (each with its own emitter sidecar),
+not by adding replicas on a single node.
+
 ## Overview
 
 The posture emitter uses a local SQLite database as a durable event queue for

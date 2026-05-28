@@ -168,27 +168,33 @@ Use a `sync.Map` of `singleflight.Group` keys (or `golang.org/x/sync/singlefligh
 
 ---
 
-## [?] Open Questions
+## [✅] Open Questions (all resolved)
 
-### OQ-1 — Multi-Issuer Co-Signature (`TokenPayload.Proofs`) Verification
+### OQ-1 — Multi-Issuer Co-Signature (`TokenPayload.Proofs`) Verification ✅ Resolved
 
 **Location:** `pkg/capability/token.go` (`Proofs` / `IssuanceProofs`), `internal/gateway/partner_verifier.go`
 
 `TokenPayload` carries a `Proofs.Signatures` field described in the architecture as multi-issuer co-signatures for cross-org delegation. No code in the enforcement path or in `PartnerTokenVerifier.VerifyPartnerToken` visibly verifies these signatures. If this field is intended as a security primitive (e.g., a quorum of issuers must co-sign before a token is valid), the verification must be present in the enforcement hot path. If it is metadata only, the field-level doc comment should say so explicitly to prevent future implementers from assuming it is enforced.
 
+**Resolution:** `Proofs.Signatures` is now enforced as a security primitive. `pkg/capability/proofs.go` implements `VerifyCoSignatures(ctx, token, proofs, resolver)` supporting all nine JWS algorithms (ES256/384/512, RS256/384/512, PS256/384/512, EdDSA). The signing payload is the JWT compact serialization bytes; ECDSA signatures use IEEE P1363 encoding (r‖s, fixed-width). When `Proofs.Signatures` is non-empty, **all** signatures must verify successfully — a single failure rejects the token. `PartnerTokenVerifier.VerifyPartnerToken` in `internal/gateway/partner_verifier.go` calls `VerifyCoSignatures` after the primary JWT signature is verified; the `PublicKeyResolver` is the same `PartnerIssuerResolver` used for primary verification, ensuring co-signers must be registered partners. Eighteen test cases cover all algorithms, edge cases, and multi-signer scenarios. Field-level doc comments in `token.go` document the enforcement contract and encoding conventions explicitly.
+
 ---
 
-### OQ-2 — Operator-Configurable OTLP / Distributed Tracing Endpoint
+### OQ-2 — Operator-Configurable OTLP / Distributed Tracing Endpoint ✅ Resolved
 
 The observability layer emits Prometheus metrics and structured logs. There is no visible configuration path for an operator to supply an OTLP endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT` or equivalent) and enable distributed traces across the gateway → issuer → minter → audit chain. Without distributed tracing, diagnosing latency anomalies across service boundaries requires correlating structured log streams by `X-Request-Id`, which is operationally expensive. The deployment guide (`docs/DEPLOYMENT.md`) should document whether OTLP is planned and what environment variables control it.
 
+**Resolution:** All four services now emit OTLP traces. `pkg/observability/tracing.go` gained `TracingConfigFromEnv(serviceName, version)` which reads standard OTel environment variables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_INSECURE`, `OTEL_TRACES_SAMPLER_ARG`) without service-name prefixing, in line with the OTel specification. Each service calls `observability.InitTracer` early in `run()` and registers the tracer shutdown via `defer`. `TracePropagation(serviceName)` middleware is wired into every service's `buildRouter()`, propagating W3C trace context across service boundaries. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset the provider defaults to noop — zero overhead, zero configuration required for development. `docs/deployment.md` documents the env vars, service names, and Jaeger / OTel Collector examples. Four new unit tests cover `TracingConfigFromEnv` (defaults, all vars, invalid sampler arg, out-of-range sampler arg).
+
 ---
 
-### OQ-3 — `posture-emitter` SQLite Single-Replica Constraint
+### OQ-3 — `posture-emitter` SQLite Single-Replica Constraint ✅ Resolved
 
 **Location:** `go.mod` (`modernc.org/sqlite`), `internal/posture/`
 
 The posture-emitter uses SQLite as its persistence layer, which is suitable for single-node development but incompatible with any multi-replica deployment. If the posture-emitter is intended to scale horizontally (e.g., one instance per cluster node emitting host-level posture signals), each replica would operate an isolated SQLite database with no cross-replica aggregation. The architecture should clarify whether the posture-emitter is a singleton sidecar or a replicated service, and if the latter, what the migration path to a shared store (PostgreSQL or Redis) is.
+
+**Resolution:** Deployment model is now explicitly documented. `docs/posture-scaling.md` gained a "Deployment Model" section that states: the posture-emitter is a **singleton sidecar** (one per compute node), deployed as a Kubernetes `DaemonSet` with `hostPath` or as a `systemd` unit. Running multiple instances on the same node is explicitly unsupported (SQLite `LOCKING_MODE=EXCLUSIVE`). The horizontal scaling path (PostgreSQL migration) is documented in the same file. `docs/deployment.md` gained a "Posture Emitter — Deployment Model" summary section linking to the detailed guide.
 
 ---
 
@@ -210,9 +216,9 @@ The findings are ordered by risk impact and dependency. Items marked ⚡ should 
 | 🔧 10 | CI-6 | Use `singleflight` in `CachingResolver.Resolve` to deduplicate concurrent DID fetches | S |
 | 🔧 11 | DI-4 | Migrate from `lib/pq` to `pgx/v5/stdlib`; expose pool metrics | M |
 | 🔧 12 | CI-5 | Move `testcontainers-go` to a separate test module | S |
-| 📋 13 | OQ-1 | Clarify `Proofs.Signatures` enforcement contract; add verification if required | L |
-| 📋 14 | OQ-2 | Define OTLP configuration interface; document in `DEPLOYMENT.md` | M |
-| 📋 15 | OQ-3 | Document posture-emitter scaling model; define path to shared store | S |
+| 📋 13 | OQ-1 | Clarify `Proofs.Signatures` enforcement contract; add verification if required | L | ✅ |
+| 📋 14 | OQ-2 | Define OTLP configuration interface; document in `DEPLOYMENT.md` | M | ✅ |
+| 📋 15 | OQ-3 | Document posture-emitter scaling model; define path to shared store | S | ✅ |
 
 **Effort key:** S = 1–2 days, M = 3–5 days, L = 1+ week
 
@@ -273,10 +279,10 @@ Resolved items from this review cycle (each addressed, tested, and merged to the
 
 ### Remaining open items
 
-The following findings from this cycle have **not** been addressed and remain as follow-up work:
+All findings from this cycle have been addressed. No follow-up work remains.
 
-| ID | Description | Effort |
-|---|---|---|
-| OQ-1 | Clarify `Proofs.Signatures` enforcement contract; add verification if required | L |
-| OQ-2 | Define OTLP configuration interface; document in `DEPLOYMENT.md` | M |
-| OQ-3 | Document posture-emitter scaling model; define path to shared store if replicated | S |
+| ID | Description | Effort | Status |
+|---|---|---|---|
+| OQ-1 | Co-signature verification (`VerifyCoSignatures` + gateway wiring) | L | ✅ Resolved |
+| OQ-2 | OTLP tracing wired in all 4 services; `TracingConfigFromEnv`; deployment docs | M | ✅ Resolved |
+| OQ-3 | Posture-emitter deployment model documented; scaling path defined | S | ✅ Resolved |

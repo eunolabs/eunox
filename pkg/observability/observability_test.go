@@ -438,3 +438,67 @@ func findMetric(t *testing.T, families []*dto.MetricFamily, name string) *dto.Me
 	t.Fatalf("metric family %s not found", name)
 	return nil
 }
+
+func TestTracingConfigFromEnv_Defaults(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "")
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "")
+
+	cfg := TracingConfigFromEnv("svc", "1.0")
+
+	if cfg.ServiceName != "svc" {
+		t.Errorf("ServiceName = %q, want %q", cfg.ServiceName, "svc")
+	}
+	if cfg.ServiceVersion != "1.0" {
+		t.Errorf("ServiceVersion = %q, want %q", cfg.ServiceVersion, "1.0")
+	}
+	if cfg.Endpoint != "" {
+		t.Errorf("Endpoint = %q, want empty", cfg.Endpoint)
+	}
+	if cfg.Insecure {
+		t.Error("Insecure should be false by default")
+	}
+	if cfg.SampleRatio != 1.0 {
+		t.Errorf("SampleRatio = %v, want 1.0", cfg.SampleRatio)
+	}
+}
+
+func TestTracingConfigFromEnv_AllEnvVars(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "collector:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "0.25")
+
+	cfg := TracingConfigFromEnv("gateway", "2.0")
+
+	if cfg.Endpoint != "collector:4317" {
+		t.Errorf("Endpoint = %q, want %q", cfg.Endpoint, "collector:4317")
+	}
+	if !cfg.Insecure {
+		t.Error("Insecure should be true")
+	}
+	if cfg.SampleRatio != 0.25 {
+		t.Errorf("SampleRatio = %v, want 0.25", cfg.SampleRatio)
+	}
+}
+
+func TestTracingConfigFromEnv_InvalidSamplerArgIgnored(t *testing.T) {
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "not-a-number")
+
+	cfg := TracingConfigFromEnv("svc", "1.0")
+
+	// Invalid value should fall back to the default (1.0).
+	if cfg.SampleRatio != 1.0 {
+		t.Errorf("SampleRatio = %v, want 1.0 (default) on invalid input", cfg.SampleRatio)
+	}
+}
+
+func TestTracingConfigFromEnv_SamplerArgOutOfRange(t *testing.T) {
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "1.5")
+
+	cfg := TracingConfigFromEnv("svc", "1.0")
+
+	// Out-of-range value should fall back to 1.0.
+	if cfg.SampleRatio != 1.0 {
+		t.Errorf("SampleRatio = %v, want 1.0 (default) on out-of-range input", cfg.SampleRatio)
+	}
+}

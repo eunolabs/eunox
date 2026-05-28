@@ -388,3 +388,76 @@ readinessProbe:
   initialDelaySeconds: 5
   periodSeconds: 5
 ```
+
+---
+
+## Distributed Tracing (OTLP)
+
+All four services ship with OpenTelemetry distributed tracing. Tracing is **opt-in**
+and is a no-op (noop provider) when `OTEL_EXPORTER_OTLP_ENDPOINT` is not set.
+
+### Environment Variables
+
+These are standard [OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) and must **not** be prefixed with a service name:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty — tracing disabled)_ | gRPC collector address, e.g. `otel-collector:4317` |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set `true` to disable TLS (same-cluster collectors) |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Trace sampling ratio in `[0.0, 1.0]` |
+
+### Service Names
+
+Spans are emitted under the following `service.name` resource attributes:
+
+| Service | `service.name` |
+|---|---|
+| Gateway | `gateway` |
+| Issuer | `issuer` |
+| Minter | `minter` |
+| Posture Emitter | `posture-emitter` |
+
+### Example: Jaeger (development)
+
+```yaml
+# infra/docker-compose.yml snippet
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+
+environment:
+  OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+```
+
+### Example: OpenTelemetry Collector (production)
+
+```yaml
+# Kubernetes ConfigMap snippet
+env:
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "otel-collector.observability.svc.cluster.local:4317"
+  - name: OTEL_EXPORTER_OTLP_INSECURE
+    value: "true"          # TLS termination at collector
+  - name: OTEL_TRACES_SAMPLER_ARG
+    value: "0.1"           # 10 % head-based sampling in production
+```
+
+---
+
+## Posture Emitter — Deployment Model
+
+The posture emitter runs as a **singleton sidecar** (one instance per node).
+It must never be scaled horizontally on the same node; the SQLite queue
+uses an exclusive lock that rejects a second writer.
+
+**Kubernetes**: deploy as a `DaemonSet` with `hostPath` for `POSTURE_DURABLE_QUEUE_PATH`.
+
+**VMs / bare metal**: run as a `systemd` unit; queue path must be on local storage.
+
+For horizontal scaling across nodes or multi-replica deployments see
+[`docs/posture-scaling.md`](./posture-scaling.md).
