@@ -107,7 +107,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init tracer: %w", err)
 	}
-	defer func() { _ = tracerShutdown(context.Background()) }()
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
 
 	// Build stateful backends (Redis-backed when URLs are configured; in-memory fallback for dev).
 	backends, err := buildGatewayBackends(&cfg, logger)

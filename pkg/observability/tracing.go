@@ -38,7 +38,7 @@ type TracingConfig struct {
 //
 // Supported variables:
 //   - OTEL_EXPORTER_OTLP_ENDPOINT  – gRPC collector address (e.g. "localhost:4317")
-//   - OTEL_EXPORTER_OTLP_INSECURE  – "true" disables TLS (useful in same-cluster deployments)
+//   - OTEL_EXPORTER_OTLP_INSECURE  – disables TLS when set to any truthy value accepted by [strconv.ParseBool] (e.g. "true", "1")
 //   - OTEL_TRACES_SAMPLER_ARG      – sampling ratio in [0.0, 1.0]; default 1.0
 func TracingConfigFromEnv(serviceName, version string) TracingConfig {
 	ratio := 1.0
@@ -51,9 +51,17 @@ func TracingConfigFromEnv(serviceName, version string) TracingConfig {
 		ServiceName:    serviceName,
 		ServiceVersion: version,
 		Endpoint:       os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		Insecure:       os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true",
+		Insecure:       parseBoolEnv("OTEL_EXPORTER_OTLP_INSECURE"),
 		SampleRatio:    ratio,
 	}
+}
+
+// parseBoolEnv returns true if the named environment variable is set to a
+// standard truthy value as accepted by [strconv.ParseBool] (e.g. "true",
+// "TRUE", "1", "t"). Unset or unparseable values are treated as false.
+func parseBoolEnv(name string) bool {
+	v, _ := strconv.ParseBool(os.Getenv(name))
+	return v
 }
 
 // InitTracer initializes the OpenTelemetry tracer provider.

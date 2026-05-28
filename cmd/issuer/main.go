@@ -70,7 +70,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init tracer: %w", err)
 	}
-	defer func() { _ = tracerShutdown(context.Background()) }()
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
 
 	// Build signing key
 	signer, err := buildSigner(&cfg)

@@ -31,7 +31,7 @@ more than one process from opening the database file simultaneously.
 ```
 
 **Kubernetes deployment**: use a `DaemonSet` so that exactly one pod is scheduled
-per node. Set `hostPath` for `POSTURE_QUEUE_PATH` so the SQLite file persists
+per node. Set `hostPath` for `POSTURE_DURABLE_QUEUE_PATH` so the SQLite file persists
 across pod restarts on the same node.
 
 **VM / bare-metal deployment**: run the emitter as a `systemd` unit (or equivalent

@@ -74,9 +74,11 @@ type IssuerSignature struct {
 // skipped and the token is evaluated using the primary issuer's signature alone.
 //
 // When Signatures is non-empty, ALL co-signatures MUST be verified before a token is
-// considered valid. Enforcement code must call [VerifyCoSignatures] on every token that
-// carries a non-empty Proofs field. Skipping co-signature verification for non-empty proofs
-// is a security defect.
+// considered valid. [VerifyCoSignatures] is currently called by
+// [PartnerTokenVerifier.VerifyPartnerToken] for partner-federated tokens.
+// [JWKSClient.VerifyToken], which is used for locally-issued tokens, does not call
+// [VerifyCoSignatures] because locally-issued tokens are not expected to carry
+// co-signatures.
 //
 // This is NOT purely decorative metadata: the presence of co-signatures changes the
 // verification requirements for the token.

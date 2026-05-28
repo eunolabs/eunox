@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
@@ -121,6 +122,9 @@ func RequestMetrics(requestDuration *prometheus.HistogramVec, requestTotal *prom
 }
 
 // TracePropagation returns middleware that extracts and propagates W3C trace context.
+// Span names use the matched Chi route pattern to avoid high-cardinality names from
+// dynamic path segments (e.g. IDs). The raw URL path is kept as the http.url.path
+// attribute. Falls back to the raw path when no route pattern is available.
 func TracePropagation(serviceName string) func(http.Handler) http.Handler {
 	tracer := otel.Tracer(serviceName)
 	propagator := otel.GetTextMapPropagator()
@@ -138,6 +142,15 @@ func TracePropagation(serviceName string) func(http.Handler) http.Handler {
 			defer span.End()
 
 			next.ServeHTTP(w, r.WithContext(ctx))
+
+			// Update the span name with the matched route pattern after routing is
+			// complete to avoid high-cardinality names from dynamic path segments.
+			if rctx := chi.RouteContext(r.Context()); rctx != nil {
+				if pattern := rctx.RoutePattern(); pattern != "" {
+					span.SetName(r.Method + " " + pattern)
+					span.SetAttributes(semconv.HTTPRouteKey.String(pattern))
+				}
+			}
 		})
 	}
 }
