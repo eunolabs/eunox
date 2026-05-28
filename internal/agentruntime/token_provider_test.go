@@ -375,24 +375,27 @@ func TestAuthTokenProvider_StopCancelsBackgroundRefresh(t *testing.T) {
 		RetryConfig:   RetryConfig{MaxRetries: 0, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
 	})
 
-	// Manually set a token that will trigger background refresh in ~1s.
-	// ExpiresAt = now + 32s means refreshAt = now + 2s (since refreshBefore = 30s).
-	// Unix() truncation may subtract up to 1s, leaving ~1s of real delay.
+	// Manually set a token that will trigger background refresh in ~0–1s.
+	// ExpiresAt = now + 31s means refreshAt = now + 1s (since refreshBefore = 30s).
+	// Unix() truncation keeps the delay in [0s, 1s]; zeroing jitterFunc removes
+	// non-deterministic overshoot that previously caused the 2s timeout to be
+	// exceeded when frac(time.Now()) ≈ 0 and jitter pushed the total past 2s.
 	provider.mu.Lock()
+	provider.jitterFunc = func(_ time.Duration) time.Duration { return 0 }
 	provider.cachedToken = &TokenResponse{
 		Token:     "old-token",
-		ExpiresAt: time.Now().Unix() + 32,
+		ExpiresAt: time.Now().Unix() + 31,
 		IssuedAt:  time.Now().Unix(),
 		TokenID:   "old-id",
 	}
 	provider.scheduleRefreshLocked(provider.cachedToken)
 	provider.mu.Unlock()
 
-	// Wait for the refresh to start.
+	// Wait for the refresh to start (generous timeout: delay is at most 1s).
 	select {
 	case <-refreshStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("background refresh did not start within 2s")
+	case <-time.After(3 * time.Second):
+		t.Fatal("background refresh did not start within 3s")
 	}
 
 	// Stop the provider — this should cancel the lifecycle context.
