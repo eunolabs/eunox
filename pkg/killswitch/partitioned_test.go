@@ -130,7 +130,7 @@ func TestPartitioned_SessionKill(t *testing.T) {
 
 	blocked, err := p.ShouldBlock(ctx, "agent-1", "sess-99")
 	require.NoError(t, err)
-	assert.True(t, blocked, "session-99 should be blocked regardless of agent")
+	assert.True(t, blocked, "sess-99 should be blocked regardless of agent")
 
 	// A request from agent-1 with a different session is not blocked.
 	blocked, err = p.ShouldBlock(ctx, "agent-1", "sess-100")
