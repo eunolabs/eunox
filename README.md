@@ -32,6 +32,7 @@ Eunox — from Eunomia, the Greek goddess of law and order — is a zero-trust e
 | DB Token Service      | `cmd/db-token-svc/`      | Short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL)      |
 | Storage Grant Service | `cmd/storage-grant-svc/` | Presigned URLs (AWS S3, Azure Blob, GCP GCS)                        |
 | Posture Emitter       | `cmd/posture-emitter/`   | Security posture reporting                                          |
+| MCP Proxy             | `cmd/mcp/`               | MCP proxy PDP/PEP                                                   |
 
 ## Project Structure
 
@@ -43,7 +44,8 @@ eunox/
 │   ├── minter/
 │   ├── db-token-svc/
 │   ├── storage-grant-svc/
-│   └── posture-emitter/
+│   ├── posture-emitter/
+│   └── mcp/                # MCP proxy PDP/PEP (Apache-2.0 license)
 ├── internal/               # Private application code
 ├── pkg/                    # Public importable packages
 ├── migrations/             # SQL migrations

@@ -44,7 +44,8 @@ eunox/
 │   ├── minter/             # API-Key Minter
 │   ├── db-token-svc/       # DB Token Service
 │   ├── storage-grant-svc/  # Storage Grant Service
-│   └── posture-emitter/    # Posture Emitter
+│   ├── posture-emitter/    # Posture Emitter
+│   └── mcp/                # MCP proxy PDP/PEP (Apache-2.0 license)
 ├── internal/               # Private application logic (not importable)
 │   ├── gateway/
 │   ├── issuer/
