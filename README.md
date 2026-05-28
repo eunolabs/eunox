@@ -6,9 +6,7 @@
 
 <p align="center">
   <strong>Zero-trust enforcement gateway for AI agents</strong><br>
-  One YAML file enforces what every agent is allowed to do —
-  <em>before</em> the tool call reaches your backend with a
-  tamper-evident audit trail.
+  A single YAML policy file defines and enforces every action an agent is permitted to take, validating each tool call before it reaches your backend and producing a tamper‑evident audit trail.
 </p>
 
 <p align="center">
