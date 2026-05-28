@@ -49,11 +49,11 @@ const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
         </ul>
 
         <div class="callout">
-            <strong>Note.</strong> The <code>eunox-mcp</code> binary, while server-side services remain BSL-1.1. See <a href="https://github.com/edgeobs/eunox/blob/main/docs/tiers.md" target="_blank" rel="noopener noreferrer">docs/tiers.md</a> for the tier boundaries.
+            <strong>Note.</strong> The <code>eunox-mcp</code> binary, while server-side services remain BSL-1.1. See <a href="https://github.com/eunolabs/eunox/blob/main/docs/tiers.md" target="_blank" rel="noopener noreferrer">docs/tiers.md</a> for the tier boundaries.
         </div>
 
         <h2 id="step-1">1. Install</h2>
-        <p>Download the <code>eunox-mcp</code> binary from the <a href="https://github.com/edgeobs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>, make it executable, and place it on your <code>PATH</code>:</p>
+        <p>Download the <code>eunox-mcp</code> binary from the <a href="https://github.com/eunolabs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>, make it executable, and place it on your <code>PATH</code>:</p>
 <pre><code># after downloading the binary for your platform
 chmod +x ./eunox-mcp
 mkdir -p ~/.local/bin
@@ -127,9 +127,9 @@ requiredCapabilities:
         <h2 id="go-sdk">Go SDK embedding</h2>
         <p>If your agent runtime already runs in Go and you do not want a separate proxy process, reuse the same manifest and enforcement primitives directly from the repository:</p>
         <ul>
-            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg" target="_blank" rel="noopener noreferrer"><code>pkg/</code></a> — public Go packages for capabilities, enforcement, audit, identity, and support libraries.</li>
-            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — runtime SDK guidance for integrating hosted and local enforcement.</li>
-            <li><a href="https://github.com/edgeobs/eunox/tree/main/internal/agentruntime" target="_blank" rel="noopener noreferrer"><code>internal/agentruntime/</code></a> — the Go runtime implementation used by the project itself.</li>
+            <li><a href="https://github.com/eunolabs/eunox/tree/main/pkg" target="_blank" rel="noopener noreferrer"><code>pkg/</code></a> — public Go packages for capabilities, enforcement, audit, identity, and support libraries.</li>
+            <li><a href="https://github.com/eunolabs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — runtime SDK guidance for integrating hosted and local enforcement.</li>
+            <li><a href="https://github.com/eunolabs/eunox/tree/main/internal/agentruntime" target="_blank" rel="noopener noreferrer"><code>internal/agentruntime/</code></a> — the Go runtime implementation used by the project itself.</li>
         </ul>
         <p>Same YAML policy model, same conditions, same audit semantics — no Node.js package required.</p>
 
@@ -138,7 +138,7 @@ requiredCapabilities:
             <li>Drop in a ready-made policy from the <a href={withBase('/policies')}>reference policies</a> page.</li>
             <li>Browse the <a href={withBase('/features')}>full condition matrix</a> with worked demos for each.</li>
             <li>Read <a href={withBase('/how-it-works')}>how the proxy enforces policy</a> end-to-end.</li>
-            <li>Explore the source on <a href="https://github.com/edgeobs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a> — issues and PRs welcome.</li>
+            <li>Explore the source on <a href="https://github.com/eunolabs/eunox" target="_blank" rel="noopener noreferrer">GitHub</a> — issues and PRs welcome.</li>
         </ul>
     </main>
 

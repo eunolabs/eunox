@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/callcounter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/google/uuid"
 )
 

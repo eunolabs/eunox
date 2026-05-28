@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
 )
 
 // mockAuth implements AdminAuthenticator for tests.
@@ -712,9 +712,9 @@ func TestNew_InvalidCIDR(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = New(&Config{
-		Pepper:             pepper,
-		DefaultTenantID:    "tenant",
-		TrustedProxyCIDRs:  []string{"not-a-cidr"},
+		Pepper:            pepper,
+		DefaultTenantID:   "tenant",
+		TrustedProxyCIDRs: []string{"not-a-cidr"},
 	}, &Dependencies{
 		Store:   NewInMemoryStore(),
 		Auth:    &mockAuth{operatorID: "op"},

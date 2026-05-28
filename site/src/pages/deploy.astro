@@ -57,11 +57,11 @@ const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
         <p>The <code>eunox-mcp</code> binary runs entirely in-process. All enforcement, call counting, and audit logging happens locally — no Redis, no Postgres, no gateway process.</p>
 
         <h3>Install</h3>
-<pre><code># Download the latest release from https://github.com/edgeobs/eunox/releases
-curl -sSL https://github.com/edgeobs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
+<pre><code># Download the latest release from https://github.com/eunolabs/eunox/releases
+curl -sSL https://github.com/eunolabs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
 chmod +x eunox-mcp && sudo mv eunox-mcp /usr/local/bin/</code></pre>
 
-        <p>Or download a pre-built binary from the <a href="https://github.com/edgeobs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>.</p>
+        <p>Or download a pre-built binary from the <a href="https://github.com/eunolabs/eunox/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>.</p>
 
         <h3>Write a policy</h3>
 <pre><code># policy.yaml
@@ -84,7 +84,7 @@ capabilities:
       - name: delete_file
     effect: deny</code></pre>
 
-        <p>The policy engine is default-deny: any tool not covered by an <code>allow</code> capability is blocked. See <a href="https://github.com/edgeobs/eunox/blob/main/docs/capability-manifest-guide.md" target="_blank" rel="noopener noreferrer">capability-manifest-guide.md</a> for all condition types.</p>
+        <p>The policy engine is default-deny: any tool not covered by an <code>allow</code> capability is blocked. See <a href="https://github.com/eunolabs/eunox/blob/main/docs/capability-manifest-guide.md" target="_blank" rel="noopener noreferrer">capability-manifest-guide.md</a> for all condition types.</p>
 
         <h3>Wire into Claude Desktop</h3>
 <pre><code>// ~/Library/Application Support/Claude/claude_desktop_config.json
@@ -113,7 +113,7 @@ capabilities:
   --gateway-url https://your-gateway.example.com \
   --api-key sk-&lt;prefix&gt;.&lt;secret&gt;</code></pre>
 
-        <p>See the <a href="https://eunolabs.ai/blog/33-deploy-oss" target="_blank" rel="noopener noreferrer">local enforcement deployment guide</a> and <a href="https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a> for the complete walkthrough.</p>
+        <p>See the <a href="https://eunolabs.ai/blog/33-deploy-oss" target="_blank" rel="noopener noreferrer">local enforcement deployment guide</a> and <a href="https://github.com/eunolabs/eunox/blob/main/docs/upgrade-to-hosted.md" target="_blank" rel="noopener noreferrer">upgrade-to-hosted.md</a> for the complete walkthrough.</p>
 
         <hr>
 
@@ -122,7 +122,7 @@ capabilities:
         <p>The self-host tier deploys the full gateway stack under your control: capability issuer, tool gateway, minter, posture emitter, and enterprise services. You manage Redis, Postgres, and a cloud KMS.</p>
 
         <div class="callout">
-            <strong>License.</strong> BSL 1.1 — non-competing use; converts to Apache-2.0 four years after each release. <a href="https://github.com/edgeobs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Review the LICENSE</a> before deploying in a competing product.
+            <strong>License.</strong> BSL 1.1 — non-competing use; converts to Apache-2.0 four years after each release. <a href="https://github.com/eunolabs/eunox/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Review the LICENSE</a> before deploying in a competing product.
         </div>
 
         <h3>What you need</h3>
@@ -138,13 +138,13 @@ capabilities:
 version: "3.9"
 services:
   capability-issuer:
-    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
+    image: ghcr.io/eunolabs/eunox/issuer:1.0.0
     env_file: /srv/eunox/issuer.env
     volumes: ["/srv/eunox/policies:/app/policies:ro"]
     ports: ["3001:3001"]
 
   tool-gateway:
-    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
+    image: ghcr.io/eunolabs/eunox/gateway:1.0.0
     env_file: /srv/eunox/gateway.env
     volumes: ["/srv/eunox/keys:/app/keys:ro"]
     depends_on: [capability-issuer]
@@ -158,7 +158,7 @@ services:
   --create-namespace \
   -f k8s/helm/eunox/values-prod.yaml</code></pre>
 
-        <p>The Helm umbrella chart deploys all six services with individual HorizontalPodAutoscalers. For EKS and GKE cloud-specific guides, see <a href="https://github.com/edgeobs/eunox/blob/main/docs/deploy-eks.md" target="_blank" rel="noopener noreferrer">deploy-eks.md</a> and <a href="https://github.com/edgeobs/eunox/blob/main/docs/deploy-gke.md" target="_blank" rel="noopener noreferrer">deploy-gke.md</a>.</p>
+        <p>The Helm umbrella chart deploys all six services with individual HorizontalPodAutoscalers. For EKS and GKE cloud-specific guides, see <a href="https://github.com/eunolabs/eunox/blob/main/docs/deploy-eks.md" target="_blank" rel="noopener noreferrer">deploy-eks.md</a> and <a href="https://github.com/eunolabs/eunox/blob/main/docs/deploy-gke.md" target="_blank" rel="noopener noreferrer">deploy-gke.md</a>.</p>
 
         <h3>Redis HA requirement</h3>
         <p>In production mode (<code>NODE_ENV=production</code>), the gateway performs a fatal startup check: if any configured Redis URL points to a single-node instance, the service refuses to start. Configure Redis Sentinel or Redis Cluster for all Redis URLs.</p>
@@ -169,7 +169,7 @@ services:
 # Transfer air-gap-images.tar to the restricted network and load:
 docker load &lt; air-gap-images.tar</code></pre>
 
-        <p>The full image list is in <a href="https://github.com/edgeobs/eunox/blob/main/k8s/air-gap-images.txt" target="_blank" rel="noopener noreferrer"><code>k8s/air-gap-images.txt</code></a>.</p>
+        <p>The full image list is in <a href="https://github.com/eunolabs/eunox/blob/main/k8s/air-gap-images.txt" target="_blank" rel="noopener noreferrer"><code>k8s/air-gap-images.txt</code></a>.</p>
 
         <h3>Wire eunox-mcp to the gateway</h3>
 <pre><code>{'{'}
@@ -189,8 +189,8 @@ docker load &lt; air-gap-images.tar</code></pre>
         <h3>Full deployment guides</h3>
         <ul>
             <li><a href="https://eunolabs.ai/blog/34-deploy-self-host" target="_blank" rel="noopener noreferrer">Self-host deployment blog post</a> — step-by-step with KMS, Redis, Postgres, and Helm</li>
-            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/self-host.md" target="_blank" rel="noopener noreferrer">docs/self-host.md</a> — comprehensive 13-section operator guide</li>
-            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/deployment.md" target="_blank" rel="noopener noreferrer">docs/deployment.md</a> — full environment-variable reference for every service</li>
+            <li><a href="https://github.com/eunolabs/eunox/blob/main/docs/self-host.md" target="_blank" rel="noopener noreferrer">docs/self-host.md</a> — comprehensive 13-section operator guide</li>
+            <li><a href="https://github.com/eunolabs/eunox/blob/main/docs/deployment.md" target="_blank" rel="noopener noreferrer">docs/deployment.md</a> — full environment-variable reference for every service</li>
         </ul>
 
     </main>

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/config"
 )
 
 func TestBuildPlugins_Stdout(t *testing.T) {

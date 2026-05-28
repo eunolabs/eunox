@@ -4,7 +4,7 @@
 package audit
 
 import (
-	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/observability"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

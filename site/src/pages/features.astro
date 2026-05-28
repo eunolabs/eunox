@@ -400,9 +400,9 @@ denial histogram (since rotation):
         <h2 id="go-packages">Go packages — same enforcement, in-process</h2>
         <p>The Go reimplementation exposes the same policy model directly through the repository packages, so services can evaluate manifests without shelling out to a separate proxy process.</p>
         <ul>
-            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg/capability" target="_blank" rel="noopener noreferrer"><code>pkg/capability</code></a> — manifest and condition types.</li>
-            <li><a href="https://github.com/edgeobs/eunox/tree/main/pkg/enforcement" target="_blank" rel="noopener noreferrer"><code>pkg/enforcement</code></a> — enforcement engine and decision flow.</li>
-            <li><a href="https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — guidance for embedding the runtime in Go agents and services.</li>
+            <li><a href="https://github.com/eunolabs/eunox/tree/main/pkg/capability" target="_blank" rel="noopener noreferrer"><code>pkg/capability</code></a> — manifest and condition types.</li>
+            <li><a href="https://github.com/eunolabs/eunox/tree/main/pkg/enforcement" target="_blank" rel="noopener noreferrer"><code>pkg/enforcement</code></a> — enforcement engine and decision flow.</li>
+            <li><a href="https://github.com/eunolabs/eunox/blob/main/docs/agent-sdk.md" target="_blank" rel="noopener noreferrer"><code>docs/agent-sdk.md</code></a> — guidance for embedding the runtime in Go agents and services.</li>
         </ul>
         <p>If a service evaluates a manifest that only allows <code>SELECT</code>, the same <code>OPERATION_NOT_ALLOWED</code> decision is raised before any database call is made.</p>
 

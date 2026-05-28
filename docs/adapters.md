@@ -35,12 +35,12 @@ The eunox capability governance system implements a clean adapter pattern for id
 
 **Token Signers**
 
-| Type          | Implementation                                                 | Package                         |
-| ------------- | -------------------------------------------------------------- | ------------------------------- |
-| Software keys | In-memory private key signing (RSA, ECDSA, EdDSA)              | `pkg/crypto` (`SoftwareSigner`) |
-| AWS KMS       | Remote signing via AWS KMS asymmetric keys                     | `pkg/crypto` (`RealAWSKMSSigner`) |
-| Azure Key Vault | Remote signing via Azure Key Vault keys                      | `pkg/crypto` (`RealAzureKeyVaultSigner`) |
-| GCP Cloud KMS | Remote signing via GCP Cloud KMS asymmetric keys               | `pkg/crypto` (`RealGCPCloudKMSSigner`) |
+| Type            | Implementation                                    | Package                                  |
+| --------------- | ------------------------------------------------- | ---------------------------------------- |
+| Software keys   | In-memory private key signing (RSA, ECDSA, EdDSA) | `pkg/crypto` (`SoftwareSigner`)          |
+| AWS KMS         | Remote signing via AWS KMS asymmetric keys        | `pkg/crypto` (`RealAWSKMSSigner`)        |
+| Azure Key Vault | Remote signing via Azure Key Vault keys           | `pkg/crypto` (`RealAzureKeyVaultSigner`) |
+| GCP Cloud KMS   | Remote signing via GCP Cloud KMS asymmetric keys  | `pkg/crypto` (`RealGCPCloudKMSSigner`)   |
 
 ---
 
@@ -59,7 +59,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 func main() {
@@ -103,7 +103,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 func main() {
@@ -141,7 +141,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 func main() {
@@ -180,7 +180,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 func main() {
@@ -214,7 +214,7 @@ import (
     "context"
     "log"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 func main() {
@@ -250,7 +250,7 @@ package main
 import (
     "log"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 func main() {
@@ -292,7 +292,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 // CustomProvider implements identity.Provider for a custom identity system.
@@ -342,7 +342,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 // HSMSigner implements crypto.Signer backed by a hardware security module.
@@ -475,7 +475,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/edgeobs/eunox/pkg/identity"
+    "github.com/eunolabs/eunox/pkg/identity"
 )
 
 func main() {
@@ -515,17 +515,18 @@ Each KMS signer follows the same provider/client interface pattern used througho
 3. **Signer implementation** — implements `crypto.Signer`, delegates to client, handles signature format normalization
 
 This design enables:
+
 - Unit testing with mock clients (no cloud connectivity required)
 - Swapping SDK implementations without changing business logic
 - Supporting multiple KMS providers in the same deployment
 
 ### Supported Algorithms
 
-| Algorithm Family | JOSE IDs | AWS KMS | Azure Key Vault | GCP Cloud KMS |
-|-----------------|----------|---------|-----------------|---------------|
-| RSA PKCS#1 v1.5 | RS256, RS384, RS512 | ✅ | ✅ | ✅ |
-| RSA-PSS | PS256, PS384, PS512 | ✅ | ✅ | ✅ |
-| ECDSA | ES256, ES384, ES512 | ✅ | ✅ | ✅ |
+| Algorithm Family | JOSE IDs            | AWS KMS | Azure Key Vault | GCP Cloud KMS |
+| ---------------- | ------------------- | ------- | --------------- | ------------- |
+| RSA PKCS#1 v1.5  | RS256, RS384, RS512 | ✅      | ✅              | ✅            |
+| RSA-PSS          | PS256, PS384, PS512 | ✅      | ✅              | ✅            |
+| ECDSA            | ES256, ES384, ES512 | ✅      | ✅              | ✅            |
 
 > **Note:** EdDSA (Ed25519) and ES256K (secp256k1) are not supported by cloud KMS services. Use `SoftwareSigner` for these algorithms.
 
@@ -538,7 +539,7 @@ import (
     "context"
     "log"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 func main() {
@@ -576,7 +577,7 @@ import (
     "context"
     "log"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 func main() {
@@ -614,7 +615,7 @@ import (
     "context"
     "log"
 
-    "github.com/edgeobs/eunox/pkg/crypto"
+    "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 func main() {
@@ -669,6 +670,7 @@ type GCPCloudKMSClient interface {
 ### ECDSA Signature Normalization
 
 Cloud KMS services return ECDSA signatures in different formats:
+
 - **AWS KMS** returns DER/ASN.1 encoded signatures
 - **Azure Key Vault** returns JOSE R||S concatenated format
 - **GCP Cloud KMS** returns DER/ASN.1 encoded signatures

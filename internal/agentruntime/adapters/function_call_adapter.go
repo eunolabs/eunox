@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/edgeobs/eunox/internal/agentruntime"
+	"github.com/eunolabs/eunox/internal/agentruntime"
 )
 
 // FunctionCallAdapter wraps the agent runtime for generic function-call patterns.

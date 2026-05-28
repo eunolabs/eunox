@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/posture"
+	"github.com/eunolabs/eunox/internal/posture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

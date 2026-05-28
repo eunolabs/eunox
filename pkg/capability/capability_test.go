@@ -49,7 +49,7 @@ func TestTokenPayloadRoundTrip(t *testing.T) {
 				AllowedExtensionsCondition{Extensions: []string{".sql", ".psql"}},
 				AllowedTablesCondition{Tables: []string{"users", "orders"}, Columns: map[string][]string{"users": {"id", "email"}}},
 				MaxCallsCondition{Count: 10, WindowSeconds: 60},
-				RecipientDomainCondition{Domains: []string{"example.com", "edgeobs.com"}},
+				RecipientDomainCondition{Domains: []string{"example.com", "eunolabs.ai"}},
 				RedactFieldsCondition{Fields: []string{"ssn", "secret"}},
 				PolicyCondition{Backend: "opa", Config: map[string]interface{}{"bundle": "main"}, Input: map[string]interface{}{"tenantId": "t-1"}},
 				CustomCondition{Name: "geoFence", Config: map[string]interface{}{"region": "eu-west-1"}},

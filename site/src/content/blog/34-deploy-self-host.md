@@ -4,13 +4,13 @@ description: "Step-by-step deployment guide for the BSL 1.1 self-host tier. Cove
 pubDate: "2026-05-28"
 ---
 
-_This is the deployment guide for the **Self-Host (BSL 1.1)** tier. If you only need in-process enforcement for a single agent with no shared state, start with [post 33: deploying eunox OSS](./33-deploy-oss.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/edgeobs/eunox/blob/main/docs/tiers.md)._
+_This is the deployment guide for the **Self-Host (BSL 1.1)** tier. If you only need in-process enforcement for a single agent with no shared state, start with [post 33: deploying eunox OSS](./33-deploy-oss.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/eunolabs/eunox/blob/main/docs/tiers.md)._
 
 ---
 
 The self-host tier gives you the complete gateway stack under your own control: capability issuer, tool gateway, API-key minter, posture emitter, and all enterprise services. You bring the infrastructure (Redis, Postgres, KMS); eunox brings the enforcement, issuance, and audit machinery.
 
-**License:** BSL 1.1 (non-competing use; converts to Apache-2.0 four years after each release). Review the [LICENSE](https://github.com/edgeobs/eunox/blob/main/LICENSE) before deploying in a competing product.
+**License:** BSL 1.1 (non-competing use; converts to Apache-2.0 four years after each release). Review the [LICENSE](https://github.com/eunolabs/eunox/blob/main/LICENSE) before deploying in a competing product.
 
 **When to use this tier:**
 
@@ -24,14 +24,14 @@ The self-host tier gives you the complete gateway stack under your own control: 
 
 ## What you are deploying
 
-| Service               | Port              | Binary               | Purpose                                              |
-| --------------------- | ----------------- | -------------------- | ---------------------------------------------------- |
-| Capability Issuer     | 3001              | `cmd/issuer`         | Issues signed JWT capability tokens via your KMS     |
-| Tool Gateway          | 3002 / 3003 admin | `cmd/gateway`        | Enforces capability tokens on every agent tool call  |
-| API-key Minter        | 3004              | `cmd/minter`         | Issues `sk-...` API keys that map to capability JWTs |
-| DB Token Service      | 3005              | `cmd/db-token-svc`   | Short-lived database credentials for agents          |
-| Storage Grant Service | 3006              | `cmd/storage-grant-svc` | Presigned URL generation for agents              |
-| Posture Emitter       | 3008              | `cmd/posture-emitter`| Security posture reporting to CSPM platforms         |
+| Service               | Port              | Binary                  | Purpose                                              |
+| --------------------- | ----------------- | ----------------------- | ---------------------------------------------------- |
+| Capability Issuer     | 3001              | `cmd/issuer`            | Issues signed JWT capability tokens via your KMS     |
+| Tool Gateway          | 3002 / 3003 admin | `cmd/gateway`           | Enforces capability tokens on every agent tool call  |
+| API-key Minter        | 3004              | `cmd/minter`            | Issues `sk-...` API keys that map to capability JWTs |
+| DB Token Service      | 3005              | `cmd/db-token-svc`      | Short-lived database credentials for agents          |
+| Storage Grant Service | 3006              | `cmd/storage-grant-svc` | Presigned URL generation for agents                  |
+| Posture Emitter       | 3008              | `cmd/posture-emitter`   | Security posture reporting to CSPM platforms         |
 
 For a first deployment, you only need the **Capability Issuer** and **Tool Gateway**. The other services can be added incrementally as your requirements grow.
 
@@ -144,7 +144,7 @@ requiredCapabilities:
 version: "3.9"
 services:
   capability-issuer:
-    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
+    image: ghcr.io/eunolabs/eunox/issuer:1.0.0
     env_file: /srv/eunox/issuer.env
     volumes:
       - /srv/eunox/policies:/app/policies:ro
@@ -156,7 +156,7 @@ services:
       retries: 5
 
   tool-gateway:
-    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
+    image: ghcr.io/eunolabs/eunox/gateway:1.0.0
     env_file: /srv/eunox/gateway.env
     volumes:
       - /srv/eunox/keys:/app/keys:ro
@@ -212,7 +212,7 @@ AUDIT_SIGNING_KMS_PROVIDER=aws-kms
 AUDIT_SIGNING_AWS_KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/mrk-def456
 ```
 
-For Azure Key Vault or GCP Cloud KMS, see the full reference in [`docs/deployment.md`](https://github.com/edgeobs/eunox/blob/main/docs/deployment.md) under "Configuration Reference → Issuer → Signing Provider".
+For Azure Key Vault or GCP Cloud KMS, see the full reference in [`docs/deployment.md`](https://github.com/eunolabs/eunox/blob/main/docs/deployment.md) under "Configuration Reference → Issuer → Signing Provider".
 
 ### 2.2 Add Redis (required for multi-replica)
 
@@ -295,7 +295,7 @@ issuer:
     AZURE_CREDENTIAL_TYPE: managed-identity
 ```
 
-For cloud-specific guidance see [`docs/deploy-eks.md`](https://github.com/edgeobs/eunox/blob/main/docs/deploy-eks.md) (EKS) and [`docs/deploy-gke.md`](https://github.com/edgeobs/eunox/blob/main/docs/deploy-gke.md) (GKE).
+For cloud-specific guidance see [`docs/deploy-eks.md`](https://github.com/eunolabs/eunox/blob/main/docs/deploy-eks.md) (EKS) and [`docs/deploy-gke.md`](https://github.com/eunolabs/eunox/blob/main/docs/deploy-gke.md) (GKE).
 
 ---
 
@@ -330,26 +330,31 @@ Once the stack is running, configure `eunox-mcp` to use your gateway instead of 
       "command": "eunox-mcp",
       "args": [
         "proxy",
-        "--enforcer-url", "https://gateway.example.com",
-        "--enforcer-api-key", "<your-issued-jwt>",
+        "--enforcer-url",
+        "https://gateway.example.com",
+        "--enforcer-api-key",
+        "<your-issued-jwt>",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/data"
       ]
     }
   }
 }
 ```
 
-The JWT is issued by the capability issuer (`POST /api/v1/issue`). For team environments with many agents, automate issuance via the issuer API or set up SCIM-based agent provisioning (see [`docs/self-host.md`](https://github.com/edgeobs/eunox/blob/main/docs/self-host.md) §12 for the SCIM integration).
+The JWT is issued by the capability issuer (`POST /api/v1/issue`). For team environments with many agents, automate issuance via the issuer API or set up SCIM-based agent provisioning (see [`docs/self-host.md`](https://github.com/eunolabs/eunox/blob/main/docs/self-host.md) §12 for the SCIM integration).
 
 ---
 
 ## Where to go from here
 
-- **Full configuration reference:** [`docs/deployment.md`](https://github.com/edgeobs/eunox/blob/main/docs/deployment.md) — every environment variable for every service.
-- **Self-host guide:** [`docs/self-host.md`](https://github.com/edgeobs/eunox/blob/main/docs/self-host.md) — the comprehensive 13-section operator guide including enterprise deployment, SCIM, DID federation, and compliance checklists.
-- **Redis failure modes:** [`docs/redis-failure-modes.md`](https://github.com/edgeobs/eunox/blob/main/docs/redis-failure-modes.md) — how the gateway behaves under Redis degradation.
-- **Health checks:** [`docs/health-checks.md`](https://github.com/edgeobs/eunox/blob/main/docs/health-checks.md) — liveness and readiness endpoint reference.
-- **Issuer runbook:** [`docs/issuer-operator-runbook.md`](https://github.com/edgeobs/eunox/blob/main/docs/issuer-operator-runbook.md) — day-two operations for the capability issuer.
+- **Full configuration reference:** [`docs/deployment.md`](https://github.com/eunolabs/eunox/blob/main/docs/deployment.md) — every environment variable for every service.
+- **Self-host guide:** [`docs/self-host.md`](https://github.com/eunolabs/eunox/blob/main/docs/self-host.md) — the comprehensive 13-section operator guide including enterprise deployment, SCIM, DID federation, and compliance checklists.
+- **Redis failure modes:** [`docs/redis-failure-modes.md`](https://github.com/eunolabs/eunox/blob/main/docs/redis-failure-modes.md) — how the gateway behaves under Redis degradation.
+- **Health checks:** [`docs/health-checks.md`](https://github.com/eunolabs/eunox/blob/main/docs/health-checks.md) — liveness and readiness endpoint reference.
+- **Issuer runbook:** [`docs/issuer-operator-runbook.md`](https://github.com/eunolabs/eunox/blob/main/docs/issuer-operator-runbook.md) — day-two operations for the capability issuer.
 
-_Previous: [post 33 — deploying eunox locally](./33-deploy-oss.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/edgeobs/eunox/blob/main/docs/blog-articles.md)._
+_Previous: [post 33 — deploying eunox locally](./33-deploy-oss.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/eunolabs/eunox/blob/main/docs/blog-articles.md)._

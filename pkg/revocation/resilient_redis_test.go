@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/revocation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

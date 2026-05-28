@@ -25,7 +25,7 @@
 # ── Container images — Azure Container Registry ───────────────────────────────
 # Replace myacr and adjust the tag.
 # Eunox images are published to ghcr.io; push to ACR with:
-#   az acr import --name myacr --source ghcr.io/edgeobs/eunox/gateway:1.0.0 \
+#   az acr import --name myacr --source ghcr.io/eunolabs/eunox/gateway:1.0.0 \
 #     --image eunox/gateway:1.0.0
 gateway:
   image:

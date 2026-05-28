@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/dbtokensvc"
+	"github.com/eunolabs/eunox/internal/dbtokensvc"
 )
 
 // ── AWS ──────────────────────────────────────────────────────────────────────

@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/edgeobs/eunox/pkg/audit"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/audit"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 )
 
 // ErrPartnerDIDNotFound indicates a requested partner DID entry does not exist.

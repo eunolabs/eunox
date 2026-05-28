@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // Errors for cross-org attenuation.

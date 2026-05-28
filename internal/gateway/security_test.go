@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 	"github.com/stretchr/testify/assert"
 )
 

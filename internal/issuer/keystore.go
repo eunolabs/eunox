@@ -6,7 +6,7 @@ package issuer
 import (
 	stdcrypto "crypto"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/crypto"
 )
 
 // PublicKeyExporter is an optional interface for signers that can export their public key.

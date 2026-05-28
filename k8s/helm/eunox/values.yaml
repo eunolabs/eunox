@@ -45,7 +45,7 @@
 gateway:
   replicaCount: 2
   image:
-    repository: ghcr.io/edgeobs/eunox/gateway
+    repository: ghcr.io/eunolabs/eunox/gateway
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -89,7 +89,7 @@ gateway:
 issuer:
   replicaCount: 2
   image:
-    repository: ghcr.io/edgeobs/eunox/issuer
+    repository: ghcr.io/eunolabs/eunox/issuer
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -118,7 +118,7 @@ issuer:
 minter:
   replicaCount: 2
   image:
-    repository: ghcr.io/edgeobs/eunox/minter
+    repository: ghcr.io/eunolabs/eunox/minter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -148,7 +148,7 @@ minter:
 dbTokenService:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/eunox/db-token-service
+    repository: ghcr.io/eunolabs/eunox/db-token-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -174,7 +174,7 @@ dbTokenService:
 storageGrantService:
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/eunox/storage-grant-service
+    repository: ghcr.io/eunolabs/eunox/storage-grant-service
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
@@ -202,7 +202,7 @@ postureEmitter:
   # The chart will fail to render if replicaCount != 1.
   replicaCount: 1
   image:
-    repository: ghcr.io/edgeobs/eunox/posture-emitter
+    repository: ghcr.io/eunolabs/eunox/posture-emitter
     tag: "1.0.0"
     pullPolicy: IfNotPresent
   serviceAccountAnnotations: {}

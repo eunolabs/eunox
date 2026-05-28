@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/storagegrantsvc"
-	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/internal/storagegrantsvc"
+	"github.com/eunolabs/eunox/pkg/observability"
 )
 
 // These variables are set by GoReleaser via -X ldflags at build time.

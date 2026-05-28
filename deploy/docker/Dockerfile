@@ -50,7 +50,7 @@ COPY --from=builder /out/service /usr/local/bin/service
 USER 65534:65534
 
 # Metadata labels.
-LABEL org.opencontainers.image.source="https://github.com/edgeobs/eunox"
+LABEL org.opencontainers.image.source="https://github.com/eunolabs/eunox"
 LABEL org.opencontainers.image.licenses="BUSL-1.1"
 LABEL org.opencontainers.image.vendor="Eunox"
 

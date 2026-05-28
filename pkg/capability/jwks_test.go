@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/circuitbreaker"
+	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"

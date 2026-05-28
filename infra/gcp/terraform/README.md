@@ -55,7 +55,7 @@ gcloud config set project <YOUR_PROJECT_ID>
 ### 1. Clone the repository and navigate to this directory
 
 ```bash
-git clone https://github.com/edgeobs/eunox.git
+git clone https://github.com/eunolabs/eunox.git
 cd eunox/infra/gcp/terraform
 ```
 

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/edgeobs/eunox/pkg/ratelimit"
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"

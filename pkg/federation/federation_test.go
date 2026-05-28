@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/circuitbreaker"
+	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/did"
 )
 
 // --- Circuit Breaker Tests ---

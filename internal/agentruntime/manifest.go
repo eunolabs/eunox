@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // AgentCapabilityManifest declares the capabilities an agent requires.

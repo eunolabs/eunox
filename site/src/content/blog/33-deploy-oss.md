@@ -4,7 +4,7 @@ description: "Step-by-step guide for local in-process enforcement with the eunox
 pubDate: "2026-05-28"
 ---
 
-_This is the deployment guide for **local in-process enforcement** (no server required). If you need shared state across multiple agents — shared kill-switch, shared call counters, queryable audit ledger — see [post 34: deploying the self-host stack](./34-deploy-self-host.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/edgeobs/eunox/blob/main/docs/tiers.md)._
+_This is the deployment guide for **local in-process enforcement** (no server required). If you need shared state across multiple agents — shared kill-switch, shared call counters, queryable audit ledger — see [post 34: deploying the self-host stack](./34-deploy-self-host.md). For a full tier comparison, see [`docs/tiers.md`](https://github.com/eunolabs/eunox/blob/main/docs/tiers.md)._
 
 ---
 
@@ -21,7 +21,7 @@ Local enforcement is the simplest way to run eunox. All enforcement happens in-p
 
 ## Prerequisites
 
-- Go 1.25+ **or** a pre-built binary from the [latest GitHub release](https://github.com/edgeobs/eunox/releases/latest)
+- Go 1.25+ **or** a pre-built binary from the [latest GitHub release](https://github.com/eunolabs/eunox/releases/latest)
 - An MCP server you want to wrap (the eunox proxy sits in front of it)
 
 ---
@@ -29,12 +29,12 @@ Local enforcement is the simplest way to run eunox. All enforcement happens in-p
 ## Step 1 — Install the proxy
 
 ```bash
-# Download the latest release from https://github.com/edgeobs/eunox/releases
-curl -sSL https://github.com/edgeobs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
+# Download the latest release from https://github.com/eunolabs/eunox/releases
+curl -sSL https://github.com/eunolabs/eunox/releases/latest/download/eunox-mcp-$(uname -s)-$(uname -m) -o eunox-mcp
 chmod +x eunox-mcp && sudo mv eunox-mcp /usr/local/bin/
 ```
 
-Or download a pre-built binary from the [latest GitHub release](https://github.com/edgeobs/eunox/releases/latest), make it executable, and place it on your `PATH`.
+Or download a pre-built binary from the [latest GitHub release](https://github.com/eunolabs/eunox/releases/latest), make it executable, and place it on your `PATH`.
 
 ---
 
@@ -64,7 +64,7 @@ capabilities:
     effect: deny
 ```
 
-The policy engine is default-deny: any tool not covered by an `allow` capability is blocked. See [`docs/capability-manifest-guide.md`](https://github.com/edgeobs/eunox/blob/main/docs/capability-manifest-guide.md) for the full schema including all condition types (`time_window`, `call_budget`, `require_approval`, and more).
+The policy engine is default-deny: any tool not covered by an `allow` capability is blocked. See [`docs/capability-manifest-guide.md`](https://github.com/eunolabs/eunox/blob/main/docs/capability-manifest-guide.md) for the full schema including all condition types (`time_window`, `call_budget`, `require_approval`, and more).
 
 ---
 
@@ -81,9 +81,13 @@ Open `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
       "command": "eunox-mcp",
       "args": [
         "proxy",
-        "--policy", "/path/to/policy.yaml",
+        "--policy",
+        "/path/to/policy.yaml",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/user/projects"
       ]
     }
   }
@@ -115,7 +119,7 @@ Point your agent at `http://localhost:3002` instead of the upstream directly.
 If you are writing a Go agent, you can embed the enforcement engine directly using the agent runtime SDK:
 
 ```go
-import "github.com/edgeobs/eunox/internal/agentruntime"
+import "github.com/eunolabs/eunox/internal/agentruntime"
 
 rt, err := agentruntime.New(&agentruntime.Config{
     IssuerURL:     "https://issuer.example.com",
@@ -134,7 +138,7 @@ result, err := rt.InvokeTool(ctx, &agentruntime.ToolRequest{
 })
 ```
 
-See [`docs/agent-sdk.md`](https://github.com/edgeobs/eunox/blob/main/docs/agent-sdk.md) for the full SDK reference.
+See [`docs/agent-sdk.md`](https://github.com/eunolabs/eunox/blob/main/docs/agent-sdk.md) for the full SDK reference.
 
 ---
 
@@ -188,7 +192,7 @@ eunox-mcp upgrade-to-hosted \
   --api-key sk-<prefix>.<secret>
 ```
 
-This command patches your existing `policy.yaml` to use the remote enforcer and migrates local audit records. See [`docs/upgrade-to-hosted.md`](https://github.com/edgeobs/eunox/blob/main/docs/upgrade-to-hosted.md) for the full upgrade walkthrough.
+This command patches your existing `policy.yaml` to use the remote enforcer and migrates local audit records. See [`docs/upgrade-to-hosted.md`](https://github.com/eunolabs/eunox/blob/main/docs/upgrade-to-hosted.md) for the full upgrade walkthrough.
 
 ---
 
@@ -208,4 +212,4 @@ The local audit log is a plain append-only file — set up log rotation with `lo
 
 ---
 
-_Next: [post 34 — deploying the self-host stack (Redis, Postgres, KMS, Helm)](./34-deploy-self-host.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/edgeobs/eunox/blob/main/docs/blog-articles.md)._
+_Next: [post 34 — deploying the self-host stack (Redis, Postgres, KMS, Helm)](./34-deploy-self-host.md). For the full series index, see [`docs/blog-articles.md`](https://github.com/eunolabs/eunox/blob/main/docs/blog-articles.md)._

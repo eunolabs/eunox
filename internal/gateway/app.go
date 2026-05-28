@@ -17,14 +17,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/did"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/federation"
-	"github.com/edgeobs/eunox/pkg/killswitch"
-	"github.com/edgeobs/eunox/pkg/observability"
-	"github.com/edgeobs/eunox/pkg/ratelimit"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/federation"
+	"github.com/eunolabs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/pkg/revocation"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

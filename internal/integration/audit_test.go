@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/pkg/audit"
-	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/audit"
+	eunoxcrypto "github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 )
 
 // inMemoryLedgerBackend is an in-memory LedgerBackend for integration tests.

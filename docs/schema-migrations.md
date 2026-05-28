@@ -61,56 +61,56 @@ Each service domain has its own migration directory. The migration runner operat
 
 #### `audit_records` — Immutable Append-Only Ledger
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | TEXT | PRIMARY KEY | Unique record identifier (UUID) |
-| `sequence_num` | BIGINT | NOT NULL | Monotonic sequence within the chain |
-| `replica_id` | TEXT | NOT NULL | Producing replica identifier |
-| `tenant_id` | TEXT | NOT NULL | Tenant scope |
-| `timestamp` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Event occurrence time |
-| `event_type` | TEXT | NOT NULL | Event classification |
-| `actor_user_id` | TEXT | NOT NULL, DEFAULT '' | Performing user |
-| `actor_tenant_id` | TEXT | NOT NULL, DEFAULT '' | Actor's tenant |
-| `action` | TEXT | NOT NULL | Action performed |
-| `resource_uid` | TEXT | NOT NULL, DEFAULT '' | Target resource UID |
-| `resource_type` | TEXT | NOT NULL, DEFAULT '' | Target resource type |
-| `outcome` | TEXT | NOT NULL | Result (success/failure) |
-| `detail` | JSONB | nullable | Structured event detail |
-| `signature` | TEXT | NOT NULL | Digital signature (base64url) |
-| `algorithm` | TEXT | NOT NULL | Signing algorithm |
-| `key_id` | TEXT | NOT NULL | Signing key identifier |
-| `chain_hash` | TEXT | NOT NULL | HMAC chain hash |
-| `previous_hash` | TEXT | NOT NULL, DEFAULT '' | Previous record's chain hash |
-| `ocsf_event` | JSONB | nullable | Full OCSF event for export |
-| `metadata` | JSONB | NOT NULL, DEFAULT '{}' | Operator-defined key-value metadata |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Persistence timestamp |
+| Column            | Type        | Constraints             | Description                         |
+| ----------------- | ----------- | ----------------------- | ----------------------------------- |
+| `id`              | TEXT        | PRIMARY KEY             | Unique record identifier (UUID)     |
+| `sequence_num`    | BIGINT      | NOT NULL                | Monotonic sequence within the chain |
+| `replica_id`      | TEXT        | NOT NULL                | Producing replica identifier        |
+| `tenant_id`       | TEXT        | NOT NULL                | Tenant scope                        |
+| `timestamp`       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Event occurrence time               |
+| `event_type`      | TEXT        | NOT NULL                | Event classification                |
+| `actor_user_id`   | TEXT        | NOT NULL, DEFAULT ''    | Performing user                     |
+| `actor_tenant_id` | TEXT        | NOT NULL, DEFAULT ''    | Actor's tenant                      |
+| `action`          | TEXT        | NOT NULL                | Action performed                    |
+| `resource_uid`    | TEXT        | NOT NULL, DEFAULT ''    | Target resource UID                 |
+| `resource_type`   | TEXT        | NOT NULL, DEFAULT ''    | Target resource type                |
+| `outcome`         | TEXT        | NOT NULL                | Result (success/failure)            |
+| `detail`          | JSONB       | nullable                | Structured event detail             |
+| `signature`       | TEXT        | NOT NULL                | Digital signature (base64url)       |
+| `algorithm`       | TEXT        | NOT NULL                | Signing algorithm                   |
+| `key_id`          | TEXT        | NOT NULL                | Signing key identifier              |
+| `chain_hash`      | TEXT        | NOT NULL                | HMAC chain hash                     |
+| `previous_hash`   | TEXT        | NOT NULL, DEFAULT ''    | Previous record's chain hash        |
+| `ocsf_event`      | JSONB       | nullable                | Full OCSF event for export          |
+| `metadata`        | JSONB       | NOT NULL, DEFAULT '{}'  | Operator-defined key-value metadata |
+| `created_at`      | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Persistence timestamp               |
 
 **Indexes:**
 
-| Name | Columns | Type | Purpose |
-|------|---------|------|---------|
+| Name                                 | Columns                       | Type   | Purpose                          |
+| ------------------------------------ | ----------------------------- | ------ | -------------------------------- |
 | `idx_audit_records_tenant_timestamp` | `(tenant_id, timestamp DESC)` | B-tree | Chronological per-tenant queries |
-| `idx_audit_records_event_type` | `(event_type)` | B-tree | Event type filtering |
-| `idx_audit_records_replica_seq` | `(replica_id, sequence_num)` | Unique | Chain traversal & integrity |
-| `idx_audit_records_actor` | `(actor_user_id)` | B-tree | Actor lookups |
+| `idx_audit_records_event_type`       | `(event_type)`                | B-tree | Event type filtering             |
+| `idx_audit_records_replica_seq`      | `(replica_id, sequence_num)`  | Unique | Chain traversal & integrity      |
+| `idx_audit_records_actor`            | `(actor_user_id)`             | B-tree | Actor lookups                    |
 
 #### `chain_anchors` — Cross-Chain Anchoring Checkpoints
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `anchor_id` | TEXT | PRIMARY KEY | Unique anchor identifier |
-| `replica_id` | TEXT | NOT NULL | Source replica |
-| `sequence_num` | BIGINT | NOT NULL | Anchor sequence position |
-| `chain_hash` | TEXT | NOT NULL | Chain hash at anchor point |
-| `merkle_root` | TEXT | NOT NULL | Merkle root of interval |
-| `backend` | TEXT | NOT NULL, DEFAULT '' | External anchoring backend |
-| `external_ref` | TEXT | NOT NULL, DEFAULT '' | External reference |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Anchor creation time |
+| Column         | Type        | Constraints             | Description                |
+| -------------- | ----------- | ----------------------- | -------------------------- |
+| `anchor_id`    | TEXT        | PRIMARY KEY             | Unique anchor identifier   |
+| `replica_id`   | TEXT        | NOT NULL                | Source replica             |
+| `sequence_num` | BIGINT      | NOT NULL                | Anchor sequence position   |
+| `chain_hash`   | TEXT        | NOT NULL                | Chain hash at anchor point |
+| `merkle_root`  | TEXT        | NOT NULL                | Merkle root of interval    |
+| `backend`      | TEXT        | NOT NULL, DEFAULT ''    | External anchoring backend |
+| `external_ref` | TEXT        | NOT NULL, DEFAULT ''    | External reference         |
+| `created_at`   | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Anchor creation time       |
 
 **Indexes:**
 
-| Name | Columns | Type | Purpose |
-|------|---------|------|---------|
+| Name                        | Columns                           | Type   | Purpose                   |
+| --------------------------- | --------------------------------- | ------ | ------------------------- |
 | `idx_chain_anchors_replica` | `(replica_id, sequence_num DESC)` | B-tree | Anchor lookups by replica |
 
 ---
@@ -119,43 +119,43 @@ Each service domain has its own migration directory. The migration runner operat
 
 #### `api_keys` — Hashed API Key Storage
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `key_id` | TEXT | PRIMARY KEY | Key identifier (public) |
-| `secret_hash` | TEXT | NOT NULL | HMAC-SHA256 hash of key secret |
-| `tenant_id` | TEXT | NOT NULL | Owning tenant |
-| `description` | TEXT | NOT NULL, DEFAULT '' | Human-readable description |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Creation time |
-| `expires_at` | TIMESTAMPTZ | nullable | Expiration time |
-| `revoked_at` | TIMESTAMPTZ | nullable | Revocation time |
-| `created_by` | TEXT | NOT NULL, DEFAULT '' | Creating operator |
-| `metadata` | JSONB | NOT NULL, DEFAULT '{}' | Key-value metadata |
+| Column        | Type        | Constraints             | Description                    |
+| ------------- | ----------- | ----------------------- | ------------------------------ |
+| `key_id`      | TEXT        | PRIMARY KEY             | Key identifier (public)        |
+| `secret_hash` | TEXT        | NOT NULL                | HMAC-SHA256 hash of key secret |
+| `tenant_id`   | TEXT        | NOT NULL                | Owning tenant                  |
+| `description` | TEXT        | NOT NULL, DEFAULT ''    | Human-readable description     |
+| `created_at`  | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Creation time                  |
+| `expires_at`  | TIMESTAMPTZ | nullable                | Expiration time                |
+| `revoked_at`  | TIMESTAMPTZ | nullable                | Revocation time                |
+| `created_by`  | TEXT        | NOT NULL, DEFAULT ''    | Creating operator              |
+| `metadata`    | JSONB       | NOT NULL, DEFAULT '{}'  | Key-value metadata             |
 
 **Indexes:**
 
-| Name | Columns | Purpose |
-|------|---------|---------|
-| `idx_api_keys_tenant_id` | `(tenant_id)` | Tenant scoped queries |
+| Name                      | Columns             | Purpose               |
+| ------------------------- | ------------------- | --------------------- |
+| `idx_api_keys_tenant_id`  | `(tenant_id)`       | Tenant scoped queries |
 | `idx_api_keys_created_at` | `(created_at DESC)` | Chronological listing |
 
 #### `key_policies` — API Key Policies
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `policy_id` | TEXT | PRIMARY KEY | Policy identifier |
-| `tenant_id` | TEXT | NOT NULL | Owning tenant |
-| `name` | TEXT | NOT NULL | Policy name |
-| `description` | TEXT | NOT NULL, DEFAULT '' | Human-readable description |
-| `rules` | JSONB | NOT NULL, DEFAULT '{}' | Policy rules |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Creation time |
-| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Last modification time |
-| `created_by` | TEXT | NOT NULL, DEFAULT '' | Creating operator |
+| Column        | Type        | Constraints             | Description                |
+| ------------- | ----------- | ----------------------- | -------------------------- |
+| `policy_id`   | TEXT        | PRIMARY KEY             | Policy identifier          |
+| `tenant_id`   | TEXT        | NOT NULL                | Owning tenant              |
+| `name`        | TEXT        | NOT NULL                | Policy name                |
+| `description` | TEXT        | NOT NULL, DEFAULT ''    | Human-readable description |
+| `rules`       | JSONB       | NOT NULL, DEFAULT '{}'  | Policy rules               |
+| `created_at`  | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Creation time              |
+| `updated_at`  | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | Last modification time     |
+| `created_by`  | TEXT        | NOT NULL, DEFAULT ''    | Creating operator          |
 
 **Indexes:**
 
-| Name | Columns | Type | Purpose |
-|------|---------|------|---------|
-| `idx_key_policies_tenant_id` | `(tenant_id)` | B-tree | Tenant scoped queries |
+| Name                           | Columns             | Type   | Purpose                           |
+| ------------------------------ | ------------------- | ------ | --------------------------------- |
+| `idx_key_policies_tenant_id`   | `(tenant_id)`       | B-tree | Tenant scoped queries             |
 | `idx_key_policies_tenant_name` | `(tenant_id, name)` | Unique | Policy name uniqueness per tenant |
 
 ---
@@ -165,7 +165,7 @@ Each service domain has its own migration directory. The migration runner operat
 ### Usage
 
 ```go
-import "github.com/edgeobs/eunox/internal/migrate"
+import "github.com/eunolabs/eunox/internal/migrate"
 
 runner, err := migrate.NewRunner(&migrate.Config{
     Source:     os.DirFS("migrations/audit"),
@@ -229,4 +229,4 @@ Current behavior in this codebase is CI/test-driven validation and explicit migr
 
 ---
 
-*See also: [audit-chain-architecture.md](./audit-chain-architecture.md), [deployment.md](./deployment.md)*
+_See also: [audit-chain-architecture.md](./audit-chain-architecture.md), [deployment.md](./deployment.md)_

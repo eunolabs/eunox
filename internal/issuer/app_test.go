@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/issuer/policy"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/identity"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/issuer/policy"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/identity"
+	"github.com/eunolabs/eunox/pkg/revocation"
 )
 
 // --- Test Helpers ---

@@ -24,12 +24,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/callcounter"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/killswitch"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/revocation"
 )
 
 // benchmarkEnforceApp builds a gateway App configured for benchmarking.
@@ -67,10 +67,10 @@ func benchmarkEnforceApp(b *testing.B, tokenCacheTTL time.Duration) *gateway.App
 	}
 
 	cfg := gateway.Config{
-		GatewayAudience:         "bench-gateway",
-		TokenCacheTTL:           tokenCacheTTL,
-		RateLimitRequests:       1_000_000,
-		RateLimitWindow:         time.Minute,
+		GatewayAudience:   "bench-gateway",
+		TokenCacheTTL:     tokenCacheTTL,
+		RateLimitRequests: 1_000_000,
+		RateLimitWindow:   time.Minute,
 	}
 
 	app, err := gateway.New(&cfg, &deps)

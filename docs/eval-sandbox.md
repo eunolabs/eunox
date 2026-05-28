@@ -68,7 +68,7 @@ after pulling the container images.
 
 ```bash
 # Clone and enter the repo
-git clone https://github.com/edgeobs/eunox
+git clone https://github.com/eunolabs/eunox
 cd eunox
 
 # Start sandbox (no Redis, no PostgreSQL)
@@ -76,6 +76,7 @@ docker compose --profile sandbox up
 ```
 
 The sandbox profile starts:
+
 - `gateway` (sandbox mode, port 3002)
 - `issuer` (dev mode, port 3001)
 
@@ -128,17 +129,17 @@ $EDITOR infra/sandbox/policy.yaml
 All sandbox configuration is via environment variables. The sandbox profile sets these
 defaults; override them as needed.
 
-| Variable | Sandbox Default | Description |
-|----------|-----------------|-------------|
-| `GATEWAY_NODE_ENV` | `development` | Disables Redis requirement, enables dev CORS |
-| `GATEWAY_ISSUER_JWKS_URL` | `http://localhost:3001/.well-known/jwks.json` | Dev issuer JWKS |
-| `GATEWAY_REDIS_URL` | _(empty)_ | When empty, in-memory stores are used |
-| `GATEWAY_ADMIN_API_KEY` | `dev-admin-key` | Sandbox-only admin key |
-| `GATEWAY_POLICY_PATH` | `./infra/sandbox/policy.yaml` | Local policy file |
-| `GATEWAY_AUDIT_DB` | `file:/tmp/audit.db` | SQLite audit database |
-| `GATEWAY_TOKEN_CACHE_TTL_SECONDS` | `30` | Enable token cache for sandbox |
-| `ISSUER_NODE_ENV` | `development` | Dev issuer: no production signing key required |
-| `ISSUER_SIGNING_KEY_PATH` | `./infra/sandbox/dev-signing-key.pem` | Dev signing key |
+| Variable                          | Sandbox Default                               | Description                                    |
+| --------------------------------- | --------------------------------------------- | ---------------------------------------------- |
+| `GATEWAY_NODE_ENV`                | `development`                                 | Disables Redis requirement, enables dev CORS   |
+| `GATEWAY_ISSUER_JWKS_URL`         | `http://localhost:3001/.well-known/jwks.json` | Dev issuer JWKS                                |
+| `GATEWAY_REDIS_URL`               | _(empty)_                                     | When empty, in-memory stores are used          |
+| `GATEWAY_ADMIN_API_KEY`           | `dev-admin-key`                               | Sandbox-only admin key                         |
+| `GATEWAY_POLICY_PATH`             | `./infra/sandbox/policy.yaml`                 | Local policy file                              |
+| `GATEWAY_AUDIT_DB`                | `file:/tmp/audit.db`                          | SQLite audit database                          |
+| `GATEWAY_TOKEN_CACHE_TTL_SECONDS` | `30`                                          | Enable token cache for sandbox                 |
+| `ISSUER_NODE_ENV`                 | `development`                                 | Dev issuer: no production signing key required |
+| `ISSUER_SIGNING_KEY_PATH`         | `./infra/sandbox/dev-signing-key.pem`         | Dev signing key                                |
 
 ---
 
@@ -147,15 +148,15 @@ defaults; override them as needed.
 The following production features are **intentionally disabled** in the sandbox to
 eliminate external dependencies:
 
-| Feature | Production | Sandbox |
-|---------|-----------|---------|
-| Kill-switch | Redis pub/sub (sub-second) | In-memory (process-local only) |
-| Revocation store | Redis set | In-memory map |
-| Rate limiter | Redis-backed (shared across replicas) | In-memory (single process) |
-| DPoP JTI store | Redis GETDEL | In-memory map |
-| Audit store | PostgreSQL | SQLite file |
-| Multi-replica | Yes (N replicas, shared Redis) | No (single process) |
-| TLS | Required in production | Disabled (HTTP only) |
+| Feature          | Production                            | Sandbox                        |
+| ---------------- | ------------------------------------- | ------------------------------ |
+| Kill-switch      | Redis pub/sub (sub-second)            | In-memory (process-local only) |
+| Revocation store | Redis set                             | In-memory map                  |
+| Rate limiter     | Redis-backed (shared across replicas) | In-memory (single process)     |
+| DPoP JTI store   | Redis GETDEL                          | In-memory map                  |
+| Audit store      | PostgreSQL                            | SQLite file                    |
+| Multi-replica    | Yes (N replicas, shared Redis)        | No (single process)            |
+| TLS              | Required in production                | Disabled (HTTP only)           |
 
 **Enforcement semantics are identical.** The policy engine, capability token
 verification, condition evaluation, and obligation handling are the same code paths

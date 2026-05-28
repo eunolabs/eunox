@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // Helper to create a valid DPoP proof JWT for testing.

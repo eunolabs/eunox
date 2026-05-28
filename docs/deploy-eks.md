@@ -234,7 +234,7 @@ aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
 for img in "${IMAGES[@]}"; do
-  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNOX_VERSION}"
+  SRC="ghcr.io/eunolabs/eunox/${img}:${EUNOX_VERSION}"
   DST="${ECR_REGISTRY}/eunox/${img}:${EUNOX_VERSION}"
   docker pull "${SRC}"
   docker tag  "${SRC}" "${DST}"

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // JWTVerifier verifies JWT tokens and returns parsed claims.

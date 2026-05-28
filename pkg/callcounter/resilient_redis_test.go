@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/edgeobs/eunox/pkg/callcounter"
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

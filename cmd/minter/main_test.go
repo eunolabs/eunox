@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/config"
 )
 
 func TestBuildPepper_Development(t *testing.T) {

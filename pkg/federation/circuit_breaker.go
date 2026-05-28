@@ -6,7 +6,7 @@ package federation
 import (
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/circuitbreaker"
+	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 )
 
 // CircuitBreakerState represents the state of a circuit breaker.

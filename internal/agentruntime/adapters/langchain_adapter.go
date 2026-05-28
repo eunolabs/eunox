@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/edgeobs/eunox/internal/agentruntime"
+	"github.com/eunolabs/eunox/internal/agentruntime"
 )
 
 // Tool represents a LangChain-compatible tool definition.

@@ -121,7 +121,7 @@ The runtime also supports wiring in custom implementations. If you have a privat
 import (
   "context"
 
-  "github.com/edgeobs/eunox/pkg/crypto"
+  "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 type HardwareHsmSigner struct{}

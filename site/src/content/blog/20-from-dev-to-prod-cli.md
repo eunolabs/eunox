@@ -26,7 +26,7 @@ Everything begins with `eunox-mcp proxy`. This is the command that puts eunox in
 eunox-mcp proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
 ```
 
-Install `eunox-mcp` with `go install github.com/edgeobs/eunox/cmd/eunox-mcp@latest` or use a downloaded release binary if you don't want Go on the host.
+Install `eunox-mcp` with `go install github.com/eunolabs/eunox/cmd/eunox-mcp@latest` or use a downloaded release binary if you don't want Go on the host.
 
 That `--` separator is important: everything after it is the upstream server command, including its arguments. The `eunox-mcp proxy` command spawns that upstream process and starts intercepting MCP messages between the host and the upstream server.
 

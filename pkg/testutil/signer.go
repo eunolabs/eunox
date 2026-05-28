@@ -14,7 +14,7 @@ import (
 	"errors"
 	"fmt"
 
-	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/eunolabs/eunox/pkg/crypto"
 )
 
 var errInvalidSignature = errors.New("invalid signature")

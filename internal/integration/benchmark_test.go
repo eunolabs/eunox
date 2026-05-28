@@ -15,11 +15,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/killswitch"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/revocation"
 )
 
 // BenchmarkEnforce_SimpleAllow benchmarks the enforce endpoint for simple allow decisions.

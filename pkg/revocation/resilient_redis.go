@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 )
 
 // ResilientRedis wraps a revocation store with fail-closed semantics.

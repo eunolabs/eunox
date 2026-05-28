@@ -4,7 +4,7 @@
 // Package testutil provides testcontainers-go helpers for integration tests
 // that require live Docker containers (PostgreSQL, Redis).
 //
-// This package lives in the github.com/edgeobs/eunox/tests/integration module,
+// This package lives in the github.com/eunolabs/eunox/tests/integration module,
 // keeping heavyweight container dependencies out of the main module's build
 // graph and reducing CI times for pure-unit builds.
 //

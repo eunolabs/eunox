@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/audit"
-	"github.com/edgeobs/eunox/pkg/did"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/audit"
+	"github.com/eunolabs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 )
 
 // CrossOrgAnnotation holds metadata for cross-organization audit entries.

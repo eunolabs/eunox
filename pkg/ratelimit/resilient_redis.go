@@ -6,7 +6,7 @@ package ratelimit
 import (
 	"context"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

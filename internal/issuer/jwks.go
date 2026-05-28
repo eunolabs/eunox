@@ -11,7 +11,7 @@ import (
 	"encoding/base64"
 	"math/big"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/crypto"
 )
 
 // buildJWKS constructs a JWKS JSON response from a slice of PublicKeyInfo.

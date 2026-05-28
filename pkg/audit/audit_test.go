@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -959,70 +959,70 @@ func (b *failingBackend) Close() error {
 // dedicated chain HMAC secret tests.
 
 func TestComputeChainHashWithSecret_DifferentFromLegacy(t *testing.T) {
-ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-legacy := ComputeChainHash("prev", "rec-1", ts, "sig-1")
-withSecret := ComputeChainHashWithSecret("my-secret", "prev", "rec-1", ts, "sig-1")
-assert.NotEqual(t, legacy, withSecret, "dedicated secret must produce a different hash than legacy")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	legacy := ComputeChainHash("prev", "rec-1", ts, "sig-1")
+	withSecret := ComputeChainHashWithSecret("my-secret", "prev", "rec-1", ts, "sig-1")
+	assert.NotEqual(t, legacy, withSecret, "dedicated secret must produce a different hash than legacy")
 }
 
 func TestComputeChainHashWithSecret_Deterministic(t *testing.T) {
-ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-h1 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
-h2 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
-assert.Equal(t, h1, h2)
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	h1 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
+	h2 := ComputeChainHashWithSecret("secret", "prev", "rec-1", ts, "sig-1")
+	assert.Equal(t, h1, h2)
 }
 
 func TestComputeChainHashWithSecret_IncludesPreviousHash(t *testing.T) {
-ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-h1 := ComputeChainHashWithSecret("secret", "prev-a", "rec-1", ts, "sig-1")
-h2 := ComputeChainHashWithSecret("secret", "prev-b", "rec-1", ts, "sig-1")
-assert.NotEqual(t, h1, h2, "different previousHash must produce different hashes even with same secret")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	h1 := ComputeChainHashWithSecret("secret", "prev-a", "rec-1", ts, "sig-1")
+	h2 := ComputeChainHashWithSecret("secret", "prev-b", "rec-1", ts, "sig-1")
+	assert.NotEqual(t, h1, h2, "different previousHash must produce different hashes even with same secret")
 }
 
 func TestVerifyChainHashWithSecret_RoundTrip(t *testing.T) {
-ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-prev := "prev-hash"
-secret := "my-chain-secret"
-chainHash := ComputeChainHashWithSecret(secret, prev, "rec-1", ts, "sig-1")
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	prev := "prev-hash"
+	secret := "my-chain-secret"
+	chainHash := ComputeChainHashWithSecret(secret, prev, "rec-1", ts, "sig-1")
 
-evidence := &SignedAuditEvidence{
-Record:       LogEntry{ID: "rec-1", Timestamp: ts},
-Signature:    "sig-1",
-ChainHash:    chainHash,
-PreviousHash: prev,
-}
-assert.True(t, VerifyChainHashWithSecret(secret, evidence))
+	evidence := &SignedAuditEvidence{
+		Record:       LogEntry{ID: "rec-1", Timestamp: ts},
+		Signature:    "sig-1",
+		ChainHash:    chainHash,
+		PreviousHash: prev,
+	}
+	assert.True(t, VerifyChainHashWithSecret(secret, evidence))
 }
 
 func TestVerifyChainHashWithSecret_WrongSecret(t *testing.T) {
-ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-chainHash := ComputeChainHashWithSecret("correct-secret", "prev", "rec-1", ts, "sig-1")
-evidence := &SignedAuditEvidence{
-Record:       LogEntry{ID: "rec-1", Timestamp: ts},
-Signature:    "sig-1",
-ChainHash:    chainHash,
-PreviousHash: "prev",
-}
-assert.False(t, VerifyChainHashWithSecret("wrong-secret", evidence))
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	chainHash := ComputeChainHashWithSecret("correct-secret", "prev", "rec-1", ts, "sig-1")
+	evidence := &SignedAuditEvidence{
+		Record:       LogEntry{ID: "rec-1", Timestamp: ts},
+		Signature:    "sig-1",
+		ChainHash:    chainHash,
+		PreviousHash: "prev",
+	}
+	assert.False(t, VerifyChainHashWithSecret("wrong-secret", evidence))
 }
 
 func TestPipeline_ChainHMACSecret_UsedInAppend(t *testing.T) {
-signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
-backend := newInMemoryLedgerBackend()
-secret := "test-chain-secret"
+	signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
+	backend := newInMemoryLedgerBackend()
+	secret := "test-chain-secret"
 
-pipeline, err := NewPipeline(signer, backend, PipelineConfig{ChainHMACSecret: secret})
-require.NoError(t, err)
-require.NoError(t, pipeline.Initialize(context.Background()))
+	pipeline, err := NewPipeline(signer, backend, PipelineConfig{ChainHMACSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Initialize(context.Background()))
 
-entry := &LogEntry{TenantID: "t1", EventType: "test", Action: "read", Outcome: "success"}
-require.NoError(t, pipeline.Append(context.Background(), entry))
+	entry := &LogEntry{TenantID: "t1", EventType: "test", Action: "read", Outcome: "success"}
+	require.NoError(t, pipeline.Append(context.Background(), entry))
 
-records := backend.Records()
-require.Len(t, records, 1)
+	records := backend.Records()
+	require.Len(t, records, 1)
 
-// The chain hash should verify with the secret.
-assert.True(t, VerifyChainHashWithSecret(secret, &records[0]))
-// But NOT with the legacy (no-secret) verifier.
-assert.False(t, VerifyChainHash(&records[0]))
+	// The chain hash should verify with the secret.
+	assert.True(t, VerifyChainHashWithSecret(secret, &records[0]))
+	// But NOT with the legacy (no-secret) verifier.
+	assert.False(t, VerifyChainHash(&records[0]))
 }

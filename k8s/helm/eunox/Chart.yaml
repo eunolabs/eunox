@@ -33,9 +33,9 @@ keywords:
   - issuer
   - mcp
   - enterprise
-home: https://github.com/edgeobs/eunox
+home: https://github.com/eunolabs/eunox
 sources:
-  - https://github.com/edgeobs/eunox
+  - https://github.com/eunolabs/eunox
 maintainers:
   - name: Eunox Team
 

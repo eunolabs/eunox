@@ -1,4 +1,4 @@
-module github.com/edgeobs/eunox/tests/integration
+module github.com/eunolabs/eunox/tests/integration
 
 go 1.25.0
 

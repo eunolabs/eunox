@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/edgeobs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/killswitch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

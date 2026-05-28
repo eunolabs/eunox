@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

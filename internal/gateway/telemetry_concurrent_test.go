@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/internal/gateway"
 	"github.com/stretchr/testify/assert"
 )
 

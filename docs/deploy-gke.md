@@ -224,7 +224,7 @@ IMAGES=(
 gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
 for img in "${IMAGES[@]}"; do
-  SRC="ghcr.io/edgeobs/eunox/${img}:${EUNOX_VERSION}"
+  SRC="ghcr.io/eunolabs/eunox/${img}:${EUNOX_VERSION}"
   DST="${AR_REGISTRY}/${img}:${EUNOX_VERSION}"
   docker pull "${SRC}"
   docker tag  "${SRC}" "${DST}"

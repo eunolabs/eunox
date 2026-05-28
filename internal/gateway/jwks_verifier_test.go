@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 func newTestJWKS(t *testing.T) (*ecdsa.PrivateKey, string, *httptest.Server) {

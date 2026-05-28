@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/edgeobs/eunox/pkg/config"
-	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
 )
 
 func TestBuildRateLimiter_UsesRedisWhenConfigured(t *testing.T) {
@@ -35,7 +35,7 @@ func TestBuildRateLimiter_FallsBackToInMemoryOnInvalidRedisURL(t *testing.T) {
 func TestBuildSigner_SoftwareAllowedInDevelopment(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		NodeEnv:         config.EnvDevelopment,
-		SigningProvider:  "software",
+		SigningProvider: "software",
 	}
 	signer, err := buildSigner(cfg)
 	assert.NoError(t, err)
@@ -46,7 +46,7 @@ func TestBuildSigner_SoftwareAllowedInDevelopment(t *testing.T) {
 func TestBuildSigner_EmptyProviderAllowedInDevelopment(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		NodeEnv:         config.EnvDevelopment,
-		SigningProvider:  "",
+		SigningProvider: "",
 	}
 	signer, err := buildSigner(cfg)
 	assert.NoError(t, err)
@@ -56,7 +56,7 @@ func TestBuildSigner_EmptyProviderAllowedInDevelopment(t *testing.T) {
 func TestBuildSigner_SoftwareRejectedInProduction(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		NodeEnv:         config.EnvProduction,
-		SigningProvider:  "software",
+		SigningProvider: "software",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -66,7 +66,7 @@ func TestBuildSigner_SoftwareRejectedInProduction(t *testing.T) {
 func TestBuildSigner_EmptyProviderRejectedInProduction(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		NodeEnv:         config.EnvProduction,
-		SigningProvider:  "",
+		SigningProvider: "",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -76,7 +76,7 @@ func TestBuildSigner_EmptyProviderRejectedInProduction(t *testing.T) {
 func TestBuildSigner_AWSKMSMissingKeyID(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		SigningProvider: "aws-kms",
-		AWSKMSRegion:   "us-east-1",
+		AWSKMSRegion:    "us-east-1",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -86,7 +86,7 @@ func TestBuildSigner_AWSKMSMissingKeyID(t *testing.T) {
 func TestBuildSigner_AWSKMSMissingRegion(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		SigningProvider: "aws-kms",
-		AWSKMSKeyID:    "arn:aws:kms:us-east-1:123456789012:key/some-key-id",
+		AWSKMSKeyID:     "arn:aws:kms:us-east-1:123456789012:key/some-key-id",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -105,8 +105,8 @@ func TestBuildSigner_AzureMissingVaultURL(t *testing.T) {
 
 func TestBuildSigner_AzureMissingKeyName(t *testing.T) {
 	cfg := &config.IssuerConfig{
-		SigningProvider:    "azure-keyvault",
-		AzureKeyVaultURL:  "https://my-vault.vault.azure.net",
+		SigningProvider:  "azure-keyvault",
+		AzureKeyVaultURL: "https://my-vault.vault.azure.net",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -116,8 +116,8 @@ func TestBuildSigner_AzureMissingKeyName(t *testing.T) {
 func TestBuildSigner_GCPMissingProjectID(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		SigningProvider: "gcp-cloudkms",
-		GCPKeyringID:   "my-ring",
-		GCPCryptoKeyID: "my-key",
+		GCPKeyringID:    "my-ring",
+		GCPCryptoKeyID:  "my-key",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -127,8 +127,8 @@ func TestBuildSigner_GCPMissingProjectID(t *testing.T) {
 func TestBuildSigner_GCPMissingKeyring(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		SigningProvider: "gcp-cloudkms",
-		GCPProjectID:   "my-project",
-		GCPCryptoKeyID: "my-key",
+		GCPProjectID:    "my-project",
+		GCPCryptoKeyID:  "my-key",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)
@@ -138,8 +138,8 @@ func TestBuildSigner_GCPMissingKeyring(t *testing.T) {
 func TestBuildSigner_GCPMissingCryptoKeyID(t *testing.T) {
 	cfg := &config.IssuerConfig{
 		SigningProvider: "gcp-cloudkms",
-		GCPProjectID:   "my-project",
-		GCPKeyringID:   "my-ring",
+		GCPProjectID:    "my-project",
+		GCPKeyringID:    "my-ring",
 	}
 	_, err := buildSigner(cfg)
 	assert.Error(t, err)

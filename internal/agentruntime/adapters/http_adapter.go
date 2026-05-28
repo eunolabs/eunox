@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/edgeobs/eunox/internal/agentruntime"
+	"github.com/eunolabs/eunox/internal/agentruntime"
 )
 
 // HTTPAdapter adapts the agent runtime for generic HTTP/REST-based tool calls.

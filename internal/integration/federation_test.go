@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/pkg/did"
-	"github.com/edgeobs/eunox/pkg/federation"
+	"github.com/eunolabs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/federation"
 )
 
 // failingResolver always returns an error for DID resolution.

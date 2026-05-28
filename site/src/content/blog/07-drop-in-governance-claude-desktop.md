@@ -38,7 +38,7 @@ The whole thing runs in-process — no Docker, no Redis, no separate service to 
 ## Prerequisites
 
 - Claude Desktop installed (or Cursor, Windsurf — anything that reads an MCP config JSON)
-- Go 1.25+ installed (check with `go version`) so you can install `eunox-mcp` via `go install github.com/edgeobs/eunox/cmd/eunox-mcp@latest` or use a downloaded release binary
+- Go 1.25+ installed (check with `go version`) so you can install `eunox-mcp` via `go install github.com/eunolabs/eunox/cmd/eunox-mcp@latest` or use a downloaded release binary
 - An existing MCP server you're using — I'll use the filesystem server as the example throughout
 
 If you're not sure what MCP servers you have configured, open your Claude Desktop config file. On macOS it's at `~/Library/Application Support/Claude/claude_desktop_config.json`. On Windows it's `%APPDATA%\Claude\claude_desktop_config.json`. Take a look at what's in there.

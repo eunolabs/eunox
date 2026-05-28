@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/config"
 )
 
 func TestLevelFromEnv(t *testing.T) {
@@ -325,9 +325,9 @@ func TestValidateRedisConfig(t *testing.T) {
 			// Multi-replica with security Redis but no DPoP Redis must fail.
 			name: "multi_replica_security_redis_but_no_dpop_fails",
 			cfg: config.GatewayConfig{
-				NodeEnv:        config.EnvStaging,
-				DeploymentTier: config.TierMultiReplica,
-				RedisURL:       "", // no shared URL
+				NodeEnv:             config.EnvStaging,
+				DeploymentTier:      config.TierMultiReplica,
+				RedisURL:            "", // no shared URL
 				KillSwitchRedisURL:  "redis://ks:6379",
 				RevocationRedisURL:  "redis://rev:6379",
 				CallCounterRedisURL: "redis://cc:6379",

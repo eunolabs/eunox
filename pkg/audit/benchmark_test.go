@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/audit"
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/audit"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 )
 
 // BenchmarkLedgerBackend_Append benchmarks benchmark-harness append overhead using

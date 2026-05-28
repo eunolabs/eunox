@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
+	eunoxcrypto "github.com/eunolabs/eunox/pkg/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

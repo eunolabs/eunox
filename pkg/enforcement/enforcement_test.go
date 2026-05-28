@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/callcounter"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/testutil"
+	"github.com/eunolabs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -1,4 +1,4 @@
-module github.com/edgeobs/eunox
+module github.com/eunolabs/eunox
 
 go 1.25.0
 

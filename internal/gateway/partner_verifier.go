@@ -14,18 +14,18 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/federation"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/federation"
 )
 
 // PartnerTokenVerifier verifies JWT tokens issued by trusted partner organizations.
 // When the token carries a non-empty Proofs.Signatures field, ALL co-signatures are
 // verified against each co-issuer's resolved public keys before the token is accepted.
 type PartnerTokenVerifier struct {
-	resolver         *federation.PartnerIssuerResolver
-	coSigResolver    capability.PublicKeyResolver
-	audience         string
-	now              func() time.Time
+	resolver      *federation.PartnerIssuerResolver
+	coSigResolver capability.PublicKeyResolver
+	audience      string
+	now           func() time.Time
 }
 
 // PartnerTokenVerifierConfig configures the PartnerTokenVerifier.

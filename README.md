@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/edgeobs/eunox/blob/main/site/public/eunolabs.png?raw=true" alt="eunox" height="160">
+  <img src="https://github.com/eunolabs/eunox/blob/main/site/public/eunolabs.png?raw=true" alt="eunox" height="160">
 </p>
 
 <h1 align="center">eunox</h1>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/edgeobs/eunox/blob/main/LICENSE"><img alt="License: BUSL-1.1" src="https://img.shields.io/badge/license-BUSL--1.1-blue.svg"></a>
+  <a href="https://github.com/eunolabs/eunox/blob/main/LICENSE"><img alt="License: BUSL-1.1" src="https://img.shields.io/badge/license-BUSL--1.1-blue.svg"></a>
   <a href="https://go.dev/"><img alt="Go 1.25+" src="https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8"></a>
   <a href="https://spec.modelcontextprotocol.io/"><img alt="MCP" src="https://img.shields.io/badge/MCP-supported-7c3aed"></a>
 </p>

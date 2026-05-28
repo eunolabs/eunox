@@ -22,15 +22,15 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/edgeobs/eunox/pkg/audit"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/audit"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/google/uuid"
 )
 
 // gatewayTracer is the OTel tracer used for enforcement sub-step spans (P2-4).
-var gatewayTracer = otel.Tracer("github.com/edgeobs/eunox/internal/gateway")
+var gatewayTracer = otel.Tracer("github.com/eunolabs/eunox/internal/gateway")
 
 // validToolNameRE enforces an allowlist on the X-Tool-Name proxy header.
 // Accepts 1–256 characters: letters, digits, underscores, hyphens, colons, dots.

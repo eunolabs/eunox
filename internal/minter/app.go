@@ -20,8 +20,8 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/edgeobs/eunox/pkg/observability"
-	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
 )
 
 const defaultMaxBodySize int64 = 1 << 20 // 1 MB

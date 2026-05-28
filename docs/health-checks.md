@@ -76,7 +76,7 @@ The `pkg/lifecycle` package provides a shared lifecycle manager with built-in
 health handlers. Services that use it get consistent behavior automatically:
 
 ```go
-import "github.com/edgeobs/eunox/pkg/lifecycle"
+import "github.com/eunolabs/eunox/pkg/lifecycle"
 
 mgr := lifecycle.New(
     lifecycle.WithShutdownTimeout(15 * time.Second),

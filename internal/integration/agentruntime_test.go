@@ -24,16 +24,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/agentruntime"
-	"github.com/edgeobs/eunox/internal/agentruntime/adapters"
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/internal/issuer"
-	"github.com/edgeobs/eunox/internal/issuer/policy"
-	"github.com/edgeobs/eunox/pkg/capability"
-	eunoxcrypto "github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/identity"
-	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/internal/agentruntime"
+	"github.com/eunolabs/eunox/internal/agentruntime/adapters"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/internal/issuer"
+	"github.com/eunolabs/eunox/internal/issuer/policy"
+	"github.com/eunolabs/eunox/pkg/capability"
+	eunoxcrypto "github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/identity"
+	"github.com/eunolabs/eunox/pkg/observability"
 )
 
 // testIdentityProvider is a simple identity.Provider that verifies tokens

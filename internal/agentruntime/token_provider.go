@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/circuitbreaker"
+	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 )
 
 // AuthTokenProvider acquires and refreshes capability tokens from the issuer.

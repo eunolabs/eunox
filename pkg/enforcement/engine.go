@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/testutil"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/testutil"
 	"github.com/google/uuid"
 )
 

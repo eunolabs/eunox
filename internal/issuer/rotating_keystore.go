@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/crypto"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

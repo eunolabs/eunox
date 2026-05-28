@@ -20,14 +20,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/callcounter"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/did"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/federation"
-	"github.com/edgeobs/eunox/pkg/killswitch"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/federation"
+	"github.com/eunolabs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/revocation"
 )
 
 func TestPartnerTokenVerifier_VerifyPartnerToken(t *testing.T) {

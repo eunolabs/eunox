@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // TokenResponse represents a token acquired from the issuer.

@@ -28,7 +28,7 @@ import (
     "context"
     "log"
 
-    "github.com/edgeobs/eunox/internal/agentruntime"
+    "github.com/eunolabs/eunox/internal/agentruntime"
 )
 
 func main() {

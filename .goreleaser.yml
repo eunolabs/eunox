@@ -129,10 +129,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-gateway"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -142,10 +142,10 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-gateway"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -156,10 +156,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-issuer"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -169,10 +169,10 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-issuer"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -183,10 +183,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-minter"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -196,10 +196,10 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-minter"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -210,10 +210,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-db-token-svc"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -223,10 +223,10 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-db-token-svc"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -237,10 +237,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-storage-grant-svc"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -250,10 +250,10 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-storage-grant-svc"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -264,10 +264,10 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-amd64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-posture-emitter"
       - "--build-arg=BINARY={{ .Binary }}"
@@ -277,68 +277,68 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-arm64"
     dockerfile: deploy/docker/Dockerfile.goreleaser
     build_flag_templates:
-      - "--label=org.opencontainers.image.source=https://github.com/edgeobs/eunox"
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.title=eunox-posture-emitter"
       - "--build-arg=BINARY={{ .Binary }}"
 
 docker_manifests:
-  - name_template: "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-gateway:latest"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-gateway:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-gateway:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-issuer:latest"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-issuer:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-issuer:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-issuer:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/edgeobs/eunox-minter:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-minter:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-minter:latest"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-minter:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-minter:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-minter:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-db-token-svc:latest"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-db-token-svc:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-db-token-svc:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-db-token-svc:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-storage-grant-svc:latest"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-storage-grant-svc:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-storage-grant-svc:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-storage-grant-svc:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}"
+  - name_template: "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/edgeobs/eunox-posture-emitter:latest"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-posture-emitter:latest"
     image_templates:
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-amd64"
-      - "ghcr.io/edgeobs/eunox-posture-emitter:{{ .Version }}-arm64"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-posture-emitter:{{ .Version }}-arm64"
 
 checksum:
   name_template: "checksums.txt"
@@ -364,7 +364,7 @@ changelog:
 
 release:
   github:
-    owner: edgeobs
+    owner: eunolabs
     name: eunox
   prerelease: auto
   draft: false

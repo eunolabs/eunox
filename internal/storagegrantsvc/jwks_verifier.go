@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // JWKSTokenVerifier verifies capability tokens via JWKS and extracts storage-related claims.

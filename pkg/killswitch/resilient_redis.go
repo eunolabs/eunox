@@ -6,7 +6,7 @@ package killswitch
 import (
 	"context"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 )
 
 // ResilientRedis wraps a Redis kill-switch manager with fail-closed semantics.

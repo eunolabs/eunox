@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/edgeobs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/internal/gateway"
 )
 
 // --- TEST-1: Admin JWT Verification Extended Tests ---

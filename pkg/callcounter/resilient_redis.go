@@ -6,7 +6,7 @@ package callcounter
 import (
 	"context"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 )
 
 // ResilientRedis wraps a Redis call counter with fail-open semantics.

@@ -17,11 +17,11 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/edgeobs/eunox/internal/minter"
-	"github.com/edgeobs/eunox/pkg/config"
-	"github.com/edgeobs/eunox/pkg/database"
-	"github.com/edgeobs/eunox/pkg/observability"
-	"github.com/edgeobs/eunox/pkg/ratelimit"
+	"github.com/eunolabs/eunox/internal/minter"
+	"github.com/eunolabs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/database"
+	"github.com/eunolabs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/ratelimit"
 )
 
 // These variables are set by GoReleaser via -X ldflags at build time.

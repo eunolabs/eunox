@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/redisfailover"
+	"github.com/eunolabs/eunox/pkg/redisfailover"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // ErrPolicyNotFound indicates no policy exists for the requested role.

@@ -37,13 +37,13 @@ The first problem in any air-gapped deployment is knowing exactly what container
 The `k8s/air-gap-images.txt` manifest is the authoritative list of the service images, optional simulator image, build-time base images, and optional bundled dependencies used by the Stage-5 deployment assets. It looks like this:
 
 ```
-ghcr.io/edgeobs/eunox-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
-ghcr.io/edgeobs/eunox-issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
-ghcr.io/edgeobs/eunox-minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
-ghcr.io/edgeobs/eunox-db-token-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
-ghcr.io/edgeobs/eunox-storage-grant-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
-ghcr.io/edgeobs/eunox-posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
-ghcr.io/edgeobs/eunox-partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
+ghcr.io/eunolabs/eunox-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
+ghcr.io/eunolabs/eunox-issuer:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000002
+ghcr.io/eunolabs/eunox-minter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000003
+ghcr.io/eunolabs/eunox-db-token-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000004
+ghcr.io/eunolabs/eunox-storage-grant-svc:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000005
+ghcr.io/eunolabs/eunox-posture-emitter:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000006
+ghcr.io/eunolabs/eunox-partner-issuer-sim:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000007
 golang:1.25-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000010
 alpine/curl:latest@sha256:0000000000000000000000000000000000000000000000000000000000000011
 bitnami/postgresql:16@sha256:0000000000000000000000000000000000000000000000000000000000000020
@@ -64,22 +64,22 @@ After the script completes, every image in the manifest is available at your pri
 ```yaml
 gateway:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-gateway
+    repository: registry.internal.example.com/eunolabs/eunox-gateway
 issuer:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-issuer
+    repository: registry.internal.example.com/eunolabs/eunox-issuer
 minter:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-minter
+    repository: registry.internal.example.com/eunolabs/eunox-minter
 dbTokenService:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-db-token-svc
+    repository: registry.internal.example.com/eunolabs/eunox-db-token-svc
 storageGrantService:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-storage-grant-svc
+    repository: registry.internal.example.com/eunolabs/eunox-storage-grant-svc
 postureEmitter:
   image:
-    repository: registry.internal.example.com/edgeobs/eunox-posture-emitter
+    repository: registry.internal.example.com/eunolabs/eunox-posture-emitter
 ```
 
 One thing to get right: verify the image digests. SHA-256 image digests are in the manifest alongside the tags. When deploying in a security-sensitive environment, you want to deploy by digest, not by tag — tags are mutable. Add the digests to your Kubernetes deployment specs and your private registry settings will enforce them. If an image has been tampered with between pull and deployment, the digest won't match.

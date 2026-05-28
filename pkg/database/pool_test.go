@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/config"
+	"github.com/eunolabs/eunox/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

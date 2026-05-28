@@ -1,41 +1,49 @@
 # CODEOWNERS — eunox package ownership
 
 # Default owners
-*                                       @edgeobs/eunox-leads
+
+-                                       @eunolabs/eunox-leads
 
 # Go services
-/cmd/gateway/                           @edgeobs/eunox-dp
-/cmd/issuer/                            @edgeobs/eunox-cp
-/cmd/minter/                            @edgeobs/eunox-cp
-/cmd/db-token-svc/                      @edgeobs/eunox-cp
-/cmd/storage-grant-svc/                 @edgeobs/eunox-cp
-/cmd/posture-emitter/                   @edgeobs/eunox-obs
+
+/cmd/gateway/ @eunolabs/eunox-dp
+/cmd/issuer/ @eunolabs/eunox-cp
+/cmd/minter/ @eunolabs/eunox-cp
+/cmd/db-token-svc/ @eunolabs/eunox-cp
+/cmd/storage-grant-svc/ @eunolabs/eunox-cp
+/cmd/posture-emitter/ @eunolabs/eunox-obs
 
 # Internal packages
-/internal/gateway/                      @edgeobs/eunox-dp
-/internal/issuer/                       @edgeobs/eunox-cp
-/internal/minter/                       @edgeobs/eunox-cp
-/internal/dbtokensvc/                   @edgeobs/eunox-cp
-/internal/storagegrantsvc/              @edgeobs/eunox-cp
-/internal/agentruntime/                 @edgeobs/eunox-dp
-/internal/posture/                      @edgeobs/eunox-obs
+
+/internal/gateway/ @eunolabs/eunox-dp
+/internal/issuer/ @eunolabs/eunox-cp
+/internal/minter/ @eunolabs/eunox-cp
+/internal/dbtokensvc/ @eunolabs/eunox-cp
+/internal/storagegrantsvc/ @eunolabs/eunox-cp
+/internal/agentruntime/ @eunolabs/eunox-dp
+/internal/posture/ @eunolabs/eunox-obs
 
 # Public packages — shared across teams
-/pkg/                                   @edgeobs/eunox-cp @edgeobs/eunox-dp
+
+/pkg/ @eunolabs/eunox-cp @eunolabs/eunox-dp
 
 # Infrastructure & deployment
-/infra/                                 @edgeobs/eunox-obs
-/k8s/                                   @edgeobs/eunox-obs
+
+/infra/ @eunolabs/eunox-obs
+/k8s/ @eunolabs/eunox-obs
 
 # Documentation
-/docs/                                  @edgeobs/eunox-leads
-/README.md                              @edgeobs/eunox-leads
+
+/docs/ @eunolabs/eunox-leads
+/README.md @eunolabs/eunox-leads
 
 # Website
-/site/                                  @edgeobs/eunox-dx
+
+/site/ @eunolabs/eunox-dx
 
 # Repository configuration
-/CODEOWNERS                             @edgeobs/eunox-leads
-/Makefile                               @edgeobs/eunox-leads
-/go.mod                                 @edgeobs/eunox-leads
-/.github/                               @edgeobs/eunox-leads
+
+/CODEOWNERS @eunolabs/eunox-leads
+/Makefile @eunolabs/eunox-leads
+/go.mod @eunolabs/eunox-leads
+/.github/ @eunolabs/eunox-leads

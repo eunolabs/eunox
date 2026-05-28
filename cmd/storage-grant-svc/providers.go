@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/storagegrantsvc"
+	"github.com/eunolabs/eunox/internal/storagegrantsvc"
 )
 
 // ── AWS ──────────────────────────────────────────────────────────────────────
@@ -179,14 +179,14 @@ func (p *restAzureDelegationKeyProvider) GetUserDelegationKey(
 
 	// Parse the XML delegation key response.
 	var xmlKey struct {
-		XMLName      xml.Name `xml:"UserDelegationKey"`
-		SignedOID    string   `xml:"SignedOid"`
-		SignedTID    string   `xml:"SignedTid"`
-		SignedStart  string   `xml:"SignedStart"`
-		SignedExpiry string   `xml:"SignedExpiry"`
-		SignedService string  `xml:"SignedService"`
-		SignedVersion string  `xml:"SignedVersion"`
-		Value        string   `xml:"Value"`
+		XMLName       xml.Name `xml:"UserDelegationKey"`
+		SignedOID     string   `xml:"SignedOid"`
+		SignedTID     string   `xml:"SignedTid"`
+		SignedStart   string   `xml:"SignedStart"`
+		SignedExpiry  string   `xml:"SignedExpiry"`
+		SignedService string   `xml:"SignedService"`
+		SignedVersion string   `xml:"SignedVersion"`
+		Value         string   `xml:"Value"`
 	}
 	if err := xml.Unmarshal(respBody, &xmlKey); err != nil {
 		return nil, fmt.Errorf("azure delegation key: parse response: %w", err)

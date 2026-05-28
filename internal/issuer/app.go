@@ -25,12 +25,12 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/google/uuid"
 
-	"github.com/edgeobs/eunox/internal/issuer/policy"
-	"github.com/edgeobs/eunox/pkg/capability"
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/identity"
-	"github.com/edgeobs/eunox/pkg/observability"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/issuer/policy"
+	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/identity"
+	"github.com/eunolabs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/revocation"
 )
 
 const defaultMaxBodySize int64 = 1 << 20 // 1 MB
@@ -81,9 +81,9 @@ type Dependencies struct {
 	// When nil, revocation is not checked during token renewal (not recommended
 	// for production).  Use a Redis-backed store in multi-replica deployments so
 	// that gateway-issued revocations are visible to the issuer.
-	Revocation   revocation.Store
-	Logger       *slog.Logger
-	Metrics      *observability.MetricsRegistry
+	Revocation revocation.Store
+	Logger     *slog.Logger
+	Metrics    *observability.MetricsRegistry
 }
 
 // App is the issuer HTTP application.

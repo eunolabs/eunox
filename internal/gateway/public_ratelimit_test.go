@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/gateway"
-	"github.com/edgeobs/eunox/pkg/callcounter"
-	"github.com/edgeobs/eunox/pkg/enforcement"
-	"github.com/edgeobs/eunox/pkg/killswitch"
-	"github.com/edgeobs/eunox/pkg/revocation"
+	"github.com/eunolabs/eunox/internal/gateway"
+	"github.com/eunolabs/eunox/pkg/callcounter"
+	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/killswitch"
+	"github.com/eunolabs/eunox/pkg/revocation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func newPublicRateLimitTestApp(t *testing.T, ratePerMin int) *gateway.App {
 	}
 
 	cfg := gateway.Config{
-		GatewayAudience:  "test-gateway",
+		GatewayAudience:   "test-gateway",
 		RateLimitRequests: ratePerMin,
 		RateLimitWindow:   time.Minute,
 	}

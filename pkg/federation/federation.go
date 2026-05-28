@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/did"
+	"github.com/eunolabs/eunox/pkg/did"
 )
 
 // Errors used by the federation package.

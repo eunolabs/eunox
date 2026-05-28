@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/internal/agentruntime"
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/internal/agentruntime"
+	"github.com/eunolabs/eunox/pkg/capability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

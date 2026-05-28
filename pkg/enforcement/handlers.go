@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/capability"
 )
 
 // registerBuiltins registers all built-in condition handlers.

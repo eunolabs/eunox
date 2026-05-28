@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/circuitbreaker"
+	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 )
 
 func TestTransport_Success(t *testing.T) {

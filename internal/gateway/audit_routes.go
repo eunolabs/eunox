@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/audit"
+	"github.com/eunolabs/eunox/pkg/audit"
 )
 
 // auditPrincipalKey is the context key used to store an authenticated
@@ -352,4 +352,3 @@ func (p *auditPrincipal) scopedTenantID(w http.ResponseWriter, requestedTenantID
 func auditAdminAPIKeyHeader() string {
 	return strings.Join([]string{"X", "Admin", "Api", "Key"}, "-")
 }
-

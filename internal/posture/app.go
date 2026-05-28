@@ -17,7 +17,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/eunolabs/eunox/pkg/observability"
 )
 
 // Config holds the posture emitter application configuration.

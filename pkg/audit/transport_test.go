@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgeobs/eunox/pkg/crypto"
-	"github.com/edgeobs/eunox/pkg/ocsf"
+	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -49,7 +49,7 @@ below maps every Cloud feature to its self-host equivalent.
 
 | Feature                                    | Cloud (Managed)         | Self-host (BSL)                                          |
 | ------------------------------------------ | ----------------------- | -------------------------------------------------------- |
-| Local enforcement (`eunox-mcp` only)      | ✅                      | ✅                                                       |
+| Local enforcement (`eunox-mcp` only)       | ✅                      | ✅                                                       |
 | stdio + HTTP proxy transports              | ✅                      | ✅                                                       |
 | All condition types                        | ✅                      | ✅                                                       |
 | Local HMAC audit log                       | ✅                      | ✅                                                       |
@@ -402,7 +402,7 @@ version: "3.9"
 
 services:
   capability-issuer:
-    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
+    image: ghcr.io/eunolabs/eunox/issuer:1.0.0
     container_name: eunox-issuer
     env_file: /srv/eunox/issuer.env
     volumes:
@@ -416,7 +416,7 @@ services:
       retries: 5
 
   tool-gateway:
-    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
+    image: ghcr.io/eunolabs/eunox/gateway:1.0.0
     container_name: eunox-gateway
     env_file: /srv/eunox/gateway.env
     volumes:
@@ -608,7 +608,7 @@ services:
     restart: unless-stopped
 
   capability-issuer:
-    image: ghcr.io/edgeobs/eunox/issuer:1.0.0
+    image: ghcr.io/eunolabs/eunox/issuer:1.0.0
     container_name: eunox-issuer
     env_file: ./issuer.env
     environment:
@@ -626,7 +626,7 @@ services:
     restart: unless-stopped
 
   tool-gateway:
-    image: ghcr.io/edgeobs/eunox/gateway:1.0.0
+    image: ghcr.io/eunolabs/eunox/gateway:1.0.0
     container_name: eunox-gateway
     env_file: ./gateway.env
     environment:
@@ -1817,7 +1817,7 @@ curl -X POST https://storage-grant-service.internal:5051/api/v1/storage-grants \
 > **Reference:** `docs/agent-sdk.md` §"AGT in-process guard";
 > `docs/diagrams.md` Set D.
 
-The AGT guard (`internal/agentruntime` — `github.com/edgeobs/eunox/internal/agentruntime`) is an in-process
+The AGT guard (`internal/agentruntime` — `github.com/eunolabs/eunox/internal/agentruntime`) is an in-process
 capability pre-screen that sits between the agent logic and the outer gateway.
 It implements the **defense-in-depth Set-D architecture**. The guard is a soft
 layer only — the outer gateway remains the sole hard enforcement boundary.
@@ -1831,7 +1831,7 @@ layer only — the outer gateway remains the sole hard enforcement boundary.
 #### 12.8.1 Quick-start wiring
 
 ```go
-import "github.com/edgeobs/eunox/internal/agentruntime"
+import "github.com/eunolabs/eunox/internal/agentruntime"
 
 rt, err := agentruntime.New(&agentruntime.Config{
     IssuerURL:             "https://issuer.example.com",
