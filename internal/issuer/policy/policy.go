@@ -107,12 +107,19 @@ func New(opts ...Option) *Engine {
 // LoadFromFile loads policies from a JSON file.
 func (e *Engine) LoadFromFile(filePath string) error {
 	e.filePath = filePath
+	// Capture the mtime before reload so that if the file is modified
+	// between Stat and ReadFile, the poll loop will detect the newer mtime
+	// on its next tick and re-read rather than silently losing the update.
+	info, statErr := os.Stat(filePath)
 	if err := e.reload(); err != nil {
 		return err
 	}
 	// Initialise lastModified so that the first pollLoop tick skips a
 	// redundant reload when the file has not changed since startup.
-	if info, err := os.Stat(filePath); err == nil {
+	// If Stat fails here (e.g., a transient FS error), lastModified stays
+	// at its zero value: the next poll tick will see a non-zero mtime and
+	// reload once — safe and self-healing.
+	if statErr == nil {
 		e.mu.Lock()
 		e.lastModified = info.ModTime()
 		e.mu.Unlock()

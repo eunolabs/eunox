@@ -118,12 +118,14 @@ func (p *imdsAzureTokenProvider) GetToken(ctx context.Context, scope string) (*d
 		return nil, errors.New("azure IMDS: empty access_token in response")
 	}
 
-	expiresAt := time.Now().Add(time.Hour) // conservative fallback
-	if tokenResp.ExpiresOn != "" {
-		if epoch, parseErr := strconv.ParseInt(tokenResp.ExpiresOn, 10, 64); parseErr == nil {
-			expiresAt = time.Unix(epoch, 0).UTC()
-		}
+	if tokenResp.ExpiresOn == "" {
+		return nil, errors.New("azure IMDS: missing expires_on in response")
 	}
+	epoch, parseErr := strconv.ParseInt(tokenResp.ExpiresOn, 10, 64)
+	if parseErr != nil {
+		return nil, fmt.Errorf("azure IMDS: parse expires_on %q: %w", tokenResp.ExpiresOn, parseErr)
+	}
+	expiresAt := time.Unix(epoch, 0).UTC()
 
 	return &dbtokensvc.AzureToken{
 		AccessToken: tokenResp.AccessToken,

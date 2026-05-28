@@ -378,10 +378,13 @@ func (q *SQLiteQueue) DeadLetterDepth(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// Close releases the database connection. Waits for any in-flight operation to
-// complete before closing, using a background context.
+// Close releases the database connection. Waits up to 30 seconds for any
+// in-flight operation to complete before closing, matching the lifecycle
+// shutdown timeout used across services in this codebase.
 func (q *SQLiteQueue) Close() error {
-	if err := q.acquire(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := q.acquire(ctx); err != nil {
 		return fmt.Errorf("posture queue: close: %w", err)
 	}
 	defer q.release()

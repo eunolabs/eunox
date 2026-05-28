@@ -12,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedis_HandlePubSubMessage_GlobalActivate(t *testing.T) {
@@ -184,7 +185,7 @@ func TestRedis_Reset_DelError(t *testing.T) {
 	mr.Close()
 
 	err := r.Reset(t.Context())
-	assert.Error(t, err, "Reset must return an error when Redis DEL fails")
+	require.Error(t, err, "Reset must return an error when Redis DEL fails")
 	assert.Contains(t, err.Error(), "kill switch reset")
 }
 

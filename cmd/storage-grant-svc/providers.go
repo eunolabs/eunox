@@ -100,12 +100,14 @@ func (p *imdsAzureStorageTokenProvider) GetToken(ctx context.Context, scope stri
 		return nil, errors.New("azure IMDS: empty access_token in response")
 	}
 
-	expiresAt := time.Now().Add(time.Hour) // conservative fallback
-	if tokenResp.ExpiresOn != "" {
-		if epoch, parseErr := strconv.ParseInt(tokenResp.ExpiresOn, 10, 64); parseErr == nil {
-			expiresAt = time.Unix(epoch, 0).UTC()
-		}
+	if tokenResp.ExpiresOn == "" {
+		return nil, errors.New("azure IMDS: missing expires_on in response")
 	}
+	epoch, parseErr := strconv.ParseInt(tokenResp.ExpiresOn, 10, 64)
+	if parseErr != nil {
+		return nil, fmt.Errorf("azure IMDS: parse expires_on %q: %w", tokenResp.ExpiresOn, parseErr)
+	}
+	expiresAt := time.Unix(epoch, 0).UTC()
 
 	return &storagegrantsvc.AzureStorageToken{
 		AccessToken: tokenResp.AccessToken,
@@ -190,8 +192,14 @@ func (p *restAzureDelegationKeyProvider) GetUserDelegationKey(
 		return nil, fmt.Errorf("azure delegation key: parse response: %w", err)
 	}
 
-	signedStart, _ := time.Parse(time.RFC3339, xmlKey.SignedStart)
-	signedExpiry, _ := time.Parse(time.RFC3339, xmlKey.SignedExpiry)
+	signedStart, err := time.Parse(time.RFC3339, xmlKey.SignedStart)
+	if err != nil {
+		return nil, fmt.Errorf("azure delegation key: parse SignedStart %q: %w", xmlKey.SignedStart, err)
+	}
+	signedExpiry, err := time.Parse(time.RFC3339, xmlKey.SignedExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("azure delegation key: parse SignedExpiry %q: %w", xmlKey.SignedExpiry, err)
+	}
 
 	return &storagegrantsvc.AzureUserDelegationKey{
 		Value:         xmlKey.Value,
