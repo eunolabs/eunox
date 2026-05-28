@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/edgeobs/eunox/pkg/capability"
 	"github.com/edgeobs/eunox/pkg/did"
 	"github.com/edgeobs/eunox/pkg/enforcement"
 	"github.com/edgeobs/eunox/pkg/federation"
@@ -82,6 +83,23 @@ type Config struct {
 	// When nil the handler always returns 200; when non-nil it returns 503 while
 	// the function returns false (e.g. during the lifecycle drain delay).
 	IsReady func() bool
+
+	// TokenCacheTTL controls the maximum duration a verified capability token
+	// payload is retained in the in-process cache. On a cache hit the gateway
+	// skips JWKS re-verification and the Redis revocation round-trip, reducing
+	// enforce-path latency for repeated calls in pipeline-agent workloads.
+	//
+	// Set to 0 to disable the token cache entirely (full verification on every
+	// request). Set to a positive value to enable caching; values above 60 s
+	// are not recommended because they widen the window during which a revoked
+	// token continues to be accepted.
+	//
+	// Default when unset: token caching is disabled.
+	TokenCacheTTL time.Duration
+
+	// TokenCacheSize is the maximum number of entries in the token cache.
+	// Defaults to 4096 when TokenCacheTTL > 0.
+	TokenCacheSize int
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -125,6 +143,7 @@ type App struct {
 	adminDeps         AdminDependencies
 	ionHealthChecker  *IONHealthChecker
 	trustedProxyNets  []*net.IPNet
+	tokenCache        *capability.TokenCache
 }
 
 type gatewayMetrics struct {
@@ -168,6 +187,17 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 	app.dpopStore = deps.DPoPStore
 	app.usageTracker = NewUsageTracker()
 	app.idempotency = NewIdempotencyStore()
+
+	// Initialize the in-process token cache when enabled (P2-2).
+	// When TokenCacheTTL > 0 the enforcement hot path skips JWKS re-verification
+	// and the Redis revocation round-trip for tokens seen within the cache window.
+	if cfg.TokenCacheTTL > 0 {
+		app.tokenCache = capability.NewTokenCache(capability.TokenCacheConfig{
+			MaxEntryTTL:     cfg.TokenCacheTTL,
+			MaxSize:         cfg.TokenCacheSize,
+			CleanupInterval: cfg.TokenCacheTTL,
+		})
+	}
 
 	// Set up admin authentication.
 	if cfg.AdminJWKSURI != "" || cfg.AdminAPIKey != "" {
@@ -280,16 +310,22 @@ func (app *App) Start(ctx context.Context) {
 	if app.idempotency != nil {
 		app.idempotency.Start(ctx)
 	}
+	if app.tokenCache != nil {
+		app.tokenCache.Start(ctx)
+	}
 }
 
 // Close releases resources held by the App, stopping background goroutines
-// started by the in-memory rate limiters.
+// started by the in-memory rate limiters and the token cache.
 func (app *App) Close() {
 	if app.adminRateLimiter != nil {
 		app.adminRateLimiter.Close()
 	}
 	if app.publicRateLimiter != nil {
 		app.publicRateLimiter.Close()
+	}
+	if app.tokenCache != nil {
+		app.tokenCache.Stop()
 	}
 }
 

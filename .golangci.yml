@@ -57,3 +57,19 @@ linters:
       - path: pkg/lifecycle/lifecycle\.go
         linters:
           - contextcheck
+      # async_pipeline.go deliberately falls back to context.Background() when the
+      # parent context is already cancelled, so the inner pipeline write still completes.
+      - path: pkg/audit/async_pipeline\.go
+        linters:
+          - contextcheck
+      # tracingTransport.RoundTrip must use req.Context() – the request carries its own
+      # context per the http.RoundTripper contract; not a "non-inherited" context.
+      - path: internal/gateway/jwks_verifier\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck
+      # slog.Handler interface requires slog.Record by value; cannot change the signature.
+      - path: pkg/audit/async_pipeline_test\.go
+        text: "hugeParam"
+        linters:
+          - gocritic

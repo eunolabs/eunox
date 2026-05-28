@@ -300,3 +300,34 @@ func TestJWKSVerifier_VerifyToken_InvalidToken(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse JWT")
 }
+
+// TestJWKSVerifier_TracingTransport verifies that the tracing transport
+// injected by NewJWKSVerifier propagates outbound headers without breaking
+// normal JWKS fetches.  This is a black-box smoke test for P2-4 because OTel
+// headers are only present when a real tracing SDK is initialised; here we
+// verify that the transport doesn't panic or corrupt requests.
+func TestJWKSVerifier_TracingTransport(t *testing.T) {
+	t.Parallel()
+	key, kid, srv := newTestJWKS(t)
+
+	// The verifier wraps the default HTTP client in a tracingTransport.
+	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
+		JWKSURL:  srv.URL,
+		CacheTTL: time.Minute,
+	})
+
+	now := time.Now()
+	claims := map[string]interface{}{
+		"iss":           "https://issuer.example.com",
+		"sub":           "traced-user",
+		"iat":           now.Unix(),
+		"exp":           now.Add(time.Hour).Unix(),
+		"schemaVersion": "1.0",
+	}
+	token := signCapabilityToken(t, key, kid, claims)
+
+	// Verification should succeed even when no active span exists.
+	payload, err := verifier.VerifyToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "traced-user", payload.Subject)
+}

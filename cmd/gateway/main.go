@@ -236,6 +236,8 @@ func run() error {
 		IsReady: func() bool {
 			return lm.IsReady() && backends.monitor.IsReady()
 		},
+		TokenCacheTTL:  time.Duration(cfg.TokenCacheTTLSeconds) * time.Second,
+		TokenCacheSize: cfg.TokenCacheMaxSize,
 	}
 
 	app, err := gateway.New(&appCfg, &deps)

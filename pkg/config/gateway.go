@@ -58,4 +58,16 @@ type GatewayConfig struct {
 	// whose requests are permitted to set the X-Forwarded-For header.  When this list is non-empty
 	// and the immediate peer matches one of the CIDRs, the real client IP is extracted from XFF.
 	TrustedProxyCIDRs []string `env:"TRUSTED_PROXY_CIDRS"`
+
+	// Token cache (P2-2).
+	// TokenCacheTTLSeconds is the maximum number of seconds a verified capability
+	// token is held in the in-process cache.  0 (default) disables the cache so
+	// every request performs a full JWKS + revocation round-trip.
+	// Recommended range: 10–60 s.  Must be shorter than the operator's revocation
+	// propagation SLA because revoked tokens continue to be served from the cache
+	// until the entry expires.
+	TokenCacheTTLSeconds int `env:"TOKEN_CACHE_TTL_SECONDS" default:"0" min:"0"`
+	// TokenCacheMaxSize caps the number of entries in the in-process token cache.
+	// Defaults to 4096.
+	TokenCacheMaxSize int `env:"TOKEN_CACHE_MAX_SIZE" default:"4096" min:"1"`
 }
