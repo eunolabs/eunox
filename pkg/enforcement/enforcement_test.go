@@ -601,7 +601,9 @@ func TestEngine_RedactFields_ProducesObligation(t *testing.T) {
 	assert.Equal(t, []string{"$.ssn", "$.creditCard"}, resp.Obligations[0].Paths)
 }
 
-func TestEngine_PolicyCondition_PassThrough(t *testing.T) {
+func TestEngine_PolicyCondition_DenyWhenNoEvaluatorConfigured(t *testing.T) {
+	// Without a PolicyEvaluator the engine must deny (fail-closed) so that a
+	// misconfigured deployment cannot silently allow policy-gated requests.
 	engine := enforcement.New()
 	ctx := context.Background()
 
@@ -621,10 +623,79 @@ func TestEngine_PolicyCondition_PassThrough(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeConditionFailed, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypePolicy, resp.Denial.ConditionType)
+	assert.Contains(t, resp.Denial.Message, "WithPolicyEvaluator")
 }
 
-func TestEngine_CustomCondition_PassThrough(t *testing.T) {
+func TestEngine_PolicyCondition_EvaluatorAllow(t *testing.T) {
+	evaluator := &fakePolicyEvaluator{result: nil}
+	engine := enforcement.New(enforcement.WithPolicyEvaluator(evaluator))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.PolicyCondition{Backend: "opa"},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	assert.True(t, evaluator.called)
+}
+
+func TestEngine_PolicyCondition_EvaluatorDeny(t *testing.T) {
+	evaluator := &fakePolicyEvaluator{
+		result: &enforcement.ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypePolicy,
+			Message:       "policy denies this action",
+		},
+	}
+	engine := enforcement.New(enforcement.WithPolicyEvaluator(evaluator))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.PolicyCondition{Backend: "opa"},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, "policy denies this action", resp.Denial.Message)
+}
+
+// fakePolicyEvaluator is a test double for enforcement.PolicyEvaluator.
+type fakePolicyEvaluator struct {
+	called bool
+	result *enforcement.ConditionError
+}
+
+func (f *fakePolicyEvaluator) Evaluate(_ context.Context, _ string, _, _ interface{}, _ *capability.EnforceRequest) *enforcement.ConditionError {
+	f.called = true
+	return f.result
+}
+
+func TestEngine_CustomCondition_DenyWhenNoHandlerRegistered(t *testing.T) {
+	// Without an explicit handler registered for ConditionTypeCustom the engine
+	// must deny (fail-closed) so that unknown custom conditions cannot silently
+	// allow requests.
 	engine := enforcement.New()
 	ctx := context.Background()
 
@@ -644,7 +715,99 @@ func TestEngine_CustomCondition_PassThrough(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeConditionFailed, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeCustom, resp.Denial.ConditionType)
+	assert.Contains(t, resp.Denial.Message, "my-check")
+	assert.Contains(t, resp.Denial.Message, "RegisterCondition")
+}
+
+func TestEngine_AllowedExtensions_MissingFilePath(t *testing.T) {
+	// When no filePath is present in the request, the allowedExtensions condition
+	// must deny rather than silently bypassing the check.
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "file:write",
+		// Neither Context.FilePath nor Arguments["filePath"] is set.
+	}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "file:write",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedExtensionsCondition{Extensions: []string{".pdf"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeAllowedExtensions, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedTables_MissingTables(t *testing.T) {
+	// When no tables are present in the request, the allowedTables condition
+	// must deny rather than silently bypassing the check.
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "db:query",
+		// Context.Tables is empty/nil.
+	}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "db:query",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedTablesCondition{Tables: []string{"users"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeAllowedTables, resp.Denial.ConditionType)
+}
+
+func TestEngine_RecipientDomain_NoRecipients(t *testing.T) {
+	// When no recipients are present in the request, the recipientDomain condition
+	// must deny rather than silently bypassing the check.
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "email:send",
+		// Context.Recipients is empty/nil.
+	}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "email:send",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.RecipientDomainCondition{Domains: []string{"example.com"}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeRecipientDomain, resp.Denial.ConditionType)
 }
 
 func TestEngine_RegisterCustomCondition(t *testing.T) {

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/eunolabs/eunox/pkg/capability"
-	"github.com/eunolabs/eunox/pkg/testutil"
 	"github.com/google/uuid"
 )
 
@@ -34,25 +33,39 @@ func (e *ConditionError) Error() string {
 	return e.Message
 }
 
+// Clock provides the current time for condition evaluation. It is satisfied by
+// [testutil.FakeClock] in tests and by the system clock in production.
+type Clock interface {
+	Now() time.Time
+}
+
 // CallCounter is the interface for tracking per-key call counts (used by maxCalls condition).
 type CallCounter interface {
 	IncrementAndGet(ctx context.Context, key string, windowSec int) (int64, error)
 }
 
+// PolicyEvaluator evaluates a policy condition against an enforce request by
+// calling an external policy decision point (e.g. OPA, Cedar). Implementations
+// must return nil to allow or a non-nil [*ConditionError] to deny.
+type PolicyEvaluator interface {
+	Evaluate(ctx context.Context, backend string, config, input interface{}, req *capability.EnforceRequest) *ConditionError
+}
+
 // Engine is the enforcement decision engine. It evaluates enforce requests
 // against a set of capabilities and registered condition handlers.
 type Engine struct {
-	mu       sync.RWMutex
-	handlers map[string]ConditionHandler
-	clock    testutil.Clock
-	counter  CallCounter
+	mu              sync.RWMutex
+	handlers        map[string]ConditionHandler
+	clock           Clock
+	counter         CallCounter
+	policyEvaluator PolicyEvaluator
 }
 
 // Option configures the Engine.
 type Option func(*Engine)
 
 // WithClock sets a custom clock for time-based condition evaluation.
-func WithClock(clock testutil.Clock) Option {
+func WithClock(clock Clock) Option {
 	return func(e *Engine) {
 		e.clock = clock
 	}
@@ -62,6 +75,16 @@ func WithClock(clock testutil.Clock) Option {
 func WithCallCounter(counter CallCounter) Option {
 	return func(e *Engine) {
 		e.counter = counter
+	}
+}
+
+// WithPolicyEvaluator sets the evaluator used to resolve policy conditions.
+// When no evaluator is configured, any capability that contains a policy
+// condition is denied (fail-closed). Set this option to connect the engine to
+// an external policy decision point such as OPA or Cedar.
+func WithPolicyEvaluator(pe PolicyEvaluator) Option {
+	return func(e *Engine) {
+		e.policyEvaluator = pe
 	}
 }
 
@@ -85,11 +108,17 @@ func isDryRun(ctx context.Context) bool {
 	return v
 }
 
+// systemClock is the default Clock backed by the real system time.
+type systemClock struct{}
+
+// Now returns the current system time.
+func (systemClock) Now() time.Time { return time.Now() }
+
 // New creates a new enforcement Engine with all built-in condition handlers registered.
 func New(opts ...Option) *Engine {
 	e := &Engine{
 		handlers: make(map[string]ConditionHandler),
-		clock:    &testutil.RealClock{},
+		clock:    systemClock{},
 	}
 	for _, opt := range opts {
 		opt(e)

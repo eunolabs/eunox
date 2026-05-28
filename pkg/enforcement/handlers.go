@@ -244,8 +244,12 @@ func (e *Engine) handleAllowedExtensions(_ context.Context, cond capability.Cond
 	}
 
 	if filePath == "" {
-		// No file path to validate — pass through
-		return nil
+		// filePath is required: deny rather than silently skipping the check.
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeAllowedExtensions,
+			Message:       "filePath is required for allowedExtensions condition",
+		}
 	}
 
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -294,7 +298,12 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 	}
 
 	if len(req.Context.Tables) == 0 {
-		return nil
+		// tables is required: deny rather than silently skipping the check.
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeAllowedTables,
+			Message:       "tables is required for allowedTables condition",
+		}
 	}
 
 	allowedTableSet := make(map[string]bool, len(at.Tables))
@@ -355,7 +364,12 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 	}
 
 	if len(req.Context.Recipients) == 0 {
-		return nil
+		// recipients is required: deny rather than silently skipping the check.
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeRecipientDomain,
+			Message:       "recipients is required for recipientDomain condition",
+		}
 	}
 
 	domainSet := make(map[string]bool, len(rd.Domains))
@@ -438,8 +452,8 @@ func (e *Engine) handleAllowedValues(_ context.Context, cond capability.Conditio
 	}
 }
 
-func (e *Engine) handlePolicy(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
-	_, ok := asPolicy(cond)
+func (e *Engine) handlePolicy(ctx context.Context, cond capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	pc, ok := asPolicy(cond)
 	if !ok {
 		return &ConditionError{
 			Code:          capability.ErrCodeConditionFailed,
@@ -448,13 +462,25 @@ func (e *Engine) handlePolicy(_ context.Context, cond capability.Condition, _ *c
 		}
 	}
 
-	// Policy conditions are evaluated externally (OPA, Cedar, etc.)
-	// In-process evaluation is a no-op; the gateway routes to an external PDP.
-	return nil
+	// Fail closed: require an explicit policy evaluator. Capabilities that carry
+	// a policy condition must not be silently allowed when no evaluator is wired
+	// up — configure one via WithPolicyEvaluator.
+	if e.policyEvaluator == nil {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypePolicy,
+			Message:       "no policy evaluator configured; register one via WithPolicyEvaluator",
+			Details: map[string]interface{}{
+				"backend": pc.Backend,
+			},
+		}
+	}
+
+	return e.policyEvaluator.Evaluate(ctx, pc.Backend, pc.Config, pc.Input, req)
 }
 
 func (e *Engine) handleCustom(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {
-	_, ok := asCustom(cond)
+	cc, ok := asCustom(cond)
 	if !ok {
 		return &ConditionError{
 			Code:          capability.ErrCodeConditionFailed,
@@ -463,9 +489,17 @@ func (e *Engine) handleCustom(_ context.Context, cond capability.Condition, _ *c
 		}
 	}
 
-	// Custom conditions are pass-through by default.
-	// Register a custom handler via RegisterCondition to override.
-	return nil
+	// Fail closed: no handler has been registered for custom conditions.
+	// Call RegisterCondition(capability.ConditionTypeCustom, handler) to supply
+	// a dispatcher that resolves conditions by their Name field.
+	return &ConditionError{
+		Code:          capability.ErrCodeConditionFailed,
+		ConditionType: capability.ConditionTypeCustom,
+		Message:       fmt.Sprintf("no handler registered for custom condition %q; register one via RegisterCondition", cc.Name),
+		Details: map[string]interface{}{
+			"name": cc.Name,
+		},
+	}
 }
 
 func asTimeWindow(cond capability.Condition) (*capability.TimeWindowCondition, bool) {

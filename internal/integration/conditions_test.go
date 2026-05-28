@@ -707,8 +707,10 @@ func TestCondition_MultipleConditions_AllMustPass(t *testing.T) {
 	assert.Equal(t, "deny", resp["decision"])
 }
 
-// TestCondition_CustomCondition_PassThrough verifies custom conditions are pass-through by default.
-func TestCondition_CustomCondition_PassThrough(t *testing.T) {
+// TestCondition_CustomCondition_DenyWhenNoHandlerRegistered verifies that a
+// custom condition is denied (fail-closed) when no handler has been registered
+// via RegisterCondition.  The old pass-through default was a security bypass.
+func TestCondition_CustomCondition_DenyWhenNoHandlerRegistered(t *testing.T) {
 	claims := &capability.TokenPayload{
 		Subject:   "user-1",
 		JWTID:     "jti-1",
@@ -734,8 +736,12 @@ func TestCondition_CustomCondition_PassThrough(t *testing.T) {
 			"context":   map[string]any{"sourceIp": "10.0.0.1"},
 		},
 	})
-	// Custom condition is pass-through by default per the code
-	assert.Equal(t, "allow", resp["decision"])
+	// Custom conditions without a registered handler must be denied.
+	assert.Equal(t, "deny", resp["decision"])
+	denial, ok := resp["denial"].(map[string]any)
+	require.True(t, ok, "expected denial object in response")
+	assert.Equal(t, "CONDITION_FAILED", denial["code"])
+	assert.Equal(t, "custom", denial["conditionType"])
 }
 
 // TestCondition_NoMatchingCapability_DeniesAction verifies no resource match produces denial.
