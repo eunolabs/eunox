@@ -190,14 +190,21 @@ func (r *Redis) ReviveSession(ctx context.Context, sessionID string) error {
 func (r *Redis) Reset(ctx context.Context) error {
 	// Delete global key — propagate any Redis error; a silent failure here
 	// would leave the global kill switch active while the caller believes it
-	// was cleared (T-4 signal: this is a critical "revive all" operation).
+	// was cleared.
 	if err := r.client.Del(ctx, redisGlobalKey).Err(); err != nil {
 		return fmt.Errorf("kill switch reset: delete global key: %w", err)
 	}
 
-	// Scan and delete agent/session keys
-	r.deleteByPrefix(ctx, redisAgentPrefix)
-	r.deleteByPrefix(ctx, redisSessionPfx)
+	// Scan and delete agent/session keys. Errors are propagated so that the
+	// caller knows Reset did not fully complete. In-memory state is only
+	// cleared after all Redis deletions succeed to keep it consistent with
+	// what Redis actually holds.
+	if err := r.deleteByPrefix(ctx, redisAgentPrefix); err != nil {
+		return err
+	}
+	if err := r.deleteByPrefix(ctx, redisSessionPfx); err != nil {
+		return err
+	}
 
 	r.publish(ctx, "reset")
 
@@ -293,25 +300,31 @@ func (r *Redis) scanPrefix(ctx context.Context, prefix string, target map[string
 	return nil
 }
 
-func (r *Redis) deleteByPrefix(ctx context.Context, prefix string) {
-	if scanner, ok := r.client.(interface {
+func (r *Redis) deleteByPrefix(ctx context.Context, prefix string) error {
+	scanner, ok := r.client.(interface {
 		Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
-	}); ok {
-		var cursor uint64
-		for {
-			keys, next, err := scanner.Scan(ctx, cursor, prefix+"*", 100).Result()
-			if err != nil {
-				break
-			}
-			if len(keys) > 0 {
-				_ = r.client.Del(ctx, keys...).Err()
-			}
-			cursor = next
-			if cursor == 0 {
-				break
+	})
+	if !ok {
+		// Client does not support SCAN; nothing to delete.
+		return nil
+	}
+	var cursor uint64
+	for {
+		keys, next, err := scanner.Scan(ctx, cursor, prefix+"*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("kill switch reset: SCAN %s*: %w", prefix, err)
+		}
+		if len(keys) > 0 {
+			if err := r.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("kill switch reset: DEL %s*: %w", prefix, err)
 			}
 		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
 	}
+	return nil
 }
 
 func (r *Redis) listenPubSub(ctx context.Context, pubsub *redis.PubSub) {

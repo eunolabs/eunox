@@ -110,7 +110,7 @@ type Config struct {
 
 // Dependencies holds the injected backends for the gateway.
 type Dependencies struct {
-	Engine          *enforcement.Engine
+	Engine          enforcement.Enforcer
 	KillSwitch      killswitch.Manager
 	Revocation      revocation.Store
 	JWTVerifier     JWTVerifier

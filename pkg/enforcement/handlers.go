@@ -164,6 +164,17 @@ func (e *Engine) handleMaxCalls(ctx context.Context, cond capability.Condition, 
 		}
 	}
 
+	// A missing sessionID would make the key "maxcalls::<tool>", merging quota
+	// across all anonymous callers (denial-of-service or quota bypass). Deny
+	// rather than silently creating a cross-session shared bucket.
+	if req.SessionID == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeMaxCalls,
+			Message:       "sessionId is required for maxCalls condition",
+		}
+	}
+
 	// Build a unique key from session + tool
 	key := fmt.Sprintf("maxcalls:%s:%s", req.SessionID, req.ToolName)
 	count, err := e.counter.IncrementAndGet(ctx, key, mc.WindowSeconds)

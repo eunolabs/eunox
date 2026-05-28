@@ -269,18 +269,24 @@ func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentI
 	}
 
 	part = &agentPartition{}
-	// Seed initial kill state from the shared manager's cache.
-	// The shared Redis manager's ShouldBlock reads from its local cache, so this
-	// is fast and does not trigger a Redis round-trip.
-	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
-	part.killed = blocked
-
 	p.partitions[agentID] = part
 
 	// Start the per-agent subscription tied to the service lifecycle context.
 	partCtx, cancel := context.WithCancel(p.lifecycleCtx)
 	part.cancel = cancel
 	p.mu.Unlock()
+
+	// Seed initial kill state from the shared manager's cache outside the write
+	// lock. Holding p.mu during inner.ShouldBlock serialised all concurrent
+	// ShouldBlock callers (for any agent) behind a single inner cache read.
+	// The brief window between partition creation and state seeding is
+	// acceptable: the subscription goroutine will correct the state on the
+	// first pub/sub event, and the shared inner manager still provides the
+	// authoritative answer for other agents in the meantime.
+	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
+	part.mu.Lock()
+	part.killed = blocked
+	part.mu.Unlock()
 
 	go p.runAgentSubscription(partCtx, agentID, part)
 

@@ -5,6 +5,7 @@ package killswitch
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/eunolabs/eunox/pkg/redisfailover"
 )
@@ -21,7 +22,9 @@ import (
 type ResilientRedis struct {
 	inner    *Redis
 	reporter *redisfailover.Reporter
-	started  bool
+	// started is set to 1 by Start and read by ShouldBlock on the hot path.
+	// atomic.Bool guarantees visibility across goroutines without a mutex.
+	started atomic.Bool
 }
 
 // NewResilientRedis creates a fail-closed resilient kill-switch manager.
@@ -35,7 +38,7 @@ func NewResilientRedis(inner *Redis, reporter *redisfailover.Reporter) *Resilien
 // Start initializes the kill switch. Reports degraded if initial state load fails.
 func (r *ResilientRedis) Start(ctx context.Context) {
 	r.inner.Start(ctx)
-	r.started = true
+	r.started.Store(true)
 
 	// Use HealthStatus() to determine if the initial load that ran inside
 	// Start succeeded, rather than calling refreshState a second time with
@@ -56,8 +59,8 @@ func (r *ResilientRedis) Stop() {
 // ShouldBlock returns true if the request should be blocked. On Redis
 // failure with no cached state, returns true (fail-closed).
 func (r *ResilientRedis) ShouldBlock(ctx context.Context, agentID, sessionID string) (bool, error) {
-	if !r.started {
-		// Not yet initialized: fail-closed
+	if !r.started.Load() {
+		// Not yet initialized: fail-closed.
 		return true, nil
 	}
 	// The inner Redis impl reads from local cache (populated via pub/sub),

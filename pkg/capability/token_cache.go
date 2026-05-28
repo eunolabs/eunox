@@ -145,9 +145,12 @@ func (c *TokenCache) Put(tokenStr string, payload *TokenPayload) {
 	now := c.cfg.Now()
 
 	// Determine eviction time: min(MaxEntryTTL, token's remaining lifetime).
+	// Use sub-second precision (time.Unix(ExpiresAt, 0).Sub(now)) so that the
+	// cache entry never outlives the token by up to one full second, which
+	// could otherwise happen with integer-second truncation.
 	entryTTL := c.cfg.MaxEntryTTL
 	if payload.ExpiresAt > 0 {
-		tokenRemaining := time.Duration(payload.ExpiresAt-now.Unix()) * time.Second
+		tokenRemaining := time.Unix(payload.ExpiresAt, 0).Sub(now)
 		if tokenRemaining <= 0 {
 			// Token is already expired; nothing to cache.
 			return

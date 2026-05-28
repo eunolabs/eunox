@@ -72,6 +72,10 @@ type AsyncPipeline struct {
 	once   sync.Once
 	stopCh chan struct{}
 
+	// closeErr stores the error from inner.Close so concurrent Close calls all
+	// return the same value after the once.Do completes.
+	closeErr error
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -144,19 +148,26 @@ func (p *AsyncPipeline) Append(_ context.Context, entry *LogEntry) error {
 }
 
 // Close signals the drain goroutine to flush all buffered entries and stop.
-// It blocks until all in-flight writes complete. Close is idempotent.
+// It blocks until all in-flight writes complete. Close is idempotent: all
+// concurrent and subsequent callers block until the first invocation finishes
+// and then return the same error.
 //
-// The inner pipeline's Close is called after all buffered entries have been
-// drained so that resources are released in the correct order.
+// The inner pipeline's Close is called exactly once, after all buffered
+// entries have been drained, so that resources are released in the correct
+// order and double-close of the inner pipeline is prevented.
 func (p *AsyncPipeline) Close() error {
 	p.once.Do(func() {
 		p.mu.Lock()
 		p.closed = true
 		p.mu.Unlock()
 		close(p.stopCh)
+		// Wait for the drain goroutine to finish inside once.Do so that
+		// concurrent Close callers block here rather than racing to call
+		// inner.Close multiple times after wg.Wait returns.
+		p.wg.Wait()
+		p.closeErr = p.inner.Close()
 	})
-	p.wg.Wait()
-	return p.inner.Close()
+	return p.closeErr
 }
 
 // drainLoop reads from the write-ahead buffer and writes to the inner

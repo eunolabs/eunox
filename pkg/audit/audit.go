@@ -301,30 +301,32 @@ func (p *DefaultPipeline) Append(ctx context.Context, entry *LogEntry) error {
 		return ErrNotInitialized
 	}
 
-	// Assign ID if not set.
-	if entry.ID == "" {
-		entry.ID = uuid.New().String()
+	// Work on a shallow copy so we never mutate the caller's struct.
+	// Callers often retain a reference to the LogEntry they passed in; mutating
+	// it in-place would silently change their view of the record.
+	rec := *entry
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
 	}
-	// Assign timestamp if not set.
-	if entry.Timestamp.IsZero() {
-		entry.Timestamp = time.Now().UTC()
+	if rec.Timestamp.IsZero() {
+		rec.Timestamp = time.Now().UTC()
 	}
 
 	// Sign the entry.
-	signature, err := p.signer.Sign(ctx, entry)
+	signature, err := p.signer.Sign(ctx, &rec)
 	if err != nil {
 		return err
 	}
 
 	// Compute chain hash using the dedicated chain secret when configured,
 	// otherwise fall back to legacy behaviour.
-	chainHash := ComputeChainHashWithSecret(p.chainHMACSecret, p.lastChainHash, entry.ID, entry.Timestamp, signature)
+	chainHash := ComputeChainHashWithSecret(p.chainHMACSecret, p.lastChainHash, rec.ID, rec.Timestamp, signature)
 
 	// Increment sequence.
 	p.lastSeqNum++
 
 	evidence := &SignedAuditEvidence{
-		Record:       *entry,
+		Record:       rec,
 		Signature:    signature,
 		Algorithm:    p.signer.Algorithm(),
 		KeyID:        p.signer.KeyID(),

@@ -258,3 +258,50 @@ func TestTokenCache_PutUpdatesExistingEntry(t *testing.T) {
 	// The entry is updated; latest payload is returned.
 	assert.Equal(t, "v2", got.Subject)
 }
+
+func TestTokenCache_SubSecondPrecision(t *testing.T) {
+	// With integer-second truncation the cache entry TTL is rounded up by up
+	// to 1 second relative to the token's actual expiry, causing the cache to
+	// serve the token past its ExpiresAt time.
+	//
+	// Scenario:
+	//   base = 1000.0s Unix
+	//   now at Put = base + 0.5s  (1000.5s)
+	//   token ExpiresAt = base + 1s Unix == 1001s  (0.5s from now)
+	//
+	// Old (integer arithmetic):
+	//   tokenRemaining = (1001 - 1000) * second = 1s      ← overshoot by 0.5s
+	//   entryExpiresAt = 1000.5 + 1s = 1001.5s
+	//   → token still served at 1001.1s (0.1s PAST actual expiry) ← BUG
+	//
+	// New (sub-second):
+	//   tokenRemaining = time.Unix(1001, 0).Sub(1000.5s) = 0.5s
+	//   entryExpiresAt = 1000.5s + 0.5s = 1001.0s == ExpiresAt  ← correct
+	//   → token not served at 1001.1s                             ← FIXED
+
+	base := time.Unix(1000, 0)
+	now := base.Add(500 * time.Millisecond) // 1000.5s: halfway through the expiry second
+
+	cache := NewTokenCache(TokenCacheConfig{
+		MaxEntryTTL: 30 * time.Second,
+		Now:         func() time.Time { return now },
+	})
+
+	payload := &TokenPayload{
+		Subject:   "user-1",
+		ExpiresAt: base.Unix() + 1, // expires at 1001s exactly
+	}
+	cache.Put("tok", payload)
+
+	// 100ms before expiry (1000.9s): must still be a hit.
+	now = base.Add(900 * time.Millisecond)
+	_, ok := cache.Get("tok")
+	assert.True(t, ok, "token with 100ms remaining must be a cache hit")
+
+	// 100ms after expiry (1001.1s): must be a miss.
+	// With the old integer-second code the entry would have expired at 1001.5s
+	// and would still be served here — this assertion catches the regression.
+	now = base.Add(1100 * time.Millisecond)
+	_, ok = cache.Get("tok")
+	assert.False(t, ok, "token must not be served 100ms after its ExpiresAt timestamp")
+}

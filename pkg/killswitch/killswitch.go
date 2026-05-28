@@ -6,11 +6,22 @@ package killswitch
 
 import "context"
 
-// Manager determines whether a request should be blocked by the kill switch.
-type Manager interface {
+// Checker is the minimal read-only interface for components that only need to
+// query whether a request should be blocked. Accepting Checker instead of the
+// full Manager interface follows the Interface Segregation Principle: the hot
+// enforcement path in the gateway never needs admin operations.
+type Checker interface {
 	// ShouldBlock returns true if the given agent/session combination is killed.
 	// An empty agentID or sessionID means the field is not evaluated for that dimension.
 	ShouldBlock(ctx context.Context, agentID, sessionID string) (bool, error)
+}
+
+// Manager is the full kill-switch interface that embeds Checker and adds the
+// admin and control-plane operations. Wire the full Manager where both read
+// and write access is needed (e.g., the admin API handler); pass only Checker
+// to read-only consumers.
+type Manager interface {
+	Checker
 
 	// ActivateGlobal activates the global kill switch (blocks all requests).
 	ActivateGlobal(ctx context.Context) error

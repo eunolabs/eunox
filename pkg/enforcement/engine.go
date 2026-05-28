@@ -127,6 +127,19 @@ func New(opts ...Option) *Engine {
 	return e
 }
 
+// Enforcer is the minimal interface that enforcement consumers (e.g. the
+// gateway) should depend on rather than the concrete *Engine type. Accepting
+// Enforcer instead of *Engine decouples the caller from the implementation,
+// making it straightforward to substitute a remote enforcement backend or a
+// test double without modifying call sites.
+type Enforcer interface {
+	// ValidateAction evaluates req against capabilities and returns a decision.
+	ValidateAction(ctx context.Context, req *capability.EnforceRequest, capabilities []capability.Constraint) (capability.EnforceResponse, error)
+	// FindMatchingCapability returns the most specific matching constraint, or
+	// nil if none match.
+	FindMatchingCapability(req *capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint
+}
+
 // RegisterCondition registers a custom condition handler. It overwrites any existing handler
 // for the same condition type.
 func (e *Engine) RegisterCondition(name string, handler ConditionHandler) {

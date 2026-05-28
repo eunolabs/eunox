@@ -6,6 +6,7 @@ package callcounter
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,6 +15,12 @@ import (
 // Redis is a Redis-backed call counter using atomic MULTI/EXEC increment with TTL.
 type Redis struct {
 	client redis.Cmdable
+	// seq is an atomic monotonic counter appended to each ZADD member so that
+	// two calls arriving in the same nanosecond produce distinct members.
+	// Without this suffix, concurrent calls at the same UnixNano timestamp
+	// would collide in the sorted set (ZADD updates the score instead of
+	// inserting a new entry), causing the counter to undercount.
+	seq atomic.Int64
 }
 
 // NewRedis creates a Redis-backed call counter.
@@ -29,7 +36,7 @@ func (r *Redis) IncrementAndGet(ctx context.Context, key string, windowSec int) 
 	windowKey := fmt.Sprintf("callcounter:%s:%d", key, windowSec)
 	nowUnixMicro := float64(now.UnixMicro())
 	cutoff := float64(now.Add(-time.Duration(windowSec) * time.Second).UnixMicro())
-	member := fmt.Sprintf("%d", now.UnixNano())
+	member := fmt.Sprintf("%d-%d", now.UnixNano(), r.seq.Add(1))
 
 	// Use a transactional pipeline (MULTI/EXEC) for atomicity
 	pipe := r.client.TxPipeline()

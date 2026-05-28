@@ -201,6 +201,29 @@ func TestAsyncPipeline_ContextCancel(t *testing.T) {
 	assert.True(t, inner.closed)
 }
 
+func TestAsyncPipeline_ConcurrentCloseCallsInnerOnlyOnce(t *testing.T) {
+	// Before the fix, concurrent Close calls would each call inner.Close()
+	// after the once.Do barrier, resulting in multiple close calls.
+	var closeCount atomic.Int64
+	inner := &countedClosePipeline{count: &closeCount}
+	p := NewAsyncPipeline(inner, AsyncPipelineConfig{})
+	p.Start(context.Background())
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			_ = p.Close()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int64(1), closeCount.Load(),
+		"inner.Close must be called exactly once regardless of concurrent Close calls")
+}
+
 // --- test helpers ---
 
 type blockingPipeline struct {
@@ -228,6 +251,17 @@ func (c *countingPipeline) Append(_ context.Context, _ *LogEntry) error {
 }
 
 func (c *countingPipeline) Close() error { return nil }
+
+// countedClosePipeline counts how many times Close is called.
+type countedClosePipeline struct {
+	count *atomic.Int64
+}
+
+func (c *countedClosePipeline) Append(_ context.Context, _ *LogEntry) error { return nil }
+func (c *countedClosePipeline) Close() error {
+	c.count.Add(1)
+	return nil
+}
 
 // logCapture implements slog.Handler and captures log messages.
 type logCapture struct {

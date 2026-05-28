@@ -311,6 +311,43 @@ func TestPipeline_Append_PreservesExistingID(t *testing.T) {
 	assert.Equal(t, "custom-id-123", records[0].Record.ID)
 }
 
+func TestPipeline_Append_DoesNotMutateEntry(t *testing.T) {
+	// Before the fix, Append assigned ID and Timestamp directly on the caller's
+	// *LogEntry pointer.  Callers that retain the pointer and compare it to the
+	// stored record would observe unexpected mutations.  After the fix, Append
+	// works on a copy (rec := *entry) and the original struct is untouched.
+	t.Parallel()
+
+	signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
+	backend := newInMemoryLedgerBackend()
+	pipeline, err := NewPipeline(signer, backend, PipelineConfig{})
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Initialize(context.Background()))
+
+	// Deliberately leave ID and Timestamp unset so the pipeline would normally
+	// fill them in.
+	entry := &LogEntry{
+		TenantID:  "tenant-1",
+		EventType: "test.event",
+		Action:    "read",
+		Outcome:   "success",
+	}
+	originalID := entry.ID            // ""
+	originalTS := entry.Timestamp     // zero
+
+	require.NoError(t, pipeline.Append(context.Background(), entry))
+
+	// The original struct must not have been mutated.
+	assert.Equal(t, originalID, entry.ID, "Append must not set ID on the caller's LogEntry")
+	assert.Equal(t, originalTS, entry.Timestamp, "Append must not set Timestamp on the caller's LogEntry")
+
+	// The stored record must have the fields populated.
+	records := backend.Records()
+	require.Len(t, records, 1)
+	assert.NotEmpty(t, records[0].Record.ID, "stored record must have an ID")
+	assert.False(t, records[0].Record.Timestamp.IsZero(), "stored record must have a Timestamp")
+}
+
 func TestPipeline_Append_WithOCSFEvent(t *testing.T) {
 	t.Parallel()
 

@@ -189,6 +189,46 @@ func TestRedis_Reset_DelError(t *testing.T) {
 	assert.Contains(t, err.Error(), "kill switch reset")
 }
 
+func TestRedis_Reset_StatePreservedOnError(t *testing.T) {
+	t.Parallel()
+
+	// Start miniredis, grab the address, then close it so all Redis commands fail.
+	mr := miniredis.NewMiniRedis()
+	require.NoError(t, mr.Start())
+	addr := mr.Addr()
+	mr.Close()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		PoolSize:    1,
+		DialTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	r := NewRedis(client)
+
+	// Seed in-memory state to represent pre-existing kills.
+	r.mu.Lock()
+	r.killedAgents["agent-1"] = true
+	r.killedSessions["sess-1"] = true
+	r.globalActive = true
+	r.mu.Unlock()
+
+	err := r.Reset(t.Context())
+	require.Error(t, err, "Reset must return an error when Redis is unavailable")
+
+	// In-memory state must NOT be cleared because the Redis deletion failed.
+	r.mu.RLock()
+	agentStillKilled := r.killedAgents["agent-1"]
+	sessStillKilled := r.killedSessions["sess-1"]
+	globalStillActive := r.globalActive
+	r.mu.RUnlock()
+
+	assert.True(t, agentStillKilled, "agent kill state must be preserved when Reset fails")
+	assert.True(t, sessStillKilled, "session kill state must be preserved when Reset fails")
+	assert.True(t, globalStillActive, "global state must be preserved when Reset fails")
+}
+
 func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
 	t.Parallel()
 

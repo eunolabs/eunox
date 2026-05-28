@@ -333,6 +333,37 @@ func TestEngine_MaxCalls_Deny(t *testing.T) {
 	assert.Equal(t, capability.ErrCodeRateLimited, resp.Denial.Code)
 }
 
+func TestEngine_MaxCalls_EmptySessionIDDenies(t *testing.T) {
+	// When SessionID is empty the maxCalls counter key would merge traffic from
+	// every session, creating a shared global counter — a mis-accounting bug that
+	// can also be abused to exhaust another tenant's quota.  The engine must
+	// deny with ErrCodeMissingContext rather than silently increment the counter.
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		// SessionID intentionally blank.
+		ToolName: "tool",
+	}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.MaxCallsCondition{Count: 100, WindowSeconds: 60},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+	assert.Equal(t, capability.ConditionTypeMaxCalls, resp.Denial.ConditionType)
+}
+
 func TestEngine_AllowedOperations_Allow(t *testing.T) {
 	engine := enforcement.New()
 	ctx := context.Background()
