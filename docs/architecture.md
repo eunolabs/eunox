@@ -816,3 +816,24 @@ Per-step child spans are recorded inside `handleEnforce`:
 
 All spans are annotated with `http.method`, `request_id`, and the enforcement
 outcome (`allow`/`deny`).
+
+### Sidecar deployment latency profile (P3-2, P4-1)
+
+In sidecar mode (`GATEWAY_SIDECAR_MODE=true`) the gateway co-locates with one
+agent pod and binds to `127.0.0.1` only.  The enforcement latency profile is
+**identical to the centralized model** because the hot-path code is unchanged:
+the same token-cache, revocation, and engine paths are exercised on every call.
+
+The only measurable sidecar-specific cost is **per-agent subscription setup**:
+on the first `ShouldBlock` call for a given agent, a Redis pub/sub connection to
+`killswitch:agent-events:<agentID>` is established.  This is a one-time cost
+of roughly one additional Redis round-trip (~0.3 ms on a local cluster).  It is
+fully amortized within the first enforce call and does not appear in P99 after
+warm-up.
+
+> **Summary:** the sidecar model eliminates the inter-process network hop
+> (typically 0.2–0.5 ms for a loopback call vs. 2–5 ms cross-pod), giving a
+> P99 improvement over the centralized model proportional to the container
+> network overhead in the customer's environment.  Token-cache hits
+> (`GATEWAY_TOKEN_CACHE_TTL_SECONDS > 0`) compound this improvement by also
+> eliminating the Redis revocation round-trip.

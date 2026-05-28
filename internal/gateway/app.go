@@ -100,6 +100,12 @@ type Config struct {
 	// TokenCacheSize is the maximum number of entries in the token cache.
 	// Defaults to 4096 when TokenCacheTTL > 0.
 	TokenCacheSize int
+
+	// SidecarMode enables sidecar deployment mode (P3-2). When true the gateway
+	// rejects enforcement requests for agents other than SidecarAgentID with 403.
+	// SidecarAgentID is required when SidecarMode is true.
+	SidecarMode    bool
+	SidecarAgentID string
 }
 
 // Dependencies holds the injected backends for the gateway.
@@ -164,6 +170,11 @@ func New(cfg *Config, deps *Dependencies) (*App, error) {
 				return nil, fmt.Errorf("CORS wildcard (*) not allowed in production; configure explicit AllowedOrigins")
 			}
 		}
+	}
+
+	// Sidecar mode validation (P3-2): SidecarAgentID is required when SidecarMode is enabled.
+	if cfg.SidecarMode && cfg.SidecarAgentID == "" {
+		return nil, fmt.Errorf("GATEWAY_SIDECAR_AGENT_ID is required when GATEWAY_SIDECAR_MODE=true")
 	}
 
 	app := &App{
@@ -384,6 +395,12 @@ func (app *App) buildRouter() chi.Router {
 	// Public API routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(app.publicRateLimitMiddleware)
+
+		// Sidecar mode (P3-2): enforce that requests are only for the configured agent.
+		if app.config.SidecarMode {
+			r.Use(app.sidecarAgentMiddleware)
+		}
+
 		r.Post("/enforce", app.handleEnforce)
 		r.Post("/validate", app.handleValidate)
 

@@ -27,6 +27,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/ratelimit"
 	"github.com/edgeobs/eunox/pkg/redisfailover"
 	"github.com/edgeobs/eunox/pkg/revocation"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // These variables are set by GoReleaser via -X ldflags at build time.
@@ -238,6 +239,9 @@ func run() error {
 		},
 		TokenCacheTTL:  time.Duration(cfg.TokenCacheTTLSeconds) * time.Second,
 		TokenCacheSize: cfg.TokenCacheMaxSize,
+		// Sidecar mode (P3-2): when enabled, only the configured agent's requests are served.
+		SidecarMode:    cfg.SidecarMode,
+		SidecarAgentID: cfg.SidecarAgentID,
 	}
 
 	app, err := gateway.New(&appCfg, &deps)
@@ -248,9 +252,20 @@ func run() error {
 	// Start background goroutines (idempotency store cleanup, etc.).
 	app.Start(ctx)
 
+	// Sidecar mode (P3-2): bind the public listener to loopback only so that
+	// other pods on the same node cannot reach it over the network.
+	publicHost := ""
+	if cfg.SidecarMode {
+		publicHost = "127.0.0.1"
+		logger.Info("gateway starting in sidecar mode",
+			slog.String("agentID", cfg.SidecarAgentID),
+			slog.String("listenHost", publicHost),
+		)
+	}
+
 	// Create main server
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              fmt.Sprintf("%s:%d", publicHost, cfg.Port),
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: readTimeout,
 		ReadTimeout:       readTimeout,
@@ -424,8 +439,20 @@ func buildGatewayBackends(cfg *config.GatewayConfig, logger *slog.Logger) (*gate
 			return nil, fmt.Errorf("kill-switch redis URL: %w", err)
 		}
 		inner := killswitch.NewRedis(client).WithLogger(logger)
-		ks = killswitch.NewResilientRedis(inner, monitor.Register("kill-switch"))
-		logger.Info("kill-switch: using Redis-backed store")
+		if cfg.AgentIsolation {
+			// P3-4: per-agent failure domain isolation — each agent partition has
+			// its own pub/sub subscription so a degraded agent channel cannot
+			// affect other agents. Requires a UniversalClient for Subscribe().
+			uc, ok := client.(goredis.UniversalClient)
+			if !ok {
+				return nil, fmt.Errorf("kill-switch redis client type %T does not implement UniversalClient; cannot use partitioned kill-switch", client)
+			}
+			ks = killswitch.NewPartitioned(inner, uc, logger).WithReporter(monitor.Register("kill-switch"))
+			logger.Info("kill-switch: using partitioned (per-agent isolation) Redis-backed store")
+		} else {
+			ks = killswitch.NewResilientRedis(inner, monitor.Register("kill-switch"))
+			logger.Info("kill-switch: using Redis-backed store")
+		}
 	} else {
 		logger.Warn("kill-switch: using in-memory store; kill-switch state will be lost on restart or scale-out")
 		ks = killswitch.NewInMemory()
