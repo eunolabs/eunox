@@ -15,7 +15,7 @@ Local enforcement is the simplest way to run eunox. All enforcement happens in-p
 - `eunox-mcp validate-token` and `eunox-mcp stats` CLI commands for local inspection.
 - Unlimited agents and enforcement events — the only limit is your machine.
 
-**License:** BSL 1.1.
+**License:** Apache 2.0 — `eunox-mcp` is free to use, embed, and redistribute without restriction.
 
 ---
 

@@ -1,12 +1,12 @@
 ---
 title: "Schema Parity Over Version Drift: Keeping the YAML Format Honest"
-description: 'Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the BSL-1.1 licensing model has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
+description: 'Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the dual-license model has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index.'
 pubDate: "2026-06-04"
 ---
 
 # Schema Parity Over Version Drift: Keeping the YAML Format Honest
 
-_Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the BSL-1.1 licensing model has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
+_Second post in the "Design principles" series. [Post 15](./15-fail-closed-not-fail-open.md) covered the fail-closed principle that shapes every layer of the system. This post covers a different principle: why the policy contract is defined exactly once and shared everywhere, and what the dual-license model has to do with it. See [`docs/blog-articles.md`](../blog-articles.md) for the full series index._
 
 ---
 
@@ -121,11 +121,11 @@ This property is what makes `eunox-mcp validate` a meaningful development tool r
 
 Here's where the architecture intersects with the business model.
 
-The Go-first implementation lives in one module — `github.com/eunolabs/eunox` — and the server-side components ship under BSL-1.1. That includes the gateway, issuer, minter, and the shared enforcement code they depend on. The practical boundary isn't an npm package split anymore; it's that every binary imports the same shared packages from `pkg/`.
+The Go-first implementation lives in one module — `github.com/eunolabs/eunox` — using a dual-license model. `cmd/mcp/` (the `eunox-mcp` local enforcement proxy) ships under **Apache 2.0** — the free, fully open-source tier. The gateway, issuer, minter, and all other platform services ship under **BUSL-1.1**. Every binary, regardless of license tier, imports the same shared packages from `pkg/`.
 
 The reason that matters for schema parity is straightforward: the manifest contract is compiled from one place. An operator writing policy YAML, a developer integrating `eunox-mcp`, and the hosted services under `cmd/` are all using the same Go types and validators. If you change the contract, you change it once in `pkg/`, and every consumer picks it up through the same module version.
 
-The practical benefit: security teams can audit the actual enforcement contract in the repository. They can inspect the shared types, the condition registry, and the manifest validator that every binary uses. They're not trusting a separate SDK view of the system that might drift from production.
+The practical benefit: security teams can audit the actual enforcement contract in the repository. They can inspect the shared types, the condition registry, and the manifest validator that every binary uses. They're not trusting a separate SDK view of the system that might drift from production. And because `eunox-mcp` is Apache 2.0, developers can embed and redistribute it freely — the schema contract stays public and open at the tier most developers interact with first.
 
 ---
 

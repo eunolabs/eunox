@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/eunolabs/eunox/blob/main/LICENSE"><img alt="License: BUSL-1.1" src="https://img.shields.io/badge/license-BUSL--1.1-blue.svg"></a>
+  <a href="https://github.com/eunolabs/eunox/blob/main/cmd/mcp/LICENSE"><img alt="eunox-mcp: Apache-2.0" src="https://img.shields.io/badge/eunox--mcp-Apache--2.0-green.svg"></a>
+  <a href="https://github.com/eunolabs/eunox/blob/main/LICENSE"><img alt="Platform: BUSL-1.1" src="https://img.shields.io/badge/platform-BUSL--1.1-blue.svg"></a>
   <a href="https://go.dev/"><img alt="Go 1.25+" src="https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8"></a>
   <a href="https://spec.modelcontextprotocol.io/"><img alt="MCP" src="https://img.shields.io/badge/MCP-supported-7c3aed"></a>
 </p>
@@ -134,4 +135,11 @@ reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
 
 ## License
 
-Business Source License 1.1 — See [LICENSE](./LICENSE) for details.
+**`cmd/mcp/`** (`eunox-mcp` binary) — **Apache License 2.0** — free to use, embed,
+redistribute, and build on. See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE).
+
+**Everything else** (gateway, issuer, minter, pkg/, internal/, infra) —
+**Business Source License 1.1** — self-hostable for your own use; commercial
+hosted-service offering requires a commercial licence. See [`LICENSE`](./LICENSE).
+
+Each BUSL-licensed release converts to Apache 2.0 four years after publication.

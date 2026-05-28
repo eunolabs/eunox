@@ -7,7 +7,7 @@ interface Props {
   activePage?: ActivePage;
 }
 
-const { title, description = 'Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. BSL-1.1.', activePage = '' } = Astro.props;
+const { title, description = 'Go-based MCP policy proxy. One YAML file enforces what every AI agent is allowed to do — before the tool call reaches your backend. Drop-in. eunox-mcp Apache-2.0.', activePage = '' } = Astro.props;
 const baseUrl = import.meta.env.BASE_URL;
 const withBase = (path) => `${baseUrl}${path.replace(/^\//, '')}`;
 
@@ -57,8 +57,8 @@ const githubSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
                     <img src={withBase('/eunolabs.png')} alt="eunox" style="height:30px">
                     <span class="wordmark">eunox</span>
                 </a>
-                <p>Capability-native zero-trust governance for AI agents. BSL-1.1.</p>
-                <span class="footer-license">BSL-1.1</span>
+                <p>Capability-native zero-trust governance for AI agents. eunox-mcp Apache-2.0 · platform BUSL-1.1.</p>
+                <span class="footer-license">Apache-2.0 / BUSL-1.1</span>
             </div>
             <div class="footer-col">
                 <h5>Product</h5>

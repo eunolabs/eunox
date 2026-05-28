@@ -24,7 +24,7 @@ The right solution wasn't more conditionals. It was treating identity validation
 
 ## Two interfaces, one contract
 
-The core abstractions live in the `pkg/` Go packages (Apache-2.0 licensed, so the contracts are public even for self-hosted deployments that use BUSL-licensed platform code):
+The core abstractions live in the `pkg/` Go packages (BUSL-1.1 licensed, source-available — readable and self-deployable for your own use):
 
 **`IdentityAdapter`** — responsible for validating an inbound identity credential and returning a normalized `UserContext`. Implementations handle the cloud-specific validation logic: verifying OIDC tokens against a Cognito user pool, checking Azure AD claims, resolving a DID document and verifying a signed challenge. What they return is always the same shape: a `UserContext` with a stable subject identifier, a role set, and optional metadata like the original token claims.
 
@@ -135,7 +135,7 @@ func (s *HardwareHsmSigner) Algorithm() crypto.Algorithm { return crypto.RS256 }
 func (s *HardwareHsmSigner) KeyID() string               { return "my-hsm" }
 ```
 
-This is the BUSL-licensed extension path. The public contracts (for example, the signing interfaces in `pkg/crypto`) are Apache-2.0 and publicly documented; the runtime wiring and built-in implementations are platform code.
+This is the BUSL-licensed extension path. The contracts (for example, the signing interfaces in `pkg/crypto`) are source-available under BUSL-1.1 and fully readable; the runtime wiring and built-in implementations are platform code.
 
 ---
 

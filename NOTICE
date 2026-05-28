@@ -1,8 +1,13 @@
 Eunox
 Copyright (c) 2026 Eunolabs.
 
-This product includes software developed by Eunolabs and distributed under
-the Business Source License 1.1. See LICENSE for details.
+This product uses a dual-license model:
+
+  cmd/mcp/ — the eunox-mcp local enforcement proxy — is distributed under
+  the Apache License, Version 2.0. See cmd/mcp/LICENSE for details.
+
+  All other components are distributed under the Business Source License 1.1.
+  See LICENSE for details.
 
 ---
 

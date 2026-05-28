@@ -1,5 +1,5 @@
 // Copyright 2026 Eunox Authors
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // eunox-mcp is a policy-enforcement proxy for MCP (Model Context Protocol)
 // servers.  It sits between an MCP host (e.g. Claude Desktop) and an upstream

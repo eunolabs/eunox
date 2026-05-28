@@ -174,10 +174,10 @@ grouped by theme and roughly ordered from introductory to in-depth.
     Covers the Helm umbrella chart, the air-gap image list, pull scripts,
     offline DID resolution strategies, and on-premises KMS integration.
 
-30. **The BUSL / Apache split: open-source AI security with a sustainable license model**
-    Explains the two-folder architecture (`public/` Apache-2.0, platform
-    BUSL-1.1), why the core policy types must stay open, and what "non-competing
-    use" means for your deployment.
+30. **Apache 2.0 + BUSL-1.1: a dual-license strategy for open-source AI security**
+    Explains why `cmd/mcp` ships under Apache 2.0 (free tier, no restrictions)
+    and the platform ships under BUSL-1.1, what each license permits, and what
+    "non-competing use" means for your deployment.
 
 ---
 
@@ -216,11 +216,12 @@ grouped by theme and roughly ordered from introductory to in-depth.
 
 ## Deployment guides
 
-33. **Deploying eunox OSS: from `go install` to a governed agent in five minutes**
-    Step-by-step deployment guide for the Apache-2.0 OSS tier. Covers installing
-    `eunox-mcp`, writing a minimal YAML policy, wiring the proxy into Claude
-    Desktop, Cursor, and a programmatic Go agent, enabling the local HMAC audit
-    log, and upgrading to a hosted gateway when you outgrow the local-only model.
+33. **Deploying eunox locally: from `go install` to a governed agent in five minutes**
+    Step-by-step deployment guide for the Apache-2.0 `eunox-mcp` free tier.
+    Covers installing the binary, writing a minimal YAML policy, wiring the proxy
+    into Claude Desktop, Cursor, and a programmatic Go agent, enabling the local
+    HMAC audit log, and upgrading to a self-hosted gateway when you outgrow the
+    local-only model.
 
 34. **Deploying the eunox Self-Host stack: Redis, Postgres, KMS, and Helm**
     Step-by-step deployment guide for the BSL 1.1 self-host tier. Covers the

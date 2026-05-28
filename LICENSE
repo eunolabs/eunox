@@ -1,6 +1,23 @@
 # Eunox Repository Licensing
 
-This repository is licensed under the Business Source License 1.1 (BUSL-1.1).
+## Dual-License Model
+
+**`cmd/mcp/`** — the `eunox-mcp` local enforcement proxy — is licensed under the
+**Apache License, Version 2.0**. See [`cmd/mcp/LICENSE`](cmd/mcp/LICENSE) for the
+full text. This is the free-tier component: use it, embed it, redistribute it, or
+build on it without restriction.
+
+**Everything else** in this repository is licensed under the
+**Business Source License 1.1 (BUSL-1.1)** as described below. This covers the
+gateway, issuer, minter, all other `cmd/` services, `internal/`, `pkg/`,
+infrastructure, and site content.
+
+---
+
+## Business Source License 1.1 (BUSL-1.1)
+
+The following sections apply to all files in this repository **except**
+`cmd/mcp/` and its subdirectories.
 
 # Business Source License 1.1 (full text)
 
