@@ -18,6 +18,7 @@
 5. [Redis HA](#redis-ha-for-production)
 6. [Deployment Targets](#deployment-targets)
 7. [Health Checks](#health-checks)
+8. [Multi-AZ Reference Architecture](#multi-az-reference-architecture)
 
 ---
 
@@ -461,3 +462,190 @@ uses an exclusive lock that rejects a second writer.
 
 For horizontal scaling across nodes or multi-replica deployments see
 [`docs/posture-scaling.md`](./posture-scaling.md).
+
+---
+
+## Multi-AZ Reference Architecture
+
+This section documents the recommended high-availability topology for production
+deployments. It satisfies the multi-AZ reference architecture requirement from
+[`docs/gateway-chokepoint-critique.md`](./gateway-chokepoint-critique.md) §P1-4.
+
+### Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Region: us-east-1 (or equivalent)                                           │
+│                                                                              │
+│  ┌────────────────────────────┐   ┌────────────────────────────┐             │
+│  │  Availability Zone A       │   │  Availability Zone B       │             │
+│  │                            │   │                            │             │
+│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │             │
+│  │  │  Gateway Pod (×N/2)  │  │   │  │  Gateway Pod (×N/2)  │  │             │
+│  │  │  port 3002 (public)  │  │   │  │  port 3002 (public)  │  │             │
+│  │  │  port 3003 (admin)   │  │   │  │  port 3003 (admin)   │  │             │
+│  │  └──────────┬───────────┘  │   │  └──────────┬───────────┘  │             │
+│  │             │              │   │             │              │             │
+│  │  ┌──────────┴───────────┐  │   │  ┌──────────┴───────────┐  │             │
+│  │  │  Issuer Pod (×N/2)   │  │   │  │  Issuer Pod (×N/2)   │  │             │
+│  │  │  port 3001           │  │   │  │  port 3001           │  │             │
+│  │  └──────────────────────┘  │   │  └──────────────────────┘  │             │
+│  │                            │   │                            │             │
+│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │             │
+│  │  │ Redis Sentinel A     │  │   │  │ Redis Sentinel B     │  │             │
+│  │  │ (voting member)      │◄─┼───┼─►│ (voting member)      │  │             │
+│  │  └──────────────────────┘  │   │  └──────────────────────┘  │             │
+│  │                            │   │                            │             │
+│  └────────────────────────────┘   └────────────────────────────┘             │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────┐             │
+│  │  Shared Services (region-scoped, AZ-agnostic)               │             │
+│  │                                                             │             │
+│  │  ┌───────────────────┐  ┌──────────────────┐               │             │
+│  │  │  Redis Primary    │  │  Redis Replica   │               │             │
+│  │  │  (AZ A)           │  │  (AZ B)          │               │             │
+│  │  │                   │◄─┤  (async repl.)   │               │             │
+│  │  └───────────────────┘  └──────────────────┘               │             │
+│  │                                                             │             │
+│  │  ┌───────────────────┐  ┌──────────────────┐               │             │
+│  │  │ PostgreSQL        │  │ PostgreSQL       │               │             │
+│  │  │ Primary (AZ A)    │  │ Read Replica     │               │             │
+│  │  │ (audit writes)    │  │ (AZ B)           │               │             │
+│  │  └───────────────────┘  └──────────────────┘               │             │
+│  │                                                             │             │
+│  │  ┌─────────────────────────────────────────┐               │             │
+│  │  │  L7 Load Balancer / Kubernetes Ingress  │               │             │
+│  │  │  (routes :443 → gateway :3002)          │               │             │
+│  │  │  PodDisruptionBudget: minAvailable=1    │               │             │
+│  │  └─────────────────────────────────────────┘               │             │
+│  │                                                             │             │
+│  └─────────────────────────────────────────────────────────────┘             │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Failure Domain Labels
+
+| Component | Failure Domain | AZ Affinity |
+|-----------|---------------|-------------|
+| Gateway pods | Pod-level | Spread across AZ A and AZ B via `topologySpreadConstraints` |
+| Issuer pods | Pod-level | Spread across AZ A and AZ B |
+| Redis Sentinels | Node-level | One sentinel per AZ; 3rd sentinel on any AZ for quorum |
+| Redis Primary | Host-level | AZ A (Sentinel promotes replica on failure) |
+| Redis Replica | Host-level | AZ B (receives async replication from Primary) |
+| PostgreSQL Primary | Host-level | AZ A |
+| PostgreSQL Read Replica | Host-level | AZ B (audit query reads; enforcement does not depend on it) |
+| Load Balancer | Regional | Spans both AZs; distributes to healthy gateway pods |
+
+### RTO / RPO Table
+
+| Failure Scenario | RTO (Recovery Time Objective) | RPO (Recovery Point Objective) | Notes |
+|-----------------|-------------------------------|-------------------------------|-------|
+| Single gateway pod crash | < 30 s | 0 (stateless) | Kubernetes restarts pod; other replicas serve traffic |
+| AZ A network partition | < 60 s | 0 (stateless gateway) | Load balancer stops routing to AZ A; AZ B serves all traffic |
+| Redis Primary failure | < 30 s | Up to last async replication lag | Sentinel promotes AZ B replica; gateway reconnects automatically |
+| Redis Sentinel quorum loss (≥2 sentinels down) | Manual recovery required | N/A | Enforce degraded-mode procedures; see `docs/redis-failure-modes.md` |
+| PostgreSQL Primary failure | < 5 min (manual failover) or < 60 s (automated) | Up to WAL lag | Audit write failures logged; enforcement unaffected; promote replica |
+| Full AZ A loss | < 2 min | 0 (gateway) / WAL lag (PostgreSQL) | AZ B serves gateway + issuer; Redis sentinel promotes AZ B replica |
+| Full region loss | Manual region failover | Depends on cross-region replication | Out of scope for single-region topology; see `docs/multi-region-consistency.md` |
+
+### Kubernetes Topology Configuration
+
+#### Gateway Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: eunox-system
+spec:
+  replicas: 4       # minimum 2; 4 for N+1 redundancy across 2 AZs
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: gateway
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gateway
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway-pdb
+  namespace: eunox-system
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: gateway
+```
+
+#### Redis Sentinel (example — adjust for your Redis operator)
+
+```yaml
+# Three Sentinels for quorum: one per AZ (AZ A, AZ B) + one tiebreaker
+# Primary in AZ A; Replica in AZ B
+sentinel:
+  replicas: 3
+  quorum: 2
+  downAfterMilliseconds: 5000
+  failoverTimeout: 30000
+redis:
+  replicas: 2
+  persistence:
+    enabled: true
+    size: 8Gi
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: redis
+          topologyKey: topology.kubernetes.io/zone
+```
+
+### Health Check Wiring
+
+```yaml
+# Gateway Kubernetes probe configuration
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 3002
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: 3002
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 2
+
+# Optional: wire ION health check as a startup probe if partner federation is in use
+startupProbe:
+  httpGet:
+    path: /healthz/did-ion
+    port: 3002
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 6
+```
