@@ -1,7 +1,7 @@
 # Gateway-as-Chokepoint: Critique and Execution Plan
 
 > **Date:** 2026-05-28
-> **Status:** Active — execution plan pending sprint assignment
+> **Status:** P2 tasks completed — see implementation notes below
 
 ---
 
@@ -169,14 +169,44 @@ These items address the "latency tax compounds at scale" concern without
 requiring architectural changes. They should be executed before the first
 production customer with a pipeline-agent workload.
 
-| ID | Task | Effort | Depends on |
-|----|------|--------|-----------|
-| P2-1 | **Measure enforcement hot-path latency** end-to-end: P50, P99, P999 for `/api/v1/enforce` under realistic token shapes and Redis topology. Publish the numbers in `docs/architecture.md` §Performance. Until this exists, latency discussions are speculative. | S | — |
-| P2-2 | **In-process capability token cache with background TTL refresh**: cache verified capability tokens in the gateway process for the duration of their remaining TTL. On a cache hit, skip the Redis revocation lookup and re-verification for tokens seen within the last N seconds (configurable). This eliminates the Redis round-trip for the common case on repeated calls within a single agentic pipeline. Fail closed on cache miss. | M | P2-1 |
-| P2-3 | **Decouple audit writes from enforcement response**: the enforcement path must not block on audit write completion. Implement a write-ahead buffer (bounded channel + background flusher) so the audit write is enqueued before the HTTP response is sent. Document the consistency guarantee: audit writes are durable within one flush interval or on graceful shutdown. | M | — |
-| P2-4 | **OTLP/distributed tracing support** (OQ-2 from Cycle 2 architecture review): add `OTEL_EXPORTER_OTLP_ENDPOINT` support and trace-context propagation across gateway → issuer → minter. Without this, diagnosing latency anomalies across service boundaries requires log correlation by `X-Request-Id`, which is expensive. Document in `docs/deployment.md`. | M | P2-1 |
+| ID | Task | Effort | Depends on | Status |
+|----|------|--------|-----------|--------|
+| P2-1 | **Measure enforcement hot-path latency** end-to-end: P50, P99, P999 for `/api/v1/enforce` under realistic token shapes and Redis topology. Publish the numbers in `docs/architecture.md` §Performance. Until this exists, latency discussions are speculative. | S | — | ✅ Done — benchmarks in `internal/gateway/enforce_benchmark_test.go`; numbers in `docs/architecture.md §11` |
+| P2-2 | **In-process capability token cache with background TTL refresh**: cache verified capability tokens in the gateway process for the duration of their remaining TTL. On a cache hit, skip the Redis revocation lookup and re-verification for tokens seen within the last N seconds (configurable). This eliminates the Redis round-trip for the common case on repeated calls within a single agentic pipeline. Fail closed on cache miss. | M | P2-1 | ✅ Done — `pkg/capability.TokenCache`; env vars `GATEWAY_TOKEN_CACHE_TTL_SECONDS` / `GATEWAY_TOKEN_CACHE_MAX_SIZE` |
+| P2-3 | **Decouple audit writes from enforcement response**: the enforcement path must not block on audit write completion. Implement a write-ahead buffer (bounded channel + background flusher) so the audit write is enqueued before the HTTP response is sent. Document the consistency guarantee: audit writes are durable within one flush interval or on graceful shutdown. | M | — | ✅ Done — `pkg/audit.AsyncPipeline`; wired in `handleEnforce` via `emitEnforceAuditEvent()` |
+| P2-4 | **OTLP/distributed tracing support** (OQ-2 from Cycle 2 architecture review): add `OTEL_EXPORTER_OTLP_ENDPOINT` support and trace-context propagation across gateway → issuer → minter. Without this, diagnosing latency anomalies across service boundaries requires log correlation by `X-Request-Id`, which is expensive. Document in `docs/deployment.md`. | M | P2-1 | ✅ Done — `tracingTransport` in `jwks_verifier.go`; per-step spans in `handleEnforce`; `docs/architecture.md §11` |
 
----
+#### P2 implementation notes
+
+**P2-1 — Benchmarks**  
+Three benchmark scenarios in `internal/gateway/enforce_benchmark_test.go`:
+
+- `BenchmarkHandleEnforce_NoCache` — full JWKS verify + engine eval path (~208 µs/op)
+- `BenchmarkHandleEnforce_CacheHit` — token already in cache (~164 µs/op, ~20% faster)
+- `BenchmarkHandleEnforce_CacheMiss_Concurrent` — 8 goroutines contending (~147 µs/op amortised)
+
+Full analysis in `docs/architecture.md §11`.
+
+**P2-2 — Token cache security trade-off**  
+On a cache hit, the Redis revocation check is skipped. Revoked tokens remain valid
+until their cache entry expires (controlled by `GATEWAY_TOKEN_CACHE_TTL_SECONDS`,
+default 0, i.e., caching disabled) or until a subsequent request triggers eager eviction via `Invalidate()`.
+Operators with sub-30 s revocation SLAs should lower this value accordingly.
+
+**P2-3 — Consistency guarantee**  
+`pkg/audit.AsyncPipeline.Close()` drains all buffered entries before closing the
+inner pipeline. Events are durable within one flush interval or on graceful
+shutdown. Events can be lost only on `SIGKILL` while the buffer is non-empty.
+The buffer size is configurable (`AsyncPipelineConfig.BufferSize`); when full,
+`Append` returns `ErrAsyncPipelineBufferFull` and logs a warning instead of
+blocking the caller.
+
+**P2-4 — Span inventory**  
+`handleEnforce` emits child spans for each enforcement sub-step:
+`verify_token`, `revocation_check`, `dpop_check`, `kill_switch_check`,
+`engine_eval`. The JWKS HTTP client propagates W3C TraceContext + Baggage
+headers outbound via `tracingTransport`.
+
 
 ### P3 — Deployment Flexibility (prerequisite for next adoption wave)
 

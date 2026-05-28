@@ -739,3 +739,80 @@ Pod-security baseline (see `k8s/pod-security-standards.yaml`,
 | Use the MCP proxy                                 | [`agent-sdk.md`](./agent-sdk.md)                                                     |
 | Deploy the full stack                             | [`deployment.md`](./deployment.md)                                                   |
 | Find the gaps and the proposed work to close them | [`capability-model.md`](./capability-model.md)                                       |
+
+
+---
+
+## 11. Performance
+
+### Enforcement hot-path
+
+The gateway's `/enforce` handler is the highest-frequency path in production.
+Every MCP tool call that passes through a hosted agent hits it at least once.
+The following benchmarks were measured on a quad-core Linux VM (Go 1.25, `-race`
+disabled, `-benchmem`, `-benchtime=2s`).
+
+| Scenario                        | ns/op   | B/op  | allocs/op |
+| ------------------------------- | ------- | ----- | --------- |
+| `NoCache` – full verify path    | 208 218 | 12272 | 99        |
+| `CacheHit` – token in cache     | 164 251 | 12231 | 99        |
+| `CacheMiss_Concurrent` (parallel, GOMAXPROCS workers) | 146 907 | 12565 | 102  |
+
+> Run with:
+> ```
+> go test -bench=BenchmarkHandleEnforce -benchmem -benchtime=3s ./internal/gateway/
+> ```
+
+The benchmarks live in `internal/gateway/enforce_benchmark_test.go`.
+
+### Token cache (P2-2)
+
+`pkg/capability.TokenCache` is an in-process LRU cache for verified JWT claims.
+On a cache hit the gateway skips the JWKS fetch + RS256 verification step, which
+is the dominant cost on the full path.
+
+**Security trade-off:** On a cache hit, revocation is _not_ re-checked against
+Redis until the entry TTL expires. Operators should set `GATEWAY_TOKEN_CACHE_TTL_SECONDS`
+shorter than their revocation-propagation SLA (default: 0, i.e., caching disabled).
+A call to `TokenCache.Invalidate(token)` is issued immediately whenever a revocation
+check returns a rejection, so the stale entry is removed eagerly.
+
+**Sizing:** Default `GATEWAY_TOKEN_CACHE_MAX_SIZE` is 4 096 entries. Each entry
+holds a decoded `capability.TokenPayload` struct (~512 B) plus the SHA-256 hex key
+(64 B). At max capacity the cache occupies roughly 2–3 MiB of heap.
+
+### Async audit pipeline (P2-3)
+
+`pkg/audit.AsyncPipeline` wraps any `Pipeline` with a bounded channel
+(`AsyncPipelineConfig.BufferSize`, default 4 096) and a background drain goroutine.
+The `Append` call is **non-blocking**: if the buffer is full it returns
+`ErrAsyncPipelineBufferFull` and logs a warning rather than stalling the
+hot path.
+
+Audit writes therefore add < 1 µs to the critical path (channel send) rather
+than the full round-trip latency of the underlying storage backend.
+
+**Shutdown guarantee:** `Close()` drains all buffered entries before closing the
+inner pipeline. No events are lost on graceful shutdown; events may be lost only
+if the process is killed (`SIGKILL`) while the buffer is non-empty.
+
+### OTLP trace propagation (P2-4)
+
+The JWKS HTTP client (`internal/gateway.JWKSVerifier`) wraps its transport with
+`tracingTransport`, which injects the current OpenTelemetry span context into
+every outbound request via `W3C TraceContext` + `Baggage` propagation headers.
+This allows the JWKS upstream to appear as a child span in distributed traces,
+enabling end-to-end latency attribution without any changes to upstream services.
+
+Per-step child spans are recorded inside `handleEnforce`:
+
+| Span name          | What it covers                                    |
+| ------------------ | ------------------------------------------------- |
+| `verify_token`     | JWKS fetch + RS256 signature verification         |
+| `revocation_check` | Redis `EXISTS` on the JTI revocation set          |
+| `dpop_check`       | DPoP proof validation (when present)              |
+| `kill_switch_check`| Kill-switch Redis check                           |
+| `engine_eval`      | Capability engine enforcement decision            |
+
+All spans are annotated with `http.method`, `request_id`, and the enforcement
+outcome (`allow`/`deny`).

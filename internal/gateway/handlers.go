@@ -4,19 +4,33 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/edgeobs/eunox/pkg/audit"
 	"github.com/edgeobs/eunox/pkg/capability"
 	"github.com/edgeobs/eunox/pkg/enforcement"
+	"github.com/edgeobs/eunox/pkg/ocsf"
 	"github.com/google/uuid"
 )
+
+// gatewayTracer is the OTel tracer used for enforcement sub-step spans (P2-4).
+var gatewayTracer = otel.Tracer("github.com/edgeobs/eunox/internal/gateway")
 
 // validToolNameRE enforces an allowlist on the X-Tool-Name proxy header.
 // Accepts 1–256 characters: letters, digits, underscores, hyphens, colons, dots.
@@ -67,6 +81,17 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.NewString()
 	}
 
+	// Start a child span for enforcement so that sub-steps (token verify,
+	// revocation check, engine eval) can be observed independently (P2-4).
+	ctx, span := gatewayTracer.Start(r.Context(), "gateway.enforce",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			semconv.HTTPRequestMethodKey.String(r.Method),
+			attribute.String("request_id", requestID),
+		),
+	)
+	defer span.End()
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, app.maxBodySizeFor()))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("failed to read request body"))
@@ -84,66 +109,109 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify JWT
-	claims, err := app.deps.JWTVerifier.VerifyToken(r.Context(), payload.Token)
-	if err != nil {
-		resp := capability.EnforceResponse{
-			RequestID: requestID,
-			Decision:  capability.DecisionDeny,
-			DecidedAt: time.Now().UTC().Format(time.RFC3339),
-			Denial: &capability.DenialInfo{
-				Code:    capability.ErrCodeAuthorizationFailed,
-				Message: fmt.Sprintf("token verification failed: %v", err),
-			},
+	// --- Token verification: cache-hit path skips JWKS re-verify and
+	// revocation check (P2-2). On a cache miss we fall through to full
+	// verification and store the result on success. ---
+	var claims *capability.TokenPayload
+	cacheHit := false
+	if app.tokenCache != nil {
+		if cached, ok := app.tokenCache.Get(payload.Token); ok {
+			claims = cached
+			cacheHit = true
+			span.SetAttributes(attribute.Bool("token_cache_hit", true))
 		}
-		app.recordMetric("deny", start)
-		writeJSON(w, http.StatusOK, resp)
-		return
 	}
 
-	// Check token expiry
-	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
-		resp := capability.EnforceResponse{
-			RequestID: requestID,
-			Decision:  capability.DecisionDeny,
-			DecidedAt: time.Now().UTC().Format(time.RFC3339),
-			Denial: &capability.DenialInfo{
-				Code:    capability.ErrCodeExpired,
-				Message: "token has expired",
-			},
-		}
-		app.recordMetric("deny", start)
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-
-	// Check revocation
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-			app.recordMetric("deny", start)
-			return
-		}
-		if revoked {
+	if !cacheHit {
+		// Verify JWT signature and standard claims (JWKS round-trip).
+		_, verifySpan := gatewayTracer.Start(ctx, "gateway.enforce.verify_token")
+		var verifyErr error
+		claims, verifyErr = app.deps.JWTVerifier.VerifyToken(ctx, payload.Token)
+		if verifyErr != nil {
+			verifySpan.RecordError(verifyErr)
+			verifySpan.SetStatus(codes.Error, verifyErr.Error())
+			verifySpan.End()
 			resp := capability.EnforceResponse{
 				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
 				DecidedAt: time.Now().UTC().Format(time.RFC3339),
 				Denial: &capability.DenialInfo{
-					Code:    capability.ErrCodeRevoked,
-					Message: "token has been revoked",
+					Code:    capability.ErrCodeAuthorizationFailed,
+					Message: fmt.Sprintf("token verification failed: %v", verifyErr),
 				},
 			}
+			span.SetAttributes(attribute.String("decision", "deny"))
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
+		}
+		verifySpan.End()
+
+		// Check token expiry.
+		if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
+			resp := capability.EnforceResponse{
+				RequestID: requestID,
+				Decision:  capability.DecisionDeny,
+				DecidedAt: time.Now().UTC().Format(time.RFC3339),
+				Denial: &capability.DenialInfo{
+					Code:    capability.ErrCodeExpired,
+					Message: "token has expired",
+				},
+			}
+			span.SetAttributes(attribute.String("decision", "deny"))
+			app.recordMetric("deny", start)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		// Check revocation (Redis round-trip — skipped on cache hits).
+		if app.deps.Revocation != nil && claims.JWTID != "" {
+			_, revSpan := gatewayTracer.Start(ctx, "gateway.enforce.revocation_check")
+			revoked, revErr := app.deps.Revocation.IsRevoked(ctx, claims.JWTID)
+			if revErr != nil {
+				revSpan.RecordError(revErr)
+				revSpan.SetStatus(codes.Error, revErr.Error())
+				revSpan.End()
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+				app.recordMetric("deny", start)
+				return
+			}
+			revSpan.End()
+			if revoked {
+				// Ensure we don't serve a revoked token from cache in the future.
+				if app.tokenCache != nil {
+					app.tokenCache.Invalidate(payload.Token)
+				}
+				resp := capability.EnforceResponse{
+					RequestID: requestID,
+					Decision:  capability.DecisionDeny,
+					DecidedAt: time.Now().UTC().Format(time.RFC3339),
+					Denial: &capability.DenialInfo{
+						Code:    capability.ErrCodeRevoked,
+						Message: "token has been revoked",
+					},
+				}
+				span.SetAttributes(attribute.String("decision", "deny"))
+				app.recordMetric("deny", start)
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
+		}
+
+		// Cache the verified claims so subsequent requests in the same
+		// pipeline run avoid the JWKS + revocation round-trips.
+		if app.tokenCache != nil {
+			app.tokenCache.Put(payload.Token, claims)
 		}
 	}
 
 	// Check DPoP replay
 	if payload.DPoP != nil {
-		if err := app.verifyDPoP(r.Context(), payload.DPoP, claims); err != nil {
+		_, dpopSpan := gatewayTracer.Start(ctx, "gateway.enforce.dpop_check")
+		if err := app.verifyDPoP(ctx, payload.DPoP, claims); err != nil {
+			dpopSpan.RecordError(err)
+			dpopSpan.SetStatus(codes.Error, err.Error())
+			dpopSpan.End()
 			resp := capability.EnforceResponse{
 				RequestID: requestID,
 				Decision:  capability.DecisionDeny,
@@ -153,20 +221,27 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: fmt.Sprintf("DPoP verification failed: %v", err),
 				},
 			}
+			span.SetAttributes(attribute.String("decision", "deny"))
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
+		dpopSpan.End()
 	}
 
 	// Check kill switch
 	if app.deps.KillSwitch != nil {
-		blocked, ksErr := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, payload.Request.SessionID)
+		_, ksSpan := gatewayTracer.Start(ctx, "gateway.enforce.kill_switch_check")
+		blocked, ksErr := app.deps.KillSwitch.ShouldBlock(ctx, claims.Subject, payload.Request.SessionID)
 		if ksErr != nil {
+			ksSpan.RecordError(ksErr)
+			ksSpan.SetStatus(codes.Error, ksErr.Error())
+			ksSpan.End()
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse("kill switch check unavailable"))
 			app.recordMetric("deny", start)
 			return
 		}
+		ksSpan.End()
 		if blocked {
 			resp := capability.EnforceResponse{
 				RequestID: requestID,
@@ -177,6 +252,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: "kill switch is active",
 				},
 			}
+			span.SetAttributes(attribute.String("decision", "deny"))
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -188,15 +264,27 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		payload.Request.Context.SourceIP = app.extractClientIP(r)
 	}
 
-	// Run enforcement engine
-	resp, engineErr := app.deps.Engine.ValidateAction(r.Context(), &payload.Request, claims.Capabilities)
+	// Run enforcement engine.
+	_, engineSpan := gatewayTracer.Start(ctx, "gateway.enforce.engine_eval")
+	resp, engineErr := app.deps.Engine.ValidateAction(ctx, &payload.Request, claims.Capabilities)
 	if engineErr != nil {
+		engineSpan.RecordError(engineErr)
+		engineSpan.SetStatus(codes.Error, engineErr.Error())
+		engineSpan.End()
 		writeJSON(w, http.StatusInternalServerError, errorResponse("enforcement engine error"))
 		return
 	}
+	engineSpan.End()
 	resp.RequestID = requestID
 
 	decision := string(resp.Decision)
+	span.SetAttributes(attribute.String("decision", decision))
+
+	// Emit an audit event for the enforcement decision (P2-3). The write is
+	// non-blocking when the pipeline is wrapped in an AsyncPipeline; it does
+	// not affect enforcement response latency.
+	app.emitEnforceAuditEvent(ctx, claims, &payload.Request, &resp, requestID)
+
 	app.recordMetric(decision, start)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -229,38 +317,58 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify JWT
-	claims, err := app.deps.JWTVerifier.VerifyToken(r.Context(), req.Token)
-	if err != nil {
-		writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
-			Allowed: false,
-			Reason:  fmt.Sprintf("token verification failed: %v", err),
-		})
-		return
+	// Token verification: check in-process cache first (P2-2).
+	var claims *capability.TokenPayload
+	cacheHit := false
+	if app.tokenCache != nil {
+		if cached, ok := app.tokenCache.Get(req.Token); ok {
+			claims = cached
+			cacheHit = true
+		}
 	}
 
-	// Check revocation so that a revoked token is denied here, just as it
-	// would be by /enforce.
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, err := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+	if !cacheHit {
+		// Verify JWT
+		claims, err = app.deps.JWTVerifier.VerifyToken(r.Context(), req.Token)
 		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-			return
-		}
-		if revoked {
 			writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
 				Allowed: false,
-				Reason:  "token has been revoked",
+				Reason:  fmt.Sprintf("token verification failed: %v", err),
 			})
 			return
+		}
+
+		// Check revocation so that a revoked token is denied here, just as it
+		// would be by /enforce.
+		if app.deps.Revocation != nil && claims.JWTID != "" {
+			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+			if revErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+				return
+			}
+			if revoked {
+				if app.tokenCache != nil {
+					app.tokenCache.Invalidate(req.Token)
+				}
+				writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
+					Allowed: false,
+					Reason:  "token has been revoked",
+				})
+				return
+			}
+		}
+
+		// Cache the verified claims.
+		if app.tokenCache != nil {
+			app.tokenCache.Put(req.Token, claims)
 		}
 	}
 
 	// Check kill switch so that a blocked subject is denied here, just as it
 	// would be by /enforce.
 	if app.deps.KillSwitch != nil {
-		blocked, err := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, "")
-		if err != nil {
+		blocked, ksErr := app.deps.KillSwitch.ShouldBlock(r.Context(), claims.Subject, "")
+		if ksErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse("kill switch check unavailable"))
 			return
 		}
@@ -337,29 +445,50 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify JWT
-	claims, err := app.deps.JWTVerifier.VerifyToken(r.Context(), token)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid token"))
-		return
+	// Token verification: check in-process cache first (P2-2).
+	var claims *capability.TokenPayload
+	cacheHit := false
+	if app.tokenCache != nil {
+		if cached, ok := app.tokenCache.Get(token); ok {
+			claims = cached
+			cacheHit = true
+		}
 	}
 
-	// Check token expiry
-	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
-		writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
-		return
-	}
-
-	// Check revocation before DPoP (aligns with handleEnforce order, B-3 fix).
-	if app.deps.Revocation != nil && claims.JWTID != "" {
-		revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-		if revErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+	if !cacheHit {
+		// Verify JWT
+		var err error
+		claims, err = app.deps.JWTVerifier.VerifyToken(r.Context(), token)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse("invalid token"))
 			return
 		}
-		if revoked {
-			writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+
+		// Check token expiry
+		if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
+			writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
 			return
+		}
+
+		// Check revocation before DPoP (aligns with handleEnforce order, B-3 fix).
+		if app.deps.Revocation != nil && claims.JWTID != "" {
+			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+			if revErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+				return
+			}
+			if revoked {
+				if app.tokenCache != nil {
+					app.tokenCache.Invalidate(token)
+				}
+				writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+				return
+			}
+		}
+
+		// Cache the verified claims.
+		if app.tokenCache != nil {
+			app.tokenCache.Put(token, claims)
 		}
 	}
 
@@ -556,4 +685,90 @@ func (app *App) reconstructRequestURL(r *http.Request) string {
 		return fmt.Sprintf("%s://%s%s?%s", scheme, host, path, query)
 	}
 	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+}
+
+// emitEnforceAuditEvent emits an OCSF API-Activity event for an enforcement
+// decision.  The write is non-blocking when the pipeline is an AsyncPipeline;
+// errors are not returned to the caller so that audit failures never affect
+// enforcement response latency or correctness. A buffer-full error is logged
+// as a warning for operator visibility.
+func (app *App) emitEnforceAuditEvent(
+	ctx context.Context,
+	claims *capability.TokenPayload,
+	req *capability.EnforceRequest,
+	resp *capability.EnforceResponse,
+	requestID string,
+) {
+	if app.deps.Audit == nil || app.deps.Audit.Pipeline == nil {
+		return
+	}
+
+	actor := ocsf.Actor{}
+	if claims != nil {
+		tenantID := ""
+		if claims.AuthorizedBy != nil {
+			tenantID = claims.AuthorizedBy.TenantID
+		}
+		actor = ocsf.Actor{
+			UserID:   claims.Subject,
+			TenantID: tenantID,
+		}
+	}
+
+	activityID := ocsf.ActivityAPIAllow
+	statusID := ocsf.StatusSuccess
+	outcome := "allow"
+	if resp.Decision == capability.DecisionDeny {
+		activityID = ocsf.ActivityAPIDeny
+		statusID = ocsf.StatusFailure
+		outcome = "deny"
+	}
+
+	toolName := ""
+	toolAction := ""
+	sessionID := ""
+	if req != nil {
+		toolName = req.ToolName
+		toolAction = req.Context.Operation
+		sessionID = req.SessionID
+	}
+
+	ocsfEvent := ocsf.NewAPIActivityEvent(activityID, &actor).
+		WithStatus(statusID, outcome)
+	ocsfEvent.ToolName = toolName
+	ocsfEvent.ToolAction = toolAction
+	ocsfEvent.SessionID = sessionID
+	ocsfEvent.RequestID = requestID
+
+	entry := &audit.LogEntry{
+		ID:        requestID,
+		Timestamp: time.Now().UTC(),
+		TenantID:  actor.TenantID,
+		EventType: "enforce." + outcome,
+		Actor:     actor,
+		Action:    "enforce",
+		Resource: ocsf.Resource{
+			UID:  toolName,
+			Type: "tool",
+		},
+		Outcome:   outcome,
+		OCSFEvent: ocsfEvent,
+	}
+
+	// Fire-and-forget: enforcement correctness is independent of audit writes.
+	// Log a warning when the async buffer is full so operators can detect
+	// sustained audit pressure and tune BufferSize accordingly.
+	if err := app.deps.Audit.Pipeline.Append(ctx, entry); err != nil {
+		if errors.Is(err, audit.ErrAsyncPipelineBufferFull) {
+			logger := slog.Default()
+			if app.deps.Logger != nil {
+				logger = app.deps.Logger
+			}
+			logger.Warn("audit: enforce event dropped, async pipeline buffer full",
+				slog.String("request_id", requestID),
+				slog.String("tenant_id", entry.TenantID),
+				slog.String("outcome", entry.Outcome),
+			)
+		}
+	}
 }
