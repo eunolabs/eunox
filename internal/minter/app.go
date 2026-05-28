@@ -143,6 +143,7 @@ func (app *App) buildRouter() chi.Router {
 	r.Get("/health/live", app.handleLive)
 	r.Get("/health/ready", app.handleReady)
 
+	// Public API routes.
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/ping", app.handlePing)
 	})

@@ -321,7 +321,7 @@ func (r *didMapResolver) ResolvePublicKeys(_ context.Context, didURI string) ([]
 	if ks, ok := r.keys[didURI]; ok {
 		return ks, nil
 	}
-	return nil, errors.New("did not found")
+	return nil, errors.New("DID not found")
 }
 
 func TestVerifyCoSignatures_WrongSignature(t *testing.T) {
