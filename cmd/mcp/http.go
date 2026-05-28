@@ -1,5 +1,5 @@
 // Copyright 2026 Eunox Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 // HTTP proxy transport (MCP Streamable HTTP / SSE).
 //
@@ -79,7 +79,7 @@ type HTTPProxyOptions struct {
 }
 
 // NewHTTPProxy creates an HTTPProxy ready to call Serve.
-func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy {
+func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy { //nolint:gocritic // hugeParam: value copy is intentional; callers build opts inline
 	if opts.PDP == nil {
 		opts.PDP = alwaysAllowPDP{}
 	}
@@ -154,7 +154,8 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		shutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.shutdownMs)*time.Millisecond)
+		// ctx is already cancelled; a fresh context is required for graceful shutdown.
+		shutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.shutdownMs)*time.Millisecond) //nolint:contextcheck
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 		p.closeAllSessions()
@@ -279,7 +280,7 @@ func (p *HTTPProxy) handleMCPPost(w http.ResponseWriter, r *http.Request) {
 
 // buildInitResponse builds an initialize response for the host using the
 // upstream capabilities gathered during session startup.
-func (s *httpSession) buildInitResponse(msg rpcMsg) rpcMsg {
+func (s *httpSession) buildInitResponse(msg rpcMsg) rpcMsg { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally for clarity
 	caps := s.upstreamCaps
 	if caps == nil {
 		caps = map[string]interface{}{"tools": map[string]interface{}{}}
@@ -301,7 +302,7 @@ func (s *httpSession) buildInitResponse(msg rpcMsg) rpcMsg {
 
 // handleHTTPToolsCall applies the PDP and either forwards to the upstream or
 // returns a denial result.
-func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, msg rpcMsg, sourceIP string) rpcMsg {
+func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, msg rpcMsg, sourceIP string) rpcMsg { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
 	var params mcpToolCallParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return errorResponse(msg.ID, -32602, "invalid tools/call params")
@@ -395,7 +396,7 @@ func (p *HTTPProxy) handleMCPGet(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		case <-sess.done:
 			return
@@ -473,7 +474,7 @@ func (p *HTTPProxy) newSession() (*httpSession, error) {
 		done:    make(chan struct{}),
 	}
 
-	cmd := exec.Command(p.command, p.args...) //nolint:gosec
+	cmd := exec.Command(p.command, p.args...) //nolint:gosec // command and args are user-supplied CLI arguments validated at startup
 	cmd.Stderr = os.Stderr
 
 	upIn, err := cmd.StdinPipe()
@@ -606,7 +607,7 @@ func (s *httpSession) readUpstream() {
 
 // callUpstream registers a pending entry, sends msg to the upstream, and waits
 // for the matching response.
-func (s *httpSession) callUpstream(ctx context.Context, msg rpcMsg) (rpcMsg, error) {
+func (s *httpSession) callUpstream(ctx context.Context, msg rpcMsg) (rpcMsg, error) { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
 	key := msgKey(msg.ID)
 	ch := make(chan rpcMsg, 1)
 

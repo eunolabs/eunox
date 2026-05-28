@@ -1,5 +1,5 @@
 // Copyright 2026 Eunox Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package main
 
@@ -70,11 +70,11 @@ func openAuditSink(logPath string, rotateSizeBytes int64) (*auditSink, error) {
 		return nil, fmt.Errorf("audit key: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return nil, fmt.Errorf("creating audit log directory: %w", err)
 	}
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening audit log %q: %w", logPath, err)
 	}
@@ -190,7 +190,7 @@ func (s *auditSink) rotate() {
 	_ = s.f.Close()
 	rotated := s.logPath + "." + time.Now().UTC().Format("20060102T150405Z")
 	_ = os.Rename(s.logPath, rotated)
-	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[eunox-mcp] audit rotate error: %v\n", err)
 		s.f = nil
@@ -205,7 +205,7 @@ func (s *auditSink) rotate() {
 // -----------------------------------------------------------------
 
 func loadOrCreateAuditKey(keyPath string) ([]byte, error) {
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 		return nil, err
 	}
 
@@ -226,7 +226,7 @@ func loadOrCreateAuditKey(keyPath string) ([]byte, error) {
 
 	encoded := make([]byte, hex.EncodedLen(len(key)))
 	hex.Encode(encoded, key)
-	if err := os.WriteFile(keyPath, encoded, 0600); err != nil {
+	if err := os.WriteFile(keyPath, encoded, 0o600); err != nil {
 		return nil, fmt.Errorf("writing audit key: %w", err)
 	}
 	return key, nil

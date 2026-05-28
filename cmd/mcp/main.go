@@ -1,5 +1,5 @@
 // Copyright 2026 Eunox Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 // eunox-mcp is a policy-enforcement proxy for MCP (Model Context Protocol)
 // servers.  It sits between an MCP host (e.g. Claude Desktop) and an upstream
@@ -222,7 +222,7 @@ Flags:
 		})
 		if err := proxy.Start(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
-			os.Exit(1)
+			os.Exit(1) //nolint:gocritic // exitAfterDefer: deferred sink.Close is not critical on fatal error
 		}
 
 	case "http":
@@ -330,8 +330,8 @@ Flags:
 		fmt.Fprintf(os.Stderr, "eunox-mcp kill: request failed: %v\n", err)
 		os.Exit(1)
 	}
-	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "eunox-mcp kill: proxy returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		os.Exit(1)
@@ -383,7 +383,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "eunox-mcp validate-token: opening %q: %v\n", logPath, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var sinceTime time.Time
 	if *since != "" {
@@ -487,7 +487,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "eunox-mcp stats: opening %q: %v\n", logPath, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	type key struct{ tool, code string }
 	denials := make(map[key]int)
