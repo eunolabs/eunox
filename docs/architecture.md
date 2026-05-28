@@ -756,7 +756,7 @@ disabled, `-benchmem`, `-benchtime=2s`).
 | ------------------------------- | ------- | ----- | --------- |
 | `NoCache` – full verify path    | 208 218 | 12272 | 99        |
 | `CacheHit` – token in cache     | 164 251 | 12231 | 99        |
-| `CacheMiss_Concurrent` (8 goroutines) | 146 907 | 12565 | 102  |
+| `CacheMiss_Concurrent` (parallel, GOMAXPROCS workers) | 146 907 | 12565 | 102  |
 
 > Run with:
 > ```
@@ -773,9 +773,9 @@ is the dominant cost on the full path.
 
 **Security trade-off:** On a cache hit, revocation is _not_ re-checked against
 Redis until the entry TTL expires. Operators should set `GATEWAY_TOKEN_CACHE_TTL_SECONDS`
-shorter than their revocation-propagation SLA (default: 30 s). A call to
-`TokenCache.Invalidate(token)` is issued immediately whenever a revocation check
-or kill-switch check returns a rejection, so the stale entry is removed eagerly.
+shorter than their revocation-propagation SLA (default: 0, i.e., caching disabled).
+A call to `TokenCache.Invalidate(token)` is issued immediately whenever a revocation
+check returns a rejection, so the stale entry is removed eagerly.
 
 **Sizing:** Default `GATEWAY_TOKEN_CACHE_MAX_SIZE` is 4 096 entries. Each entry
 holds a decoded `capability.TokenPayload` struct (~512 B) plus the SHA-256 hex key
@@ -798,7 +798,7 @@ if the process is killed (`SIGKILL`) while the buffer is non-empty.
 
 ### OTLP trace propagation (P2-4)
 
-The JWKS HTTP client (`pkg/capability.JWKSVerifier`) wraps its transport with
+The JWKS HTTP client (`internal/gateway.JWKSVerifier`) wraps its transport with
 `tracingTransport`, which injects the current OpenTelemetry span context into
 every outbound request via `W3C TraceContext` + `Baggage` propagation headers.
 This allows the JWKS upstream to appear as a child span in distributed traces,
@@ -814,5 +814,5 @@ Per-step child spans are recorded inside `handleEnforce`:
 | `kill_switch_check`| Kill-switch Redis check                           |
 | `engine_eval`      | Capability engine enforcement decision            |
 
-All spans are annotated with `http.method`, `http.route`, `tenant_id`, and the
-enforcement outcome (`allow`/`deny`).
+All spans are annotated with `http.method`, `request_id`, and the enforcement
+outcome (`allow`/`deny`).

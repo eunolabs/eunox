@@ -689,8 +689,9 @@ func (app *App) reconstructRequestURL(r *http.Request) string {
 
 // emitEnforceAuditEvent emits an OCSF API-Activity event for an enforcement
 // decision.  The write is non-blocking when the pipeline is an AsyncPipeline;
-// any errors are silently discarded so that audit failures never affect
-// enforcement response latency or correctness.
+// errors are not returned to the caller so that audit failures never affect
+// enforcement response latency or correctness. A buffer-full error is logged
+// as a warning for operator visibility.
 func (app *App) emitEnforceAuditEvent(
 	ctx context.Context,
 	claims *capability.TokenPayload,

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -168,7 +169,10 @@ func BenchmarkHandleEnforce_CacheMiss_Concurrent(b *testing.B) {
 		for pb.Next() {
 			i++
 			// Unique tokens per iteration to force cache misses.
-			token := "bench-miss-token-" + string(rune('a'+i%26))
+			// Use a monotonically increasing suffix to avoid cycling through
+			// a fixed set (which would produce cache hits after the first N
+			// iterations, defeating the purpose of this benchmark).
+			token := "bench-miss-token-" + strconv.Itoa(i)
 			body := benchmarkEnforcePayload(b, token)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/enforce", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")

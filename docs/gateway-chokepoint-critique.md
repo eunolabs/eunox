@@ -190,7 +190,7 @@ Full analysis in `docs/architecture.md §11`.
 **P2-2 — Token cache security trade-off**  
 On a cache hit, the Redis revocation check is skipped. Revoked tokens remain valid
 until their cache entry expires (controlled by `GATEWAY_TOKEN_CACHE_TTL_SECONDS`,
-default 30 s) or until a subsequent request triggers eager eviction via `Invalidate()`.
+default 0, i.e., caching disabled) or until a subsequent request triggers eager eviction via `Invalidate()`.
 Operators with sub-30 s revocation SLAs should lower this value accordingly.
 
 **P2-3 — Consistency guarantee**  

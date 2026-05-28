@@ -112,13 +112,22 @@ func (p *AsyncPipeline) Start(ctx context.Context) {
 //
 // Returns:
 //   - nil on successful enqueue.
+//   - ErrNilEntry if entry is nil.
 //   - ErrAsyncPipelineClosed if Close() has been called.
 //   - ErrAsyncPipelineBufferFull if the buffer is full (entry dropped).
 func (p *AsyncPipeline) Append(_ context.Context, entry *LogEntry) error {
+	if entry == nil {
+		return ErrNilEntry
+	}
+
+	// Hold the lock across the non-blocking send so that the closed check and
+	// the channel send are atomic with respect to Close(). Without this, Close()
+	// could set closed=true and drain the goroutine between the check and the
+	// send, leaving an orphaned entry that is never drained.
 	p.mu.Lock()
-	closed := p.closed
-	p.mu.Unlock()
-	if closed {
+	defer p.mu.Unlock()
+
+	if p.closed {
 		return ErrAsyncPipelineClosed
 	}
 
@@ -161,20 +170,20 @@ func (p *AsyncPipeline) drainLoop(ctx context.Context) {
 	for {
 		select {
 		case entry := <-p.buffer:
-			p.writeEntry(ctx, entry)
+			p.writeEntry(entry)
 
 		case <-ticker.C:
 			// Flush everything buffered so far without blocking on new arrivals.
-			p.drainAvailable(ctx)
+			p.drainAvailable()
 
 		case <-ctx.Done():
 			// Context cancelled: drain remaining buffer entries then return.
-			p.drainAvailable(ctx)
+			p.drainAvailable()
 			return
 
 		case <-p.stopCh:
 			// Graceful shutdown: drain all remaining buffered entries.
-			p.drainAvailable(ctx)
+			p.drainAvailable()
 			return
 		}
 	}
@@ -182,11 +191,11 @@ func (p *AsyncPipeline) drainLoop(ctx context.Context) {
 
 // drainAvailable processes all entries currently in the buffer without
 // blocking. It is called on ticker ticks and on shutdown.
-func (p *AsyncPipeline) drainAvailable(ctx context.Context) {
+func (p *AsyncPipeline) drainAvailable() {
 	for {
 		select {
 		case entry := <-p.buffer:
-			p.writeEntry(ctx, entry)
+			p.writeEntry(entry)
 		default:
 			return
 		}
@@ -196,16 +205,13 @@ func (p *AsyncPipeline) drainAvailable(ctx context.Context) {
 // writeEntry forwards a single entry to the inner pipeline, logging errors.
 // Errors from the inner pipeline do NOT propagate back to callers because
 // Append was already acknowledged as non-blocking.
-func (p *AsyncPipeline) writeEntry(ctx context.Context, entry *LogEntry) {
-	writeCtx := ctx
-	if writeCtx == nil || writeCtx.Err() != nil {
-		// Use a background context with a bounded timeout when the parent is
-		// already done so that in-flight writes can complete during graceful
-		// shutdown without blocking forever on a slow backend.
-		var cancel context.CancelFunc
-		writeCtx, cancel = context.WithTimeout(context.Background(), p.cfg.WriteTimeout)
-		defer cancel()
-	}
+//
+// WriteTimeout is always applied to cap how long a single inner-pipeline
+// Append call may block, preventing a slow or stalled backend from blocking
+// the graceful-shutdown drain indefinitely.
+func (p *AsyncPipeline) writeEntry(entry *LogEntry) {
+	writeCtx, cancel := context.WithTimeout(context.Background(), p.cfg.WriteTimeout)
+	defer cancel()
 	if err := p.inner.Append(writeCtx, entry); err != nil {
 		p.cfg.Logger.Error("audit: async pipeline write failed",
 			slog.String("event_type", entry.EventType),
