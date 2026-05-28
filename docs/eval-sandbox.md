@@ -50,7 +50,7 @@ and SQLite instead of PostgreSQL.
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │  Agent under test                                   │   │
-│  │  Connects to gateway on localhost:3002              │   │
+│  │  Connects to gateway on 127.0.0.1:3002              │   │
 │  │  Uses sandbox API key (non-production)              │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘

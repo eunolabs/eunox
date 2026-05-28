@@ -335,13 +335,13 @@ func (p *PartitionedKillSwitch) runAgentSubscription(ctx context.Context, agentI
 				part.mu.Unlock()
 				return
 			}
-			p.handleAgentEvent(part, agentID, msg.Payload)
+			p.handleAgentEvent(part, msg.Payload)
 		}
 	}
 }
 
 // handleAgentEvent processes a per-agent pub/sub message.
-func (p *PartitionedKillSwitch) handleAgentEvent(part *agentPartition, _ string, payload string) {
+func (p *PartitionedKillSwitch) handleAgentEvent(part *agentPartition, payload string) {
 	part.mu.Lock()
 	defer part.mu.Unlock()
 	switch payload {
