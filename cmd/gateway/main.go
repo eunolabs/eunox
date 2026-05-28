@@ -102,6 +102,17 @@ func run() error {
 	// Initialize metrics
 	metrics := observability.NewMetricsRegistry("eunox", "gateway")
 
+	// Initialize distributed tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	tracerShutdown, err := observability.InitTracer(ctx, observability.TracingConfigFromEnv("gateway", version))
+	if err != nil {
+		return fmt.Errorf("init tracer: %w", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
+
 	// Build stateful backends (Redis-backed when URLs are configured; in-memory fallback for dev).
 	backends, err := buildGatewayBackends(&cfg, logger)
 	if err != nil {

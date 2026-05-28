@@ -115,6 +115,7 @@ func (app *App) buildRouter() chi.Router {
 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
+	r.Use(observability.TracePropagation("issuer"))
 
 	if app.deps.Logger != nil {
 		r.Use(observability.RequestLogging(app.deps.Logger))

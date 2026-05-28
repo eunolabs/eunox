@@ -69,6 +69,18 @@ func run() error {
 	// Initialize metrics.
 	metrics := observability.NewMetricsRegistry("eunox", "posture")
 
+	// Initialize distributed tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	ctx := context.Background()
+	tracerShutdown, err := observability.InitTracer(ctx, observability.TracingConfigFromEnv("posture-emitter", version))
+	if err != nil {
+		return fmt.Errorf("init tracer: %w", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
+
 	// Build plugins from configuration.
 	plugins, err := buildPlugins(&cfg, logger)
 	if err != nil {

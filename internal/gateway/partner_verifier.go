@@ -19,24 +19,37 @@ import (
 )
 
 // PartnerTokenVerifier verifies JWT tokens issued by trusted partner organizations.
+// When the token carries a non-empty Proofs.Signatures field, ALL co-signatures are
+// verified against each co-issuer's resolved public keys before the token is accepted.
 type PartnerTokenVerifier struct {
-	resolver *federation.PartnerIssuerResolver
-	audience string
-	now      func() time.Time
+	resolver         *federation.PartnerIssuerResolver
+	coSigResolver    capability.PublicKeyResolver
+	audience         string
+	now              func() time.Time
 }
 
 // PartnerTokenVerifierConfig configures the PartnerTokenVerifier.
 type PartnerTokenVerifierConfig struct {
 	Resolver *federation.PartnerIssuerResolver
 	Audience string
+	// CoSignatureResolver resolves public keys for co-signature verification.
+	// When nil, Resolver is used — co-signers must therefore be approved partners in the
+	// same federation registry. Provide an alternative resolver only when co-signers
+	// should be permitted outside the approved partner list.
+	CoSignatureResolver capability.PublicKeyResolver
 }
 
 // NewPartnerTokenVerifier creates a verifier for partner-issued tokens.
 func NewPartnerTokenVerifier(cfg PartnerTokenVerifierConfig) *PartnerTokenVerifier {
+	coSig := cfg.CoSignatureResolver
+	if coSig == nil {
+		coSig = cfg.Resolver // default: co-signers must be approved partners
+	}
 	return &PartnerTokenVerifier{
-		resolver: cfg.Resolver,
-		audience: cfg.Audience,
-		now:      time.Now,
+		resolver:      cfg.Resolver,
+		coSigResolver: coSig,
+		audience:      cfg.Audience,
+		now:           time.Now,
 	}
 }
 
@@ -110,6 +123,13 @@ func (v *PartnerTokenVerifier) VerifyPartnerToken(ctx context.Context, tokenStr 
 			if claims.Audience != v.audience {
 				return nil, fmt.Errorf("partner token audience mismatch: got %q, want %q", claims.Audience, v.audience)
 			}
+		}
+
+		// Verify co-signatures before accepting the token.
+		// When Proofs.Signatures is non-empty, ALL entries must pass; if co-signature
+		// verification fails, the whole token is rejected regardless of primary-issuer validity.
+		if err := capability.VerifyCoSignatures(ctx, tokenStr, claims.Proofs, v.coSigResolver); err != nil {
+			return nil, fmt.Errorf("co-signature verification: %w", err)
 		}
 
 		return &PartnerVerifyResult{

@@ -66,6 +66,17 @@ func run() error {
 		slog.String("identity_provider", string(cfg.IdentityProvider)),
 	)
 
+	// Initialize distributed tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	tracerShutdown, err := observability.InitTracer(ctx, observability.TracingConfigFromEnv("issuer", version))
+	if err != nil {
+		return fmt.Errorf("init tracer: %w", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
+
 	// Build signing key
 	signer, err := buildSigner(&cfg)
 	if err != nil {

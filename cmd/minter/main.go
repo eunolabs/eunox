@@ -55,6 +55,18 @@ func run() error {
 		slog.String("environment", string(cfg.NodeEnv)),
 	)
 
+	// Initialize distributed tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	ctx := context.Background()
+	tracerShutdown, err := observability.InitTracer(ctx, observability.TracingConfigFromEnv("minter", version))
+	if err != nil {
+		return fmt.Errorf("init tracer: %w", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		_ = tracerShutdown(shutdownCtx)
+	}()
+
 	// Build pepper.
 	pepper, err := buildPepper(&cfg)
 	if err != nil {
