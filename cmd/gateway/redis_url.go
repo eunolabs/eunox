@@ -193,3 +193,20 @@ func containsMultipleHosts(rawURL string) bool {
 	}
 	return strings.Contains(after, ",")
 }
+
+// newRedisUniversalClientFromURL returns the Redis client as a
+// [goredis.UniversalClient] (which exposes Subscribe) rather than [goredis.Cmdable].
+// All concrete client types created by [newRedisClientFromURL] implement
+// [goredis.UniversalClient]; the type assertion here panics at startup if the
+// implementation ever changes, which is preferable to a silent runtime failure.
+func newRedisUniversalClientFromURL(rawURL string) (goredis.UniversalClient, error) {
+	c, err := newRedisClientFromURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	uc, ok := c.(goredis.UniversalClient)
+	if !ok {
+		return nil, fmt.Errorf("redis client type %T does not implement UniversalClient; cannot use partitioned kill-switch", c)
+	}
+	return uc, nil
+}

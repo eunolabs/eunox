@@ -70,4 +70,19 @@ type GatewayConfig struct {
 	// TokenCacheMaxSize caps the number of entries in the in-process token cache.
 	// Defaults to 4096.
 	TokenCacheMaxSize int `env:"TOKEN_CACHE_MAX_SIZE" default:"4096" min:"1"`
+
+	// Sidecar mode (P3-2).
+	// SidecarMode enables sidecar deployment: the gateway binds to localhost only
+	// and enforces requests exclusively for the agent identified by SidecarAgentID.
+	// Enforcement requests for any other agent are rejected with 403.
+	// SidecarAgentID is required when SidecarMode is true.
+	SidecarMode    bool   `env:"SIDECAR_MODE" default:"false"`
+	SidecarAgentID string `env:"SIDECAR_AGENT_ID"`
+
+	// Per-agent failure domain isolation (P3-4).
+	// AgentIsolation enables per-agent kill-switch subscriptions. When true, a
+	// Redis subscription failure for one agent's kill-switch partition degrades
+	// only that agent (fail-closed) rather than the entire gateway.
+	// Requires a Redis connection (no-op in development mode without Redis).
+	AgentIsolation bool `env:"AGENT_ISOLATION" default:"false"`
 }
