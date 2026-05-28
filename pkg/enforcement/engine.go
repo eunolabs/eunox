@@ -65,6 +65,26 @@ func WithCallCounter(counter CallCounter) Option {
 	}
 }
 
+// ctxDryRunKey is the unexported context key used by WithDryRun.
+type ctxDryRunKey struct{}
+
+// WithDryRun returns a context that signals the engine to skip counter-based
+// side effects (MaxCalls) during condition evaluation.
+//
+// Use this for preflight paths (e.g. /api/v1/validate) where conditions such
+// as time windows and IP ranges must be evaluated but call quotas must not be
+// consumed.  WithDryRun does NOT skip any other condition type — the decision
+// reflects actual policy except that MaxCalls is treated as always-passing.
+func WithDryRun(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxDryRunKey{}, true)
+}
+
+// isDryRun reports whether ctx was decorated with WithDryRun.
+func isDryRun(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxDryRunKey{}).(bool)
+	return v
+}
+
 // New creates a new enforcement Engine with all built-in condition handlers registered.
 func New(opts ...Option) *Engine {
 	e := &Engine{

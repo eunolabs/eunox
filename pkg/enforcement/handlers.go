@@ -150,6 +150,12 @@ func (e *Engine) handleMaxCalls(ctx context.Context, cond capability.Condition, 
 		}
 	}
 
+	// In dry-run mode (e.g. preflight /validate) skip the counter entirely so
+	// that quota is not consumed.  The condition is treated as satisfied.
+	if isDryRun(ctx) {
+		return nil
+	}
+
 	if e.counter == nil {
 		return &ConditionError{
 			Code:          capability.ErrCodeConditionFailed,

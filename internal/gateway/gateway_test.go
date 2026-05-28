@@ -6,6 +6,9 @@ package gateway_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -363,6 +366,11 @@ func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 	verifier := &mockJWTVerifier{claims: claims}
 	app, _, _ := newTestApp(t, verifier)
 
+	// Build a real DPoP proof JWT (required since replay detection parses the jti claim).
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	dpopProof := gateway.CreateTestDPoPProof(t, key, "POST", "https://gateway.example.com/api/v1/enforce", time.Now())
+
 	payload := map[string]interface{}{
 		"token": "valid-token",
 		"request": map[string]interface{}{
@@ -370,7 +378,7 @@ func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 			"toolName":  "tool",
 		},
 		"dpop": map[string]interface{}{
-			"proof":      "unique-proof-1",
+			"proof":      dpopProof,
 			"httpMethod": "POST",
 			"httpUrl":    "https://gateway.example.com/api/v1/enforce",
 		},
@@ -388,7 +396,7 @@ func TestEnforce_DPoP_ReplayDetection(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp1))
 	assert.Equal(t, capability.DecisionAllow, resp1.Decision)
 
-	// Replay the same request — should be denied
+	// Replay the same request — same proof/jti must be denied
 	body, _ = json.Marshal(payload)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/enforce", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

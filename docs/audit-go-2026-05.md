@@ -320,14 +320,14 @@ No tests for behavior of `Push` when the delivery worker is stalled, exposing th
 
 ## Prioritized Execution Plan
 
-**Note on Implementation Status:** This audit document catalogs all identified issues for tracking and awareness. **This PR (PR #302) includes fixes only for the following items:** B-3, B-5, B-6, B-7, F-1, F-2, and S-1 (7 of 20+ issues). The remaining P0/P1 items (B-1, B-2, B-4, U-2) are **not fixed in this PR** and remain as tracked security issues for future work. Issue numbers or follow-up PRs will be created for unfixed P0/P1 items to ensure they are addressed in subsequent releases.
+**Note on Implementation Status:** This audit document catalogs all identified issues for tracking and awareness. All P0 items (B-1, B-2, B-4, U-2) and all P1/P2 items (B-3, B-5, B-6, B-7, F-1, F-2, S-1) have been fixed. Tests T-2 and T-3 have been added. See the status column for the current state of each item.
 
-| Priority | ID | Area | Action | Status in PR #302 |
-|----------|----|----- |--------|--------------------|
-| P0 | B-1 | Gateway `/validate` | Add revocation + kill-switch checks to `handleValidate` | ❌ **Tracked for future** |
-| P0 | B-2 | Gateway `/validate` | Evaluate conditions in `handleValidate`, or gate and document clearly | ❌ **Tracked for future** |
-| P0 | U-2 | Issuer `/renew` | Add `Revocation` dependency to issuer; check in `handleRenew` | ❌ **Tracked for future** |
-| P0 | B-4 | DPoP replay | Store JTI claim as replay key, not composite hash | ❌ **Tracked for future** |
+| Priority | ID | Area | Action | Status |
+|----------|----|----- |--------|--------|
+| P0 | B-1 | Gateway `/validate` | Add revocation + kill-switch checks to `handleValidate` | ✅ **Fixed** |
+| P0 | B-2 | Gateway `/validate` | Evaluate conditions in `handleValidate`, or gate and document clearly | ✅ **Fixed** (`ValidateAction` + dry-run mode) |
+| P0 | U-2 | Issuer `/renew` | Add `Revocation` dependency to issuer; check in `handleRenew` | ✅ **Fixed** |
+| P0 | B-4 | DPoP replay | Store JTI claim as replay key, not composite hash | ✅ **Fixed** |
 | P1 | B-5 | Kill-switch `Reset` | Return error from `Del` in `Reset()` | ✅ **Fixed** |
 | P1 | B-3 | Gateway `/proxy` | Align kill-switch / revocation order with `handleEnforce` | ✅ **Fixed** (reordered to revocation → DPoP → kill-switch) |
 | P1 | F-2 | Gateway proxy DPoP | Add DPoP enforcement to `handleProxy` | ✅ **Fixed** (includes X-Forwarded-* header support) |
@@ -339,4 +339,7 @@ No tests for behavior of `Push` when the delivery worker is stalled, exposing th
 | P3 | S-3 | Lifecycle manager | Use `errors.Join` to preserve both error values on concurrent server failure | ❌ **Tracked for future** |
 | P3 | D-1 | Enforcement engine | Remove dead value-form `RedactFieldsCondition` type assertion | ❌ **Tracked for future** |
 | P3 | D-3 / S-4 | Policy engine | Set `lastModified` in `LoadFromFile` | ❌ **Tracked for future** |
-| P4 | T-1–T-6 | Tests | Add test cases for every bug and gap fixed above | ⚠️ **Partial** (DPoP tests added; full coverage tracked for future) |
+| P4 | T-1 | Tests | Revocation + kill-switch in `handleValidate` | ✅ **Fixed** |
+| P4 | T-2 | Tests | Cross-URL DPoP replay test (B-4 attack vector) | ✅ **Fixed** (`TestVerifyDPoP_CrossURLReplay`) |
+| P4 | T-3 | Tests | Revoked token cannot be renewed | ✅ **Fixed** (`TestRenew_RevokedToken`) |
+| P4 | T-4–T-6 | Tests | Remaining test gaps (killswitch Reset error, SigV4 golden, posture backpressure) | ❌ **Tracked for future** |

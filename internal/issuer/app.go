@@ -30,6 +30,7 @@ import (
 	"github.com/edgeobs/eunox/pkg/crypto"
 	"github.com/edgeobs/eunox/pkg/identity"
 	"github.com/edgeobs/eunox/pkg/observability"
+	"github.com/edgeobs/eunox/pkg/revocation"
 )
 
 const defaultMaxBodySize int64 = 1 << 20 // 1 MB
@@ -76,6 +77,11 @@ type Dependencies struct {
 	Identity     identity.Provider
 	KeyStore     KeyStore
 	RateLimiter  RateLimiter
+	// Revocation is used to reject tokens that have been explicitly revoked.
+	// When nil, revocation is not checked during token renewal (not recommended
+	// for production).  Use a Redis-backed store in multi-replica deployments so
+	// that gateway-issued revocations are visible to the issuer.
+	Revocation   revocation.Store
 	Logger       *slog.Logger
 	Metrics      *observability.MetricsRegistry
 }
@@ -438,6 +444,31 @@ func (app *App) handleRenew(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, errorResponse(fmt.Sprintf("token verification failed: %v", err)))
 		return
+	}
+
+	// Check revocation before issuing a new token.  A revoked token must not
+	// be used to obtain a fresh non-revoked token — this would permanently
+	// bypass revocation.  The check is performed after signature verification
+	// so that only well-formed tokens reach the revocation store.
+	if app.deps.Revocation != nil {
+		if claims.JWTID == "" {
+			// Tokens without a jti cannot be tracked in the revocation store.
+			// Log a warning so operators can detect issuers or libraries that
+			// omit the jti claim.
+			if app.deps.Logger != nil {
+				app.deps.Logger.Warn("skipping revocation check on renew: capability token has no jti claim")
+			}
+		} else {
+			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
+			if revErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+				return
+			}
+			if revoked {
+				writeJSON(w, http.StatusUnauthorized, errorResponse("token has been revoked"))
+				return
+			}
+		}
 	}
 
 	// Re-verify identity with fresh ID token

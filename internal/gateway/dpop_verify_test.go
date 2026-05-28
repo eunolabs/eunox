@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/edgeobs/eunox/pkg/capability"
 )
 
 // Helper to create a valid DPoP proof JWT for testing.
@@ -355,6 +358,66 @@ func TestVerifyECDSA_WrongSignature(t *testing.T) {
 	err = verifyECDSA([]byte("test"), sig, "ES256", jwk)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "verification failed")
+}
+
+// TestVerifyDPoP_CrossURLReplay (T-2): the same DPoP proof JWT (same jti) must be
+// rejected when replayed to a different URL.  This validates the B-4 fix: replay
+// detection uses the jti claim, not a hash of proof+method+URL.
+//
+// The attack scenario: when a capability token has no DPoP binding (no JKT in
+// the cnf claim), verifyDPoPBinding is skipped.  The old composite-hash replay
+// key (hash of proof+method+URL) allowed the same proof to be replayed to a
+// different URL because the hash changed with the URL.  The fixed code stores
+// only the jti, which is URL-independent, so cross-URL replay is detected.
+func TestVerifyDPoP_CrossURLReplay(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Proof was issued for URL_A.
+	proof := createTestDPoPProof(t, key, "POST", "https://gateway.example.com/api/v1/enforce", time.Now())
+
+	store := NewInMemoryDPoPStore(5 * time.Minute)
+	app := &App{dpopStore: store}
+
+	// Token has no DPoP binding (no JKT) — verifyDPoPBinding is skipped.
+	// This is the scenario where replay protection is the only defence.
+	claims := &capability.TokenPayload{}
+
+	// First use: POST to /api/v1/enforce — should succeed; jti is stored.
+	dpop1 := &capability.DPoPProof{
+		Proof:      proof,
+		HTTPMethod: "POST",
+		HTTPURL:    "https://gateway.example.com/api/v1/enforce",
+	}
+	require.NoError(t, app.verifyDPoP(context.Background(), dpop1, claims))
+
+	// Second use: same proof JWT replayed to a different URL — must be rejected
+	// because the jti is already in the store, regardless of target URL.
+	dpop2 := &capability.DPoPProof{
+		Proof:      proof,
+		HTTPMethod: "POST",
+		HTTPURL:    "https://gateway.example.com/api/v1/OTHER",
+	}
+	err = app.verifyDPoP(context.Background(), dpop2, claims)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "replay")
+}
+
+// TestParseDPoPJTI_Valid ensures parseDPoPJTI correctly extracts the jti claim.
+func TestParseDPoPJTI_Valid(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	proof := createTestDPoPProof(t, key, "POST", "https://example.com/api", time.Now())
+	jti, err := parseDPoPJTI(proof)
+	require.NoError(t, err)
+	assert.NotEmpty(t, jti)
+}
+
+// TestParseDPoPJTI_InvalidJWT ensures parseDPoPJTI rejects malformed JWTs.
+func TestParseDPoPJTI_InvalidJWT(t *testing.T) {
+	_, err := parseDPoPJTI("not-a-jwt")
+	assert.Error(t, err)
 }
 
 func TestVerifyRSA_ExponentOutOfRange(t *testing.T) {
