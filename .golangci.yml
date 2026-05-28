@@ -54,6 +54,13 @@ linters:
         text: "handlePubSubMessage"
         linters:
           - contextcheck
+      # partitioned.go starts per-agent subscriptions from the service lifecycle
+      # context (p.lifecycleCtx), not from the request context. The subscription
+      # must outlive any single ShouldBlock call.
+      - path: pkg/killswitch/partitioned\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck
       - path: pkg/lifecycle/lifecycle\.go
         linters:
           - contextcheck
@@ -73,3 +80,21 @@ linters:
         text: "hugeParam"
         linters:
           - gocritic
+      # cmd/mcp: rpcMsg and options structs are intentionally passed by value for
+      # clarity at call sites; copy overhead is acceptable in this proxy.
+      - path: cmd/mcp/
+        text: "hugeParam"
+        linters:
+          - gocritic
+      # cmd/mcp: os.Exit on fatal errors is intentional; deferred file close is
+      # not critical when the process is terminating (OS cleans up).
+      - path: cmd/mcp/
+        text: "exitAfterDefer"
+        linters:
+          - gocritic
+      # cmd/mcp: graceful HTTP shutdown uses context.Background() because the
+      # server context is already cancelled; the fresh timeout is intentional.
+      - path: cmd/mcp/http\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck

@@ -74,7 +74,7 @@ func openAuditSink(logPath string, rotateSizeBytes int64) (*auditSink, error) {
 		return nil, fmt.Errorf("creating audit log directory: %w", err)
 	}
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // G304: path is user-configured audit log location
 	if err != nil {
 		return nil, fmt.Errorf("opening audit log %q: %w", logPath, err)
 	}
@@ -209,7 +209,7 @@ func loadOrCreateAuditKey(keyPath string) ([]byte, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(keyPath)
+	data, err := os.ReadFile(keyPath) //nolint:gosec // G304: path is the hardcoded default key path expanded from ~/.eunox/audit.key
 	if err == nil {
 		key := make([]byte, hex.DecodedLen(len(data)))
 		n, err := hex.Decode(key, data)

@@ -23,7 +23,7 @@ type LocalManifest = agentruntime.AgentCapabilityManifest
 // capability.Constraint JSON unmarshalling (with polymorphic conditions) is
 // reused without change.
 func LoadManifest(path string) (*LocalManifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is a user-specified manifest file path (CLI argument)
 	if err != nil {
 		return nil, fmt.Errorf("reading manifest %q: %w", path, err)
 	}

@@ -325,7 +325,7 @@ Flags:
 
 	data, _ := json.Marshal(body)
 	url := fmt.Sprintf("http://%s:%d/control/kill", *host, *port)
-	resp, err := http.Post(url, ctJSON, bytes.NewReader(data)) //nolint:noctx
+	resp, err := http.Post(url, ctJSON, bytes.NewReader(data)) //nolint:noctx,gosec // G107: URL constructed from user-specified --host/--port flags
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eunox-mcp kill: request failed: %v\n", err)
 		os.Exit(1)
@@ -378,7 +378,7 @@ Flags:
 	// Build a temporary sink just for VerifyRecord.
 	verifier := &auditSink{key: key}
 
-	f, err := os.Open(logPath)
+	f, err := os.Open(logPath) //nolint:gosec // G304: path is user-configured audit log location
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eunox-mcp validate-token: opening %q: %v\n", logPath, err)
 		os.Exit(1)
@@ -482,7 +482,7 @@ Flags:
 	}
 	logPath = expandHome(logPath)
 
-	f, err := os.Open(logPath)
+	f, err := os.Open(logPath) //nolint:gosec // G304: path is user-configured audit log location
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eunox-mcp stats: opening %q: %v\n", logPath, err)
 		os.Exit(1)
@@ -509,9 +509,10 @@ Flags:
 		if err := json.Unmarshal(line, &rec); err != nil {
 			continue
 		}
-		if rec.Decision == "allow" {
+		switch rec.Decision {
+		case "allow":
 			allowed++
-		} else if rec.Decision == "deny" {
+		case "deny":
 			denied++
 			k := key{tool: rec.ToolName, code: rec.DenialCode}
 			denials[k]++

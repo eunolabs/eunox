@@ -97,13 +97,6 @@ func notificationMsg(method string, params interface{}) (rpcMsg, error) {
 // MCP-specific message types
 // -----------------------------------------------------------------
 
-// mcpInitParams is the params field of an `initialize` request.
-type mcpInitParams struct {
-	ProtocolVersion string                 `json:"protocolVersion"`
-	Capabilities    map[string]interface{} `json:"capabilities"`
-	ClientInfo      map[string]interface{} `json:"clientInfo"`
-}
-
 // mcpInitResult is the result field of an `initialize` response.
 type mcpInitResult struct {
 	ProtocolVersion string                 `json:"protocolVersion"`

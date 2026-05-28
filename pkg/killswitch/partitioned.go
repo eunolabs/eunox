@@ -141,7 +141,7 @@ func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessio
 	}
 
 	// Ensure a per-agent partition (and subscription) exists for this agentID.
-	part := p.getOrCreatePartition(agentID)
+	part := p.getOrCreatePartition(ctx, agentID)
 
 	part.mu.RLock()
 	defer part.mu.RUnlock()
@@ -253,7 +253,7 @@ func (p *PartitionedKillSwitch) DegradedAgents() []string {
 // getOrCreatePartition returns the agentPartition for agentID, creating and starting
 // a per-agent subscription if one does not yet exist. The subscription goroutine is
 // tied to p.lifecycleCtx (set by Start) so that it outlives individual requests.
-func (p *PartitionedKillSwitch) getOrCreatePartition(agentID string) *agentPartition {
+func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentID string) *agentPartition {
 	p.mu.RLock()
 	part, ok := p.partitions[agentID]
 	p.mu.RUnlock()
@@ -272,7 +272,7 @@ func (p *PartitionedKillSwitch) getOrCreatePartition(agentID string) *agentParti
 	// Seed initial kill state from the shared manager's cache.
 	// The shared Redis manager's ShouldBlock reads from its local cache, so this
 	// is fast and does not trigger a Redis round-trip.
-	blocked, _ := p.inner.ShouldBlock(p.lifecycleCtx, agentID, "")
+	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
 	part.killed = blocked
 
 	p.partitions[agentID] = part

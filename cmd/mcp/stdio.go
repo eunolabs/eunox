@@ -112,7 +112,7 @@ func NewStdioProxy(opts StdioProxyOptions) *StdioProxy {
 // It returns when the session ends.
 func (p *StdioProxy) Start(ctx context.Context) error {
 	// ── 1. Launch upstream ────────────────────────────────────────────────────
-	p.upCmd = exec.CommandContext(ctx, p.command, p.args...)
+	p.upCmd = exec.CommandContext(ctx, p.command, p.args...) //nolint:gosec // G204: command and args are user-supplied CLI arguments
 	p.upCmd.Stderr = os.Stderr
 
 	upIn, err := p.upCmd.StdinPipe()

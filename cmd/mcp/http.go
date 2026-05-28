@@ -142,20 +142,23 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 	mux.HandleFunc("/control/kill", p.handleKill)
 
 	addr := fmt.Sprintf("%s:%d", p.bind, p.port)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
 	fmt.Fprintf(os.Stderr, "[eunox-mcp] HTTP proxy listening on http://%s/mcp\n", ln.Addr())
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 
 	select {
 	case <-ctx.Done():
-		// ctx is already cancelled; a fresh context is required for graceful shutdown.
-		shutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.shutdownMs)*time.Millisecond) //nolint:contextcheck
+		// ctx is already cancelled; fresh context required for graceful shutdown.
+		shutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.shutdownMs)*time.Millisecond)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 		p.closeAllSessions()
@@ -474,7 +477,7 @@ func (p *HTTPProxy) newSession() (*httpSession, error) {
 		done:    make(chan struct{}),
 	}
 
-	cmd := exec.Command(p.command, p.args...) //nolint:gosec // command and args are user-supplied CLI arguments validated at startup
+	cmd := exec.Command(p.command, p.args...) //nolint:gosec,noctx // G204: args are user-supplied CLI arguments; session lifecycle managed via done channel, not ctx
 	cmd.Stderr = os.Stderr
 
 	upIn, err := cmd.StdinPipe()
