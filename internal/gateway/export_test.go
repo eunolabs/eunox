@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package gateway export_test.go exposes internal test helpers for use by the

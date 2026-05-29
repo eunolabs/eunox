@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package capability provides a types-sync test that verifies all condition

@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package adapters provides framework-specific adapters for the agent runtime.

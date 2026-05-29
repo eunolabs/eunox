@@ -33,7 +33,7 @@ NNN_description.{up,down}.sql
 1. Every `.up.sql` **must** have a corresponding `.down.sql` (enforced by the runner and CI).
 2. All SQL files **must** include the BSL license header:
    ```sql
-   -- Copyright 2026 Eunox Authors
+   -- Copyright 2026 Eunolabs, LLC
    -- SPDX-License-Identifier: BUSL-1.1
    ```
 3. Use `IF NOT EXISTS` / `IF EXISTS` guards for idempotency where appropriate.

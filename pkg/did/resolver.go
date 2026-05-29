@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package did provides W3C Decentralized Identifier (DID) resolution for did:web, did:ion, and did:key methods.

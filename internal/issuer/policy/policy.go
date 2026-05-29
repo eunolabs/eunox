@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package policy implements the role-to-capability policy engine for the Capability Issuer.

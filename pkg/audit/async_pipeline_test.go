@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package audit
@@ -278,8 +278,8 @@ func (l *logCapture) Handle(_ context.Context, r slog.Record) error {
 	return nil
 }
 
-func (l *logCapture) WithAttrs(_ []slog.Attr) slog.Handler  { return l }
-func (l *logCapture) WithGroup(_ string) slog.Handler        { return l }
+func (l *logCapture) WithAttrs(_ []slog.Attr) slog.Handler { return l }
+func (l *logCapture) WithGroup(_ string) slog.Handler      { return l }
 
 func (l *logCapture) hasMsg(msg string) bool {
 	l.mu.Lock()

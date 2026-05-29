@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package did
@@ -542,7 +542,7 @@ func TestCachingResolver_Singleflight(t *testing.T) {
 	// upstreamCalls is incremented inside a mutex so the final count is
 	// accurate even under the Go race detector.
 	var (
-		mu           sync.Mutex
+		mu            sync.Mutex
 		upstreamCalls int
 	)
 

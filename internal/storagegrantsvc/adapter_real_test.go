@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package storagegrantsvc
@@ -58,7 +58,7 @@ func TestRealAWSS3Adapter_MintGrant_Success(t *testing.T) {
 		DefaultBucket: "my-bucket",
 		CredentialProvider: &StaticAWSCredentialProvider{
 			Creds: AWSCredentials{
-				AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 			},
 		},
@@ -229,9 +229,9 @@ func TestRealAWSS3Adapter_MintGrant_WithSessionToken(t *testing.T) {
 		DefaultBucket: "b",
 		CredentialProvider: &StaticAWSCredentialProvider{
 			Creds: AWSCredentials{
-				AccessKeyID:    "AKID",
+				AccessKeyID:     "AKID",
 				SecretAccessKey: "SECRET",
-				SessionToken:   "MY-SESSION-TOKEN",
+				SessionToken:    "MY-SESSION-TOKEN",
 			},
 		},
 	})

@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: Apache-2.0
 
 package main
@@ -47,8 +47,8 @@ type auditSink struct {
 }
 
 const (
-	defaultAuditLog       = "~/.eunox/audit.jsonl"
-	defaultAuditKeyPath   = "~/.eunox/audit.key"
+	defaultAuditLog        = "~/.eunox/audit.jsonl"
+	defaultAuditKeyPath    = "~/.eunox/audit.key"
 	defaultRotateSizeBytes = 100 << 20 // 100 MiB
 )
 

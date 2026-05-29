@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package chaos
@@ -31,14 +31,14 @@ const (
 
 // CircuitBreaker implements the circuit breaker pattern for chaos testing.
 type CircuitBreaker struct {
-	mu               sync.Mutex
-	state            CircuitState
-	failures         int
-	successes        int
-	threshold        int
-	halfOpenMax      int
-	resetTimeout     time.Duration
-	lastFailureTime  time.Time
+	mu              sync.Mutex
+	state           CircuitState
+	failures        int
+	successes       int
+	threshold       int
+	halfOpenMax     int
+	resetTimeout    time.Duration
+	lastFailureTime time.Time
 }
 
 // NewCircuitBreaker creates a circuit breaker with the given threshold

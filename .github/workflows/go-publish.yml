@@ -1,4 +1,4 @@
-# Copyright 2026 Eunox Authors
+# Copyright 2026 Eunolabs, LLC
 # SPDX-License-Identifier: BUSL-1.1
 
 name: Go Publish
@@ -9,7 +9,7 @@ name: Go Publish
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
   contents: write
@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: "1.25"
           cache-dependency-path: go.sum
 
       - name: Verify module

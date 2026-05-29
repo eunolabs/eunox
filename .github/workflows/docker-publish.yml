@@ -1,4 +1,4 @@
-# Copyright 2026 Eunox Authors
+# Copyright 2026 Eunolabs, LLC
 # SPDX-License-Identifier: Apache-2.0
 
 name: Docker Publish
@@ -8,7 +8,7 @@ name: Docker Publish
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
   contents: read

@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package dbtokensvc
@@ -24,7 +24,7 @@ func TestRealAWSRDSAdapter_Name(t *testing.T) {
 		Region:   "us-east-1",
 		CredentialProvider: &StaticAWSCredentialProvider{
 			Creds: AWSCredentials{
-				AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 			},
 		},
@@ -94,7 +94,7 @@ func TestRealAWSRDSAdapter_MintCredential_Success(t *testing.T) {
 		Region:   "us-east-1",
 		CredentialProvider: &StaticAWSCredentialProvider{
 			Creds: AWSCredentials{
-				AccessKeyID:    "AKIAIOSFODNN7EXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 			},
 		},
@@ -104,11 +104,11 @@ func TestRealAWSRDSAdapter_MintCredential_Success(t *testing.T) {
 	}
 
 	req := &MintDBCredentialRequest{
-		UserID:   "user-123",
-		TenantID: "tenant-abc",
+		UserID:     "user-123",
+		TenantID:   "tenant-abc",
 		DBUsername: "iam_user",
-		Database: "mydb",
-		TTL:      15 * time.Minute,
+		Database:   "mydb",
+		TTL:        15 * time.Minute,
 	}
 
 	cred, err := adapter.MintCredential(context.Background(), req)
@@ -184,11 +184,11 @@ func TestRealAWSRDSAdapter_MintCredential_WithSessionToken(t *testing.T) {
 	}
 
 	cred, err := adapter.MintCredential(context.Background(), &MintDBCredentialRequest{
-		UserID:   "user-1",
-		TenantID: "tenant-1",
+		UserID:     "user-1",
+		TenantID:   "tenant-1",
 		DBUsername: "admin",
-		Database: "testdb",
-		TTL:      5 * time.Minute,
+		Database:   "testdb",
+		TTL:        5 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -318,11 +318,11 @@ func TestRealAzureSQLAdapter_MintCredential_Success(t *testing.T) {
 	}
 
 	cred, err := adapter.MintCredential(context.Background(), &MintDBCredentialRequest{
-		UserID:   "user-123",
-		TenantID: "tenant-abc",
+		UserID:     "user-123",
+		TenantID:   "tenant-abc",
 		DBUsername: "admin@myserver",
-		Database: "mydb",
-		TTL:      30 * time.Minute,
+		Database:   "mydb",
+		TTL:        30 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -367,7 +367,7 @@ func TestRealAzureSQLAdapter_MintCredential_TokenProviderError(t *testing.T) {
 func TestRealGCPCloudSQLAdapter_Name(t *testing.T) {
 	adapter, err := NewRealGCPCloudSQLAdapter(RealGCPCloudSQLAdapterConfig{
 		InstanceConnection: "project:region:instance",
-		TokenProvider:          &mockGCPTokenProvider{},
+		TokenProvider:      &mockGCPTokenProvider{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -404,18 +404,18 @@ func TestRealGCPCloudSQLAdapter_MintCredential_Success(t *testing.T) {
 	}
 	adapter, err := NewRealGCPCloudSQLAdapter(RealGCPCloudSQLAdapterConfig{
 		InstanceConnection: "my-project:us-central1:my-instance",
-		TokenProvider:          tokenProv,
+		TokenProvider:      tokenProv,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	cred, err := adapter.MintCredential(context.Background(), &MintDBCredentialRequest{
-		UserID:   "user-123",
-		TenantID: "tenant-abc",
+		UserID:     "user-123",
+		TenantID:   "tenant-abc",
 		DBUsername: "iam-user@my-project.iam",
-		Database: "mydb",
-		TTL:      30 * time.Minute,
+		Database:   "mydb",
+		TTL:        30 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -438,7 +438,7 @@ func TestRealGCPCloudSQLAdapter_MintCredential_Success(t *testing.T) {
 func TestRealGCPCloudSQLAdapter_MintCredential_TokenProviderError(t *testing.T) {
 	adapter, err := NewRealGCPCloudSQLAdapter(RealGCPCloudSQLAdapterConfig{
 		InstanceConnection: "project:region:instance",
-		TokenProvider:          &mockGCPTokenProvider{err: fmt.Errorf("token error")},
+		TokenProvider:      &mockGCPTokenProvider{err: fmt.Errorf("token error")},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -503,9 +503,9 @@ func TestGenerateAuthTokenAt_Deterministic(t *testing.T) {
 	fixedTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	adapter, err := NewRealAWSRDSAdapter(RealAWSRDSAdapterConfig{
-		Region:   "us-east-1",
-		Endpoint: "test.cluster.us-east-1.rds.amazonaws.com",
-		Port:     5432,
+		Region:             "us-east-1",
+		Endpoint:           "test.cluster.us-east-1.rds.amazonaws.com",
+		Port:               5432,
 		CredentialProvider: &StaticAWSCredentialProvider{Creds: *creds},
 	})
 	if err != nil {
@@ -673,12 +673,12 @@ func testComputeRDSSignature(
 
 	// Build canonical query string (sorted by key, then percent-encoded).
 	rawParams := map[string]string{
-		"Action":             "connect",
-		"DBUser":             dbUser,
-		"X-Amz-Algorithm":   "AWS4-HMAC-SHA256",
-		"X-Amz-Credential":  credential,
-		"X-Amz-Date":        amzdate,
-		"X-Amz-Expires":     fmt.Sprintf("%d", expirySeconds),
+		"Action":              "connect",
+		"DBUser":              dbUser,
+		"X-Amz-Algorithm":     "AWS4-HMAC-SHA256",
+		"X-Amz-Credential":    credential,
+		"X-Amz-Date":          amzdate,
+		"X-Amz-Expires":       fmt.Sprintf("%d", expirySeconds),
 		"X-Amz-SignedHeaders": "host",
 	}
 	sortedKeys := []string{

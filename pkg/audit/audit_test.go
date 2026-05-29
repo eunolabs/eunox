@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package audit
@@ -332,8 +332,8 @@ func TestPipeline_Append_DoesNotMutateEntry(t *testing.T) {
 		Action:    "read",
 		Outcome:   "success",
 	}
-	originalID := entry.ID            // ""
-	originalTS := entry.Timestamp     // zero
+	originalID := entry.ID        // ""
+	originalTS := entry.Timestamp // zero
 
 	require.NoError(t, pipeline.Append(context.Background(), entry))
 

@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: Apache-2.0
 
 // eunox-mcp is a policy-enforcement proxy for MCP (Model Context Protocol)

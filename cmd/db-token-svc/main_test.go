@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package main
@@ -133,4 +133,3 @@ func TestEnvIntOrDefault_Set(t *testing.T) {
 		t.Fatalf("expected 5432, got %d", got)
 	}
 }
-

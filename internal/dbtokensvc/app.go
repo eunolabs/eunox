@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package dbtokensvc implements the DB Token Service for minting short-lived database credentials.
@@ -408,9 +408,9 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 
 // taskRevokeResponse is the JSON response body for task revocation endpoints.
 type taskRevokeResponse struct {
-	TaskID           string `json:"taskId"`
-	RevokedCount     int    `json:"revokedCredentialCount"`
-	AlreadyRevoked   bool   `json:"alreadyRevoked"`
+	TaskID         string `json:"taskId"`
+	RevokedCount   int    `json:"revokedCredentialCount"`
+	AlreadyRevoked bool   `json:"alreadyRevoked"`
 }
 
 // handleTaskRevoke handles POST /api/v1/tasks/{taskId}/complete and

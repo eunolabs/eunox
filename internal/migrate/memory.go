@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package migrate
@@ -84,10 +84,10 @@ func (l *MemoryLocker) IsHeld() bool {
 
 // MemoryExecutor records SQL executions for testing.
 type MemoryExecutor struct {
-	mu         sync.Mutex
-	Executed   []string
-	FailOnSQL  string // If set, return error when this SQL is encountered.
-	FailError  error
+	mu        sync.Mutex
+	Executed  []string
+	FailOnSQL string // If set, return error when this SQL is encountered.
+	FailError error
 }
 
 // NewMemoryExecutor creates a new in-memory SQL executor.

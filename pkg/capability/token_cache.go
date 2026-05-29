@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package capability
@@ -33,9 +33,9 @@ type TokenCacheConfig struct {
 }
 
 const (
-	defaultMaxEntryTTL      = 30 * time.Second
-	defaultMaxSize          = 4096
-	defaultCleanupInterval  = 60 * time.Second
+	defaultMaxEntryTTL     = 30 * time.Second
+	defaultMaxSize         = 4096
+	defaultCleanupInterval = 60 * time.Second
 )
 
 // tokenCacheEntry holds a cached token payload and its eviction deadline.

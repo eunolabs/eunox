@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 // Package issuer implements the Capability Issuer HTTP service.
@@ -88,9 +88,9 @@ type Dependencies struct {
 
 // App is the issuer HTTP application.
 type App struct {
-	config    Config
-	deps      Dependencies
-	router    chi.Router
+	config Config
+	deps   Dependencies
+	router chi.Router
 	// H-5 fix: typed as SCIMRepository so a Postgres-backed implementation can
 	// be injected for multi-replica deployments without changing handler code.
 	scimStore SCIMRepository

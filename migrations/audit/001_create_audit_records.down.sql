@@ -1,4 +1,4 @@
--- Copyright 2026 Eunox Authors
+-- Copyright 2026 Eunolabs, LLC
 -- SPDX-License-Identifier: BUSL-1.1
 
 DROP INDEX IF EXISTS idx_chain_anchors_replica;

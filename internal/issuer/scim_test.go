@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package issuer
@@ -341,8 +341,11 @@ func TestSCIM_PatchUser_RemoveEmails(t *testing.T) {
 	w := doPost(app, "/scim/v2/Users", SCIMUserRequest{
 		Schemas:  []string{scimUserSchema},
 		UserName: "alice",
-		Emails:   []struct{ Value string `json:"value"`; Primary bool `json:"primary"` }{{Value: "a@b.com", Primary: true}},
-		Active:   true,
+		Emails: []struct {
+			Value   string `json:"value"`
+			Primary bool   `json:"primary"`
+		}{{Value: "a@b.com", Primary: true}},
+		Active: true,
 	})
 	require.Equal(t, http.StatusCreated, w.Code)
 	var created SCIMUser
@@ -842,4 +845,3 @@ func TestSCIM_ListGroups_CountZero(t *testing.T) {
 	assert.Equal(t, 1, resp.TotalResults)
 	assert.Equal(t, 0, resp.ItemsPerPage)
 }
-

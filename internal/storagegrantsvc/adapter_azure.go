@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package storagegrantsvc
@@ -152,30 +152,30 @@ func (a *RealAzureBlobAdapter) generateUserDelegationSAS(
 	// String to sign for user delegation SAS.
 	// See: https://learn.microsoft.com/en-us/rest/api/storageservices/create-user-delegation-sas
 	stringToSign := strings.Join([]string{
-		sp,                   // signedPermissions
-		st,                   // signedStart
-		se,                   // signedExpiry
-		canonicalResource,    // canonicalizedResource
-		key.SignedOID,        // signedKeyObjectId
-		key.SignedTID,        // signedKeyTenantId
+		sp,                // signedPermissions
+		st,                // signedStart
+		se,                // signedExpiry
+		canonicalResource, // canonicalizedResource
+		key.SignedOID,     // signedKeyObjectId
+		key.SignedTID,     // signedKeyTenantId
 		key.SignedStart.Format("2006-01-02T15:04:05Z"),  // signedKeyStart
 		key.SignedExpiry.Format("2006-01-02T15:04:05Z"), // signedKeyExpiry
-		key.SignedService,    // signedKeyService
-		key.SignedVersion,    // signedKeyVersion
-		"",                   // signedAuthorizedUserObjectId
-		"",                   // signedUnauthorizedUserObjectId
-		"",                   // signedCorrelationId
-		"",                   // signedIP
-		"https",              // signedProtocol
+		key.SignedService,      // signedKeyService
+		key.SignedVersion,      // signedKeyVersion
+		"",                     // signedAuthorizedUserObjectId
+		"",                     // signedUnauthorizedUserObjectId
+		"",                     // signedCorrelationId
+		"",                     // signedIP
+		"https",                // signedProtocol
 		AzureStorageAPIVersion, // signedVersion
-		"b",                  // signedResource (b=blob)
-		"",                   // signedSnapshotTime
-		"",                   // signedEncryptionScope
-		"",                   // rscc (cache-control)
-		"",                   // rscd (content-disposition)
-		"",                   // rsce (content-encoding)
-		"",                   // rscl (content-language)
-		"",                   // rsct (content-type)
+		"b",                    // signedResource (b=blob)
+		"",                     // signedSnapshotTime
+		"",                     // signedEncryptionScope
+		"",                     // rscc (cache-control)
+		"",                     // rscd (content-disposition)
+		"",                     // rsce (content-encoding)
+		"",                     // rscl (content-language)
+		"",                     // rsct (content-type)
 	}, "\n")
 
 	// Sign with the delegation key.

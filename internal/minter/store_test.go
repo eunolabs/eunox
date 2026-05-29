@@ -1,4 +1,4 @@
-// Copyright 2026 Eunox Authors
+// Copyright 2026 Eunolabs, LLC
 // SPDX-License-Identifier: BUSL-1.1
 
 package minter
@@ -310,4 +310,3 @@ func TestAPIKey_IsExpired(t *testing.T) {
 		t.Error("should not be expired when ExpiresAt is in the future")
 	}
 }
-
