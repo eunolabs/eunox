@@ -83,7 +83,7 @@ Incident-driven content only works if it can be published fast. Prepare the temp
 
 ---
 
-### T-05 · Licensing FAQ
+### T-05 · Licensing FAQ ✅
 **Priority:** P1 · **Effort:** 1 day · **Owner:** Legal + DevRel · **Depends on:** nothing
 
 > **Note:** The Apache-2.0 / BUSL-1.1 dual-license split is now implemented (`cmd/mcp` is Apache-2.0; platform is BUSL-1.1). The README, NOTICE, and site have been updated. This task covers the remaining documentation gap.
@@ -140,7 +140,7 @@ Enterprises with existing OPA deployments will not rip them out. If eunox requir
 
 ---
 
-### T-08 · OpenTelemetry-native trace export
+### T-08 · OpenTelemetry-native trace export ✅
 **Priority:** P1 · **Effort:** 1 week · **Owner:** Eng · **Depends on:** T-06
 
 Enterprises already have Datadog, Grafana, Jaeger, or Honeycomb. If eunox emits OTel traces with agent-specific span attributes, it becomes immediately visible in their existing dashboards — "add another data source" rather than "add another tool."
@@ -156,7 +156,7 @@ Enterprises already have Datadog, Grafana, Jaeger, or Honeycomb. If eunox emits 
 
 ---
 
-### T-09 · Task-lifecycle credential revocation for AWS/Azure/GCP
+### T-09 · Task-lifecycle credential revocation for AWS/Azure/GCP ✅
 **Priority:** P1 · **Effort:** 2–3 weeks · **Owner:** Eng · **Depends on:** T-06
 
 AWS STS minimum session duration is 15 minutes. Azure managed identity has no concept of task completion. eunox can mint short-lived credentials tied to task lifecycle and revoke them on task completion or failure — a concrete, demonstrable advantage that cloud IAM literally cannot offer today.
@@ -400,6 +400,6 @@ Enterprises want enforcement in their own network; they want policy management, 
 | Decision | Status | Deadline | Owner |
 |----------|--------|----------|-------|
 | Confirm LangGraph as hero framework vs. pure MCP-first strategy | Pending | Week 2 | Engineering + BD |
-| Finalize Apache-2.0 scope for `eunox-python` package (cmd/mcp is Apache-2.0; confirm eunox-python follows the same tier) | Pending | Week 3 | Legal |
+| Finalize Apache-2.0 scope for `eunox-python` package (cmd/mcp is Apache-2.0; confirm eunox-python follows the same tier) | **Resolved:** `eunox-python` will be Apache-2.0 — documented in `docs/licensing-faq.md` | Week 3 | Legal |
 | Approve design partner program terms (free pilot + case study rights) | Pending | Week 3 | Leadership |
 | Policy editor: build in-house vs. acquire vs. partner with an existing YAML/schema editor | Pending | Month 3 | Engineering + Product |

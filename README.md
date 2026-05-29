@@ -134,6 +134,8 @@ reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
 - 🏗 **Architecture:** [`docs/architecture.md`](./docs/architecture.md)
 - 🚀 **Deployment:** [`docs/deployment.md`](./docs/deployment.md)
 - 🔧 **Self-hosting:** [`docs/self-host.md`](./docs/self-host.md)
+- 📡 **OpenTelemetry:** [`docs/otel-integration.md`](./docs/otel-integration.md) — span attributes, Grafana dashboard, sampling
+- ⚖️ **Licensing FAQ:** [`docs/licensing-faq.md`](./docs/licensing-faq.md) — Apache 2.0 vs BUSL-1.1 explained
 
 ## License
 
@@ -145,3 +147,8 @@ redistribute, and build on. See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE).
 hosted-service offering requires a commercial licence. See [`LICENSE`](./LICENSE).
 
 Each BUSL-licensed release converts to Apache 2.0 four years after publication.
+This is a public, irrevocable commitment: every release date is tagged in git,
+and the conversion is automatic — no action required on your part.
+
+For a plain-English breakdown of what you can and cannot do, see
+[`docs/licensing-faq.md`](./docs/licensing-faq.md).

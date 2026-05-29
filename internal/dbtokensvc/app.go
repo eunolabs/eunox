@@ -12,17 +12,26 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/eunolabs/eunox/pkg/observability"
 )
 
 const defaultMaxBodySize int64 = 1 << 20 // 1 MB
+
+// validTaskIDRE matches task IDs: alphanumeric plus hyphens, underscores, dots, and colons,
+// 1-128 characters. This rejects empty strings and excessively long values.
+var validTaskIDRE = regexp.MustCompile(`^[a-zA-Z0-9_\-.:]{1,128}$`)
 
 // Errors returned by the db token service.
 var (
@@ -41,20 +50,23 @@ type StubAdapter interface {
 
 // DBCredential represents a minted short-lived database credential.
 type DBCredential struct {
-	Username  string    `json:"username"`
-	Password  string    `json:"password,omitempty"`
-	Token     string    `json:"token,omitempty"`
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
-	Database  string    `json:"database"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Adapter   string    `json:"adapter"`
+	CredentialID string    `json:"credentialId"`
+	TaskID       string    `json:"taskId,omitempty"`
+	Username     string    `json:"username"`
+	Password     string    `json:"password,omitempty"`
+	Token        string    `json:"token,omitempty"`
+	Host         string    `json:"host"`
+	Port         int       `json:"port"`
+	Database     string    `json:"database"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Adapter      string    `json:"adapter"`
 }
 
 // MintDBCredentialRequest is the input to a cloud adapter.
 type MintDBCredentialRequest struct {
 	UserID     string
 	TenantID   string
+	TaskID     string // optional; set when the request carries X-Eunox-Task-Id
 	Database   string
 	DBUsername string
 	TTL        time.Duration
@@ -99,11 +111,12 @@ type Config struct {
 
 // Dependencies holds the injected backends for the DB token service.
 type Dependencies struct {
-	Adapter  CloudDBAdapter
-	Verifier TokenVerifier
-	Mapping  *CapabilityMapping
-	Logger   *slog.Logger
-	Metrics  *observability.MetricsRegistry
+	Adapter   CloudDBAdapter
+	Verifier  TokenVerifier
+	Mapping   *CapabilityMapping
+	Logger    *slog.Logger
+	Metrics   *observability.MetricsRegistry
+	TaskStore TaskCredentialStore // optional; enables task-lifecycle credential revocation
 }
 
 // App is the DB Token Service HTTP application.
@@ -112,6 +125,7 @@ type App struct {
 	deps    Dependencies
 	router  chi.Router
 	metrics *dbTokenMetrics
+	tracer  trace.Tracer
 }
 
 type dbTokenMetrics struct {
@@ -139,6 +153,7 @@ func New(cfg Config, deps Dependencies) (*App, error) {
 	app := &App{
 		config: cfg,
 		deps:   deps,
+		tracer: otel.Tracer("github.com/eunolabs/eunox/internal/dbtokensvc"),
 	}
 	app.metrics = app.initMetrics()
 	app.router = app.buildRouter()
@@ -174,6 +189,7 @@ func (app *App) buildRouter() chi.Router {
 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
+	r.Use(observability.TracePropagation("db-token-svc"))
 
 	if app.deps.Logger != nil {
 		r.Use(observability.RequestLogging(app.deps.Logger))
@@ -184,6 +200,8 @@ func (app *App) buildRouter() chi.Router {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/db-tokens", app.handleMintDBToken)
+		r.Post("/tasks/{taskId}/complete", app.handleTaskRevoke)
+		r.Post("/tasks/{taskId}/fail", app.handleTaskRevoke)
 	})
 
 	return r
@@ -198,25 +216,78 @@ func (app *App) handleReady(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleMintDBToken verifies a JWT and mints short-lived DB credentials.
+//
+// Optional request header:
+//   - X-Eunox-Task-Id: when present and a TaskStore is configured, the issued
+//     credential is registered against the task so it can be revoked when the
+//     task completes or fails.
 func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
+	ctx, span := app.tracer.Start(r.Context(), "dbtokensvc.MintDBToken",
+		trace.WithSpanKind(trace.SpanKindServer),
+	)
+	defer span.End()
+	r = r.WithContext(ctx)
+
 	start := time.Now()
+
+	// Propagate adapter name for downstream correlation.
+	span.SetAttributes(observability.EunoxAttrDBAdapter.String(app.config.Adapter))
+
+	// Extract optional task ID header.
+	taskID := r.Header.Get("X-Eunox-Task-Id")
+	if taskID != "" {
+		if !validTaskIDRE.MatchString(taskID) {
+			span.SetStatus(codes.Error, "invalid_task_id")
+			writeError(w, http.StatusBadRequest, "invalid_task_id",
+				"X-Eunox-Task-Id contains invalid characters or exceeds 128 bytes")
+			return
+		}
+		span.SetAttributes(observability.EunoxAttrTaskID.String(taskID))
+
+		// Reject mint if the task has already been revoked.
+		if app.deps.TaskStore != nil {
+			revoked, err := app.deps.TaskStore.IsRevoked(ctx, taskID)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "revocation_check_failed")
+				writeError(w, http.StatusInternalServerError, "revocation_check_failed",
+					"could not verify task revocation status")
+				return
+			}
+			if revoked {
+				span.SetStatus(codes.Error, "task_revoked")
+				writeError(w, http.StatusForbidden, "task_revoked",
+					ErrTaskAlreadyRevoked.Error())
+				return
+			}
+		}
+	}
 
 	// Extract bearer token.
 	tokenStr := extractBearerToken(r)
 	if tokenStr == "" {
+		span.SetStatus(codes.Error, "missing_token")
 		writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header required")
 		return
 	}
 
 	// Verify token and extract capabilities.
-	claims, err := app.deps.Verifier.VerifyAndExtractCaps(r.Context(), tokenStr)
+	claims, err := app.deps.Verifier.VerifyAndExtractCaps(ctx, tokenStr)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid_token")
 		writeError(w, http.StatusUnauthorized, "invalid_token", "token verification failed")
 		return
 	}
 
+	span.SetAttributes(
+		observability.EunoxAttrAgentID.String(claims.Subject),
+		observability.EunoxAttrTenantID.String(claims.TenantID),
+	)
+
 	// Check for db:// capabilities.
 	if len(claims.DBResources) == 0 {
+		span.SetStatus(codes.Error, "no_capability")
 		writeError(w, http.StatusForbidden, "no_capability",
 			"token does not contain db:// capabilities")
 		return
@@ -234,9 +305,11 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 			} else {
 				var maxBytesErr *http.MaxBytesError
 				if errors.As(err, &maxBytesErr) {
+					span.SetStatus(codes.Error, "request_too_large")
 					writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body too large")
 					return
 				}
+				span.SetStatus(codes.Error, "invalid_request")
 				writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 				return
 			}
@@ -255,6 +328,7 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 	// Map capability to database username.
 	dbUsername := app.mapToDBUsername(claims)
 	if dbUsername == "" {
+		span.SetStatus(codes.Error, "no_mapping")
 		writeError(w, http.StatusForbidden, "no_mapping",
 			"no database username mapping for capabilities")
 		return
@@ -266,6 +340,7 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 		database = extractDatabaseFromURI(claims.DBResources[0])
 	}
 	if database == "" {
+		span.SetStatus(codes.Error, "invalid_request")
 		writeError(w, http.StatusBadRequest, "invalid_request", "database is required")
 		return
 	}
@@ -274,13 +349,16 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 	mintReq := MintDBCredentialRequest{
 		UserID:     claims.Subject,
 		TenantID:   claims.TenantID,
+		TaskID:     taskID,
 		Database:   database,
 		DBUsername: dbUsername,
 		TTL:        ttl,
 	}
 
-	cred, err := app.deps.Adapter.MintCredential(r.Context(), &mintReq)
+	cred, err := app.deps.Adapter.MintCredential(ctx, &mintReq)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "mint_failed")
 		if app.metrics != nil {
 			app.metrics.mintTotal.WithLabelValues(app.deps.Adapter.Name(), "error").Inc()
 		}
@@ -288,12 +366,101 @@ func (app *App) handleMintDBToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Assign a stable credential ID and attach the task ID.
+	cred.CredentialID = uuid.New().String()
+	cred.TaskID = taskID
+
+	span.SetAttributes(observability.EunoxAttrCapabilityTokenID.String(cred.CredentialID))
+
+	// Register the credential against the task so it can be revoked.
+	if taskID != "" && app.deps.TaskStore != nil {
+		record := &TaskCredentialRecord{
+			CredentialID: cred.CredentialID,
+			TaskID:       taskID,
+			UserID:       claims.Subject,
+			TenantID:     claims.TenantID,
+			Database:     database,
+			Adapter:      app.config.Adapter,
+			IssuedAt:     start,
+			ExpiresAt:    cred.ExpiresAt,
+		}
+		if regErr := app.deps.TaskStore.Register(ctx, record); regErr != nil {
+			// Non-fatal: log and continue — the credential is already minted.
+			if app.deps.Logger != nil {
+				app.deps.Logger.Error("failed to register credential in task store",
+					slog.String("task_id", taskID),
+					slog.String("credential_id", cred.CredentialID),
+					slog.String("error", regErr.Error()),
+				)
+			}
+			span.RecordError(regErr)
+		}
+	}
+
 	if app.metrics != nil {
 		app.metrics.mintTotal.WithLabelValues(app.deps.Adapter.Name(), "success").Inc()
 		app.metrics.mintDuration.WithLabelValues(app.deps.Adapter.Name()).Observe(time.Since(start).Seconds())
 	}
 
+	span.SetStatus(codes.Ok, "")
 	writeJSON(w, http.StatusOK, cred)
+}
+
+// taskRevokeResponse is the JSON response body for task revocation endpoints.
+type taskRevokeResponse struct {
+	TaskID           string `json:"taskId"`
+	RevokedCount     int    `json:"revokedCredentialCount"`
+	AlreadyRevoked   bool   `json:"alreadyRevoked"`
+}
+
+// handleTaskRevoke handles POST /api/v1/tasks/{taskId}/complete and
+// POST /api/v1/tasks/{taskId}/fail. Both actions revoke the task so that
+// no new credentials can be minted for it.
+func (app *App) handleTaskRevoke(w http.ResponseWriter, r *http.Request) {
+	ctx, span := app.tracer.Start(r.Context(), "dbtokensvc.RevokeTask",
+		trace.WithSpanKind(trace.SpanKindServer),
+	)
+	defer span.End()
+
+	taskID := chi.URLParam(r, "taskId")
+	if taskID == "" || !validTaskIDRE.MatchString(taskID) {
+		span.SetStatus(codes.Error, "invalid_task_id")
+		writeError(w, http.StatusBadRequest, "invalid_task_id", "task ID is missing or invalid")
+		return
+	}
+	span.SetAttributes(observability.EunoxAttrTaskID.String(taskID))
+
+	if app.deps.TaskStore == nil {
+		// No store configured — nothing to revoke, respond OK to avoid 500s.
+		writeJSON(w, http.StatusOK, taskRevokeResponse{TaskID: taskID})
+		return
+	}
+
+	// Check if already revoked before calling Revoke so we can set AlreadyRevoked.
+	alreadyRevoked, err := app.deps.TaskStore.IsRevoked(ctx, taskID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "revocation_check_failed")
+		writeError(w, http.StatusInternalServerError, "revocation_check_failed",
+			"could not verify task revocation status")
+		return
+	}
+
+	count, err := app.deps.TaskStore.Revoke(ctx, taskID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "revocation_failed")
+		writeError(w, http.StatusInternalServerError, "revocation_failed",
+			"failed to revoke task credentials")
+		return
+	}
+
+	span.SetStatus(codes.Ok, "")
+	writeJSON(w, http.StatusOK, taskRevokeResponse{
+		TaskID:         taskID,
+		RevokedCount:   count,
+		AlreadyRevoked: alreadyRevoked,
+	})
 }
 
 func (app *App) mapToDBUsername(claims *TokenClaims) string {
