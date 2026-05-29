@@ -21,7 +21,7 @@ Eunox uses a **dual-license model**. The quick answer for most people:
 | `eunox-python` (planned) | Apache 2.0 | ✅ | ✅ | ✅ |
 
 All BUSL-licensed components **automatically convert to Apache 2.0** four years
-after their release date. The conversion is permanent and irrevocable.
+after the official project launch date. The conversion is permanent and irrevocable.
 
 ---
 
@@ -82,15 +82,28 @@ conversion date.
 
 ## BUSL Conversion Timeline
 
-Every eunox release converts from BUSL-1.1 to **Apache 2.0 exactly four years
-after its release date**. The release date is the git tag date. This is:
+The BUSL conversion clock starts on the **official project launch date**, not on
+the date of any pre-launch git tag or commit. We will announce the launch date
+publicly; that date becomes the Change Date for all BUSL-licensed components
+released up to and including that point.
 
-- **Public** — the tag is in the repo; the date is verifiable.
+From the launch date, the conversion schedule is:
+
+- **Launch date + 4 years** — all BUSL-licensed code released on or before
+  launch converts to Apache 2.0 automatically and permanently.
+- **Post-launch releases** — each subsequent release carries its own Change Date
+  of four years from that release's publication date.
+
+This is:
+
+- **Public** — the launch date will be announced and archived; the per-release
+  Change Date is recorded in each release's `LICENSE` file.
 - **Irrevocable** — once converted, the code is Apache 2.0 forever.
-- **Automatic** — nothing needs to happen on our side; the BUSL itself specifies it.
+- **Automatic** — the BUSL itself specifies the conversion; no action is required
+  on our side or yours.
 
-If you are evaluating eunox today and your primary concern is long-term
-licence risk, factor in that current releases will be Apache 2.0 by 2030.
+If you are evaluating eunox today and your primary concern is long-term licence
+risk: the conversion is a firm commitment, and the clock starts at launch.
 
 ---
 

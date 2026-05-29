@@ -146,9 +146,10 @@ redistribute, and build on. See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE).
 **Business Source License 1.1** — self-hostable for your own use; commercial
 hosted-service offering requires a commercial licence. See [`LICENSE`](./LICENSE).
 
-Each BUSL-licensed release converts to Apache 2.0 four years after publication.
-This is a public, irrevocable commitment: every release date is tagged in git,
-and the conversion is automatic — no action required on your part.
+BUSL-licensed code converts to Apache 2.0 four years after the official project
+launch date. The launch date will be announced publicly and recorded in each
+release's `LICENSE` file. The conversion is automatic and irrevocable — no
+action required on your part.
 
 For a plain-English breakdown of what you can and cannot do, see
 [`docs/licensing-faq.md`](./docs/licensing-faq.md).
