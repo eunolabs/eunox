@@ -37,6 +37,8 @@ func main() {
 }
 
 func run() error {
+	ctx := context.Background()
+
 	port := envOrDefault("DB_TOKEN_SVC_PORT", "3005")
 	adapter := envOrDefault("DB_TOKEN_SVC_ADAPTER", "aws-rds")
 
@@ -44,6 +46,13 @@ func run() error {
 		Level:       os.Getenv("LOG_LEVEL"),
 		ServiceName: "db-token-svc",
 	})
+
+	// Initialize OTel tracer. Noop when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	shutdownTracer, tracerErr := observability.InitTracer(ctx, observability.TracingConfigFromEnv("db-token-svc", version))
+	if tracerErr != nil {
+		return fmt.Errorf("init tracer: %w", tracerErr)
+	}
+	defer func() { _ = shutdownTracer(ctx) }()
 
 	logger.Info("starting DB token service",
 		slog.String("version", version),

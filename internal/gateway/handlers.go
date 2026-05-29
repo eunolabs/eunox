@@ -25,12 +25,23 @@ import (
 	"github.com/eunolabs/eunox/pkg/audit"
 	"github.com/eunolabs/eunox/pkg/capability"
 	"github.com/eunolabs/eunox/pkg/enforcement"
+	"github.com/eunolabs/eunox/pkg/observability"
 	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/google/uuid"
 )
 
 // gatewayTracer is the OTel tracer used for enforcement sub-step spans (P2-4).
 var gatewayTracer = otel.Tracer("github.com/eunolabs/eunox/internal/gateway")
+
+// setDecision writes both the legacy "decision" attribute and the canonical
+// eunox.policy_decision attribute in a single call, keeping every return path
+// in handleEnforce consistent.
+func setDecision(span trace.Span, decision string) {
+	span.SetAttributes(
+		attribute.String("decision", decision),
+		observability.EunoxAttrPolicyDecision.String(decision),
+	)
+}
 
 // validToolNameRE enforces an allowlist on the X-Tool-Name proxy header.
 // Accepts 1–256 characters: letters, digits, underscores, hyphens, colons, dots.
@@ -109,6 +120,12 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set request-level span attributes from the parsed payload.
+	span.SetAttributes(
+		observability.EunoxAttrToolName.String(payload.Request.ToolName),
+		observability.EunoxAttrSessionID.String(payload.Request.SessionID),
+	)
+
 	// --- Token verification: cache-hit path skips JWKS re-verify and
 	// revocation check (P2-2). On a cache miss we fall through to full
 	// verification and store the result on success. ---
@@ -140,7 +157,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: fmt.Sprintf("token verification failed: %v", verifyErr),
 				},
 			}
-			span.SetAttributes(attribute.String("decision", "deny"))
+			setDecision(span, "deny")
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -158,7 +175,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: "token has expired",
 				},
 			}
-			span.SetAttributes(attribute.String("decision", "deny"))
+			setDecision(span, "deny")
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -191,7 +208,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 						Message: "token has been revoked",
 					},
 				}
-				span.SetAttributes(attribute.String("decision", "deny"))
+				setDecision(span, "deny")
 				app.recordMetric("deny", start)
 				writeJSON(w, http.StatusOK, resp)
 				return
@@ -203,6 +220,19 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		if app.tokenCache != nil {
 			app.tokenCache.Put(payload.Token, claims)
 		}
+	}
+
+	// Set claims-level span attributes now that we have verified claims.
+	{
+		tenantID := ""
+		if claims.AuthorizedBy != nil {
+			tenantID = claims.AuthorizedBy.TenantID
+		}
+		span.SetAttributes(
+			observability.EunoxAttrAgentID.String(claims.Subject),
+			observability.EunoxAttrCapabilityTokenID.String(claims.JWTID),
+			observability.EunoxAttrTenantID.String(tenantID),
+		)
 	}
 
 	// Check DPoP replay
@@ -221,7 +251,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: fmt.Sprintf("DPoP verification failed: %v", err),
 				},
 			}
-			span.SetAttributes(attribute.String("decision", "deny"))
+			setDecision(span, "deny")
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -252,7 +282,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 					Message: "kill switch is active",
 				},
 			}
-			span.SetAttributes(attribute.String("decision", "deny"))
+			setDecision(span, "deny")
 			app.recordMetric("deny", start)
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -278,7 +308,7 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	resp.RequestID = requestID
 
 	decision := string(resp.Decision)
-	span.SetAttributes(attribute.String("decision", decision))
+	setDecision(span, decision)
 
 	// Emit an audit event for the enforcement decision (P2-3). The write is
 	// non-blocking when the pipeline is wrapped in an AsyncPipeline; it does
