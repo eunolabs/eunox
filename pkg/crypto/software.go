@@ -119,6 +119,14 @@ func (s *SoftwareSigner) Sign(ctx context.Context, digest []byte) ([]byte, error
 	}
 }
 
+// PrivateKey returns the raw private key held by this signer.
+// It is intended for use by JWT libraries (e.g. go-jose) that need the native
+// key type rather than the Signer interface abstraction. Do not expose this
+// across trust boundaries.
+func (s *SoftwareSigner) PrivateKey() stdcrypto.PrivateKey {
+	return s.privateKey
+}
+
 // Verifier returns a verifier derived from the signer's public key.
 func (s *SoftwareSigner) Verifier() (*SoftwareVerifier, error) {
 	publicKey, err := publicKeyFromPrivateKey(s.privateKey)

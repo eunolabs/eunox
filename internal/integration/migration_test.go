@@ -53,6 +53,11 @@ func TestMigration_ForwardBackwardPairs(t *testing.T) {
 	for _, dir := range migrationDirs {
 		t.Run(dir, func(t *testing.T) {
 			fullPath := filepath.Join(projectRoot(t), dir)
+			// M-7 fix: skip (not fail) when the migration directory is absent,
+			// consistent with TestMigration_MigrationFilesExist.
+			if _, statErr := os.Stat(fullPath); os.IsNotExist(statErr) {
+				t.Skipf("migration directory %s not found (may use embedded migrations)", dir)
+			}
 			entries, err := os.ReadDir(fullPath)
 			require.NoError(t, err)
 
@@ -92,6 +97,11 @@ func TestMigration_SQLSyntaxBasicValidation(t *testing.T) {
 	for _, dir := range migrationDirs {
 		t.Run(dir, func(t *testing.T) {
 			fullPath := filepath.Join(projectRoot(t), dir)
+			// M-7 fix: skip (not fail) when the migration directory is absent,
+			// consistent with TestMigration_MigrationFilesExist.
+			if _, statErr := os.Stat(fullPath); os.IsNotExist(statErr) {
+				t.Skipf("migration directory %s not found (may use embedded migrations)", dir)
+			}
 			entries, err := os.ReadDir(fullPath)
 			require.NoError(t, err)
 

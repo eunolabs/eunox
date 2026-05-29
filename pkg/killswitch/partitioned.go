@@ -4,6 +4,7 @@
 package killswitch
 
 import (
+	"container/list"
 	"context"
 	"log/slog"
 	"sync"
@@ -11,6 +12,17 @@ import (
 	"github.com/eunolabs/eunox/pkg/redisfailover"
 	"github.com/redis/go-redis/v9"
 )
+
+// defaultMaxPartitions is the default cap on the number of concurrent
+// per-agent partitions. When the limit is reached, the least-recently-used
+// partition (longest time since its last ShouldBlock call) is evicted — its
+// background goroutine is cancelled and the partition is removed from the map.
+// The next ShouldBlock for the evicted agentID will re-create the partition.
+//
+// A-3 fix: without a cap, the partition map grows unbounded — one entry per
+// unique agentID seen. In a long-running gateway serving many transient agents
+// this leaks goroutines and memory indefinitely.
+const defaultMaxPartitions = 10_000
 
 // perAgentChannelPrefix is the Redis pub/sub channel prefix for per-agent kill-switch events.
 // Each agent subscribes to "killswitch:agent-events:<agentID>" for its own partition.
@@ -23,6 +35,7 @@ type agentPartition struct {
 	killed   bool
 	degraded bool // true when the per-agent subscription has failed; causes fail-closed
 	cancel   context.CancelFunc
+	lruElem  *list.Element // back-pointer into PartitionedKillSwitch.lruList for O(1) LRU eviction
 }
 
 // PartitionedKillSwitch wraps [Redis] and provides per-agent failure domain isolation
@@ -46,13 +59,19 @@ type agentPartition struct {
 //
 // Use [NewPartitioned] and call [PartitionedKillSwitch.Start] to begin background subscriptions.
 type PartitionedKillSwitch struct {
-	inner    *Redis // handles global + session + full state refresh
-	client   redis.UniversalClient
-	logger   *slog.Logger
-	reporter *redisfailover.Reporter // optional; used for readiness reporting
+	inner         *Redis // handles global + session + full state refresh
+	client        redis.UniversalClient
+	logger        *slog.Logger
+	reporter      *redisfailover.Reporter // optional; used for readiness reporting
+	maxPartitions int                     // cap on per-agent partition count
 
 	mu           sync.RWMutex
 	partitions   map[string]*agentPartition
+	// lruList tracks partition access order (front = LRU, back = MRU).
+	// Each agentPartition holds a back-pointer (lruElem) enabling O(1) promotion
+	// and eviction. A-3 fix: when len(partitions) >= maxPartitions the front
+	// element is evicted (goroutine cancelled + map entry removed).
+	lruList      *list.List
 	lifecycleCtx context.Context // set by Start; controls per-agent subscription lifetimes
 	started      bool            // true after Start has completed its initial load
 }
@@ -60,13 +79,29 @@ type PartitionedKillSwitch struct {
 // NewPartitioned creates a partitioned kill-switch manager. client must be a
 // [redis.UniversalClient] so that per-agent subscriptions can be created.
 // inner must be the same Redis client wrapped in [Redis].
+//
+// The partition map is capped at defaultMaxPartitions (10 000) by default.
+// Use [WithMaxPartitions] to override.
 func NewPartitioned(inner *Redis, client redis.UniversalClient, logger *slog.Logger) *PartitionedKillSwitch {
 	return &PartitionedKillSwitch{
-		inner:      inner,
-		client:     client,
-		logger:     logger,
-		partitions: make(map[string]*agentPartition),
+		inner:         inner,
+		client:        client,
+		logger:        logger,
+		maxPartitions: defaultMaxPartitions,
+		partitions:    make(map[string]*agentPartition),
+		lruList:       list.New(),
 	}
+}
+
+// WithMaxPartitions sets the maximum number of concurrent per-agent partitions.
+// When the limit is reached the least-recently-used partition is evicted.
+// Setting n ≤ 0 restores the default.
+func (p *PartitionedKillSwitch) WithMaxPartitions(n int) *PartitionedKillSwitch {
+	if n <= 0 {
+		n = defaultMaxPartitions
+	}
+	p.maxPartitions = n
+	return p
 }
 
 // WithReporter attaches a [redisfailover.Reporter] to the partitioned kill-switch so
@@ -142,6 +177,13 @@ func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessio
 
 	// Ensure a per-agent partition (and subscription) exists for this agentID.
 	part := p.getOrCreatePartition(ctx, agentID)
+
+	// Promote to MRU position on each access (A-3 LRU tracking).
+	p.mu.Lock()
+	if part.lruElem != nil {
+		p.lruList.MoveToBack(part.lruElem)
+	}
+	p.mu.Unlock()
 
 	part.mu.RLock()
 	defer part.mu.RUnlock()
@@ -226,6 +268,7 @@ func (p *PartitionedKillSwitch) Reset(ctx context.Context) error {
 		}
 	}
 	p.partitions = make(map[string]*agentPartition)
+	p.lruList.Init() // clear LRU order list
 	return nil
 }
 
@@ -268,7 +311,34 @@ func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentI
 		return part
 	}
 
+	// A-3 fix: evict the least-recently-used partition when at capacity so that
+	// the partition map does not grow without bound in long-running gateways that
+	// see many transient agentIDs. The evicted agent's subscription goroutine is
+	// cancelled; the next ShouldBlock for that agentID re-creates the partition.
+	for len(p.partitions) >= p.maxPartitions {
+		front := p.lruList.Front()
+		if front == nil {
+			break
+		}
+		evictID := front.Value.(string)
+		if evicted, exists := p.partitions[evictID]; exists {
+			if evicted.cancel != nil {
+				evicted.cancel()
+			}
+			delete(p.partitions, evictID)
+		}
+		p.lruList.Remove(front)
+		if p.logger != nil {
+			p.logger.Debug("kill switch: evicted LRU partition",
+				slog.String("agentID", evictID),
+				slog.Int("maxPartitions", p.maxPartitions),
+			)
+		}
+	}
+
 	part = &agentPartition{}
+	elem := p.lruList.PushBack(agentID)
+	part.lruElem = elem
 	p.partitions[agentID] = part
 
 	// Start the per-agent subscription tied to the service lifecycle context.
@@ -276,18 +346,14 @@ func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentI
 	part.cancel = cancel
 	p.mu.Unlock()
 
-	// Seed initial kill state from the shared manager's cache outside the write
-	// lock. Holding p.mu during inner.ShouldBlock serialised all concurrent
-	// ShouldBlock callers (for any agent) behind a single inner cache read.
-	// The brief window between partition creation and state seeding is
-	// acceptable: the subscription goroutine will correct the state on the
-	// first pub/sub event, and the shared inner manager still provides the
-	// authoritative answer for other agents in the meantime.
-	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
-	part.mu.Lock()
-	part.killed = blocked
-	part.mu.Unlock()
-
+	// I-1 fix: seeding is now done inside runAgentSubscription, AFTER the
+	// pub/sub subscription is confirmed live (after pubsub.Receive succeeds).
+	// The previous order — seed then start goroutine — had a TOCTOU window:
+	// a "kill" event arriving after the seed read but before the goroutine
+	// subscribed would be silently dropped, leaving the partition in
+	// killed=false even though the agent was killed. By seeding after the
+	// subscription ping we guarantee no events are missed between the state
+	// read and the subscription start.
 	go p.runAgentSubscription(partCtx, agentID, part)
 
 	return part
@@ -317,8 +383,13 @@ func (p *PartitionedKillSwitch) runAgentSubscription(ctx context.Context, agentI
 		return
 	}
 
-	// Subscription is live; mark healthy and start processing events.
+	// Subscription is live. Seed the initial kill state NOW — after the
+	// subscription is confirmed active — so that any "kill" event published
+	// between the seed read and the subscription becoming live is captured by
+	// the pub/sub channel rather than being missed (I-1 fix).
+	blocked, _ := p.inner.ShouldBlock(ctx, agentID, "")
 	part.mu.Lock()
+	part.killed = blocked
 	part.degraded = false
 	part.mu.Unlock()
 

@@ -435,9 +435,17 @@ func parseMigrations(source fs.FS, dir string) ([]Migration, error) {
 			continue
 		}
 
+		// I-2 fix: skip (with a warning) any .sql file whose name does not
+		// follow the <version>.<description>.<up|down>.sql convention, rather
+		// than returning a hard error. Seed files, schema dumps, and fixture
+		// files committed for documentation would otherwise block NewRunner.
 		m, err := parseFilename(name)
 		if err != nil {
-			return nil, err
+			slog.Default().Warn("migrate: skipping unrecognized SQL file",
+				slog.String("file", name),
+				slog.String("reason", err.Error()),
+			)
+			continue
 		}
 
 		content, err := fs.ReadFile(source, path.Join(normalizeDir(dir), name))

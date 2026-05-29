@@ -3,6 +3,8 @@
 
 package capability
 
+import "context"
+
 // EnforceRequest is the input payload for runtime capability enforcement.
 type EnforceRequest struct {
 	SessionID string                 `json:"sessionId"`
@@ -51,4 +53,30 @@ type DenialInfo struct {
 	ConditionType string                 `json:"conditionType"`
 	Message       string                 `json:"message"`
 	Details       map[string]interface{} `json:"details,omitempty"`
+}
+
+// Enforcer is the minimal interface that enforcement consumers (e.g. the
+// gateway) should depend on rather than the concrete *enforcement.Engine type.
+// Accepting Enforcer instead of *Engine decouples the caller from the
+// implementation, making it straightforward to substitute a remote enforcement
+// backend or a test double without modifying call sites.
+//
+// A-1 fix: moved here from pkg/enforcement so that consumers can import the
+// interface without importing the implementation package.
+type Enforcer interface {
+	// ValidateAction evaluates req against capabilities and returns a decision.
+	ValidateAction(ctx context.Context, req *EnforceRequest, capabilities []Constraint) (EnforceResponse, error)
+	// FindMatchingCapability returns the most specific matching constraint, or
+	// nil if none match.
+	FindMatchingCapability(req *EnforceRequest, capabilities []Constraint) *Constraint
+}
+
+// CallCounter tracks per-key invocation counts within a sliding time window.
+// Implementations must be safe for concurrent use.
+//
+// A-1 fix: moved here from pkg/enforcement alongside Enforcer so that both
+// consumer-facing interfaces live in pkg/capability rather than in the
+// producer package.
+type CallCounter interface {
+	IncrementAndGet(ctx context.Context, key string, windowSec int) (int64, error)
 }

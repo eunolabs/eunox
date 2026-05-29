@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
@@ -50,6 +52,12 @@ type JWKSClient struct {
 	jwks      *jose.JSONWebKeySet
 	fetchedAt time.Time
 	cacheTTL  time.Duration
+
+	// sfGroup deduplicates concurrent JWKS refresh calls so that only one
+	// HTTP round-trip is in flight at any time. I-3 fix: previously the write
+	// lock was held for the entire fetch, serialising all token verifications
+	// behind a single HTTP round-trip and causing P99 spikes on cache misses.
+	sfGroup singleflight.Group
 }
 
 // NewJWKSClient creates a new JWKS client for verifying capability tokens.
@@ -200,39 +208,64 @@ func (c *JWKSClient) getKeys(ctx context.Context) (*jose.JSONWebKeySet, error) {
 	return c.refreshKeys(ctx)
 }
 
+// refreshKeys fetches a fresh JWKS and stores it in the cache.
+//
+// I-3 fix: the write lock is no longer held during the HTTP fetch. Instead,
+// a singleflight group ensures that only one fetch is in flight at any time;
+// concurrent callers block on the group (not on c.mu) and share the result.
+// The write lock is held only for the brief store-result step.
 func (c *JWKSClient) refreshKeys(ctx context.Context) (*jose.JSONWebKeySet, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Double-check under read lock: another goroutine may have refreshed while
+	// we were waiting for the singleflight or after getKeys released the read lock.
+	c.mu.RLock()
 	if c.jwks != nil && time.Since(c.fetchedAt) < c.cacheTTL {
-		return c.jwks, nil
+		keys := c.jwks
+		c.mu.RUnlock()
+		return keys, nil
 	}
+	c.mu.RUnlock()
 
-	fetch := func(fetchCtx context.Context) (*jose.JSONWebKeySet, error) {
-		return c.fetchKeys(fetchCtx)
-	}
+	// Use singleflight to deduplicate concurrent fetches. All callers waiting
+	// for the same refresh receive the same result without additional HTTP
+	// round-trips. The context passed here is the first caller's — subsequent
+	// callers share the result even if their context differs.
+	v, err, _ := c.sfGroup.Do("refresh", func() (interface{}, error) {
+		fetch := func(fetchCtx context.Context) (*jose.JSONWebKeySet, error) {
+			return c.fetchKeys(fetchCtx)
+		}
 
-	var (
-		jwks *jose.JSONWebKeySet
-		err  error
-	)
-	if c.breaker != nil {
-		jwks, err = circuitbreaker.Do(ctx, c.breaker, fetch)
-		if err != nil {
-			if errors.Is(err, circuitbreaker.ErrOpen) {
-				return nil, fmt.Errorf("JWKS fetch blocked by circuit breaker: %w", err)
+		var (
+			jwks *jose.JSONWebKeySet
+			ferr error
+		)
+		if c.breaker != nil {
+			jwks, ferr = circuitbreaker.Do(ctx, c.breaker, fetch)
+			if ferr != nil {
+				if errors.Is(ferr, circuitbreaker.ErrOpen) {
+					return nil, fmt.Errorf("JWKS fetch blocked by circuit breaker: %w", ferr)
+				}
+				return nil, ferr
 			}
-			return nil, err
+		} else {
+			jwks, ferr = fetch(ctx)
+			if ferr != nil {
+				return nil, ferr
+			}
 		}
-	} else {
-		jwks, err = fetch(ctx)
-		if err != nil {
-			return nil, err
-		}
+		return jwks, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
+	jwks := v.(*jose.JSONWebKeySet)
+
+	// Store the freshly fetched JWKS under a short write lock.
+	c.mu.Lock()
 	c.jwks = jwks
 	c.fetchedAt = time.Now()
+	c.mu.Unlock()
+
 	c.logger.Info("refreshed JWKS", slog.Int("keys", len(jwks.Keys)))
 	return jwks, nil
 }

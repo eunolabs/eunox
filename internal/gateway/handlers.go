@@ -127,100 +127,38 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// --- Token verification: cache-hit path skips JWKS re-verify and
-	// revocation check (P2-2). On a cache miss we fall through to full
-	// verification and store the result on success. ---
-	var claims *capability.TokenPayload
-	cacheHit := false
-	if app.tokenCache != nil {
-		if cached, ok := app.tokenCache.Get(payload.Token); ok {
-			claims = cached
-			cacheHit = true
-			span.SetAttributes(attribute.Bool("token_cache_hit", true))
-		}
+	// revocation check (P2-2). D-3 fix: shared verifyAndCacheToken helper
+	// eliminates the duplicate verification block from handleValidate/handleProxy.
+	_, verifySpan := gatewayTracer.Start(ctx, "gateway.enforce.verify_token")
+	tvr := app.verifyAndCacheToken(ctx, payload.Token)
+	if tvr.CacheHit {
+		span.SetAttributes(attribute.Bool("token_cache_hit", true))
 	}
-
-	if !cacheHit {
-		// Verify JWT signature and standard claims (JWKS round-trip).
-		_, verifySpan := gatewayTracer.Start(ctx, "gateway.enforce.verify_token")
-		var verifyErr error
-		claims, verifyErr = app.deps.JWTVerifier.VerifyToken(ctx, payload.Token)
-		if verifyErr != nil {
-			verifySpan.RecordError(verifyErr)
-			verifySpan.SetStatus(codes.Error, verifyErr.Error())
-			verifySpan.End()
-			resp := capability.EnforceResponse{
-				RequestID: requestID,
-				Decision:  capability.DecisionDeny,
-				DecidedAt: time.Now().UTC().Format(time.RFC3339),
-				Denial: &capability.DenialInfo{
-					Code:    capability.ErrCodeAuthorizationFailed,
-					Message: fmt.Sprintf("token verification failed: %v", verifyErr),
-				},
-			}
-			setDecision(span, "deny")
-			app.recordMetric("deny", start)
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
+	switch {
+	case tvr.ServiceUnavailable:
+		verifySpan.SetStatus(codes.Error, "revocation check unavailable")
 		verifySpan.End()
-
-		// Check token expiry.
-		if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
-			resp := capability.EnforceResponse{
-				RequestID: requestID,
-				Decision:  capability.DecisionDeny,
-				DecidedAt: time.Now().UTC().Format(time.RFC3339),
-				Denial: &capability.DenialInfo{
-					Code:    capability.ErrCodeExpired,
-					Message: "token has expired",
-				},
-			}
-			setDecision(span, "deny")
-			app.recordMetric("deny", start)
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		// Check revocation (Redis round-trip — skipped on cache hits).
-		if app.deps.Revocation != nil && claims.JWTID != "" {
-			_, revSpan := gatewayTracer.Start(ctx, "gateway.enforce.revocation_check")
-			revoked, revErr := app.deps.Revocation.IsRevoked(ctx, claims.JWTID)
-			if revErr != nil {
-				revSpan.RecordError(revErr)
-				revSpan.SetStatus(codes.Error, revErr.Error())
-				revSpan.End()
-				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-				app.recordMetric("deny", start)
-				return
-			}
-			revSpan.End()
-			if revoked {
-				// Ensure we don't serve a revoked token from cache in the future.
-				if app.tokenCache != nil {
-					app.tokenCache.Invalidate(payload.Token)
-				}
-				resp := capability.EnforceResponse{
-					RequestID: requestID,
-					Decision:  capability.DecisionDeny,
-					DecidedAt: time.Now().UTC().Format(time.RFC3339),
-					Denial: &capability.DenialInfo{
-						Code:    capability.ErrCodeRevoked,
-						Message: "token has been revoked",
-					},
-				}
-				setDecision(span, "deny")
-				app.recordMetric("deny", start)
-				writeJSON(w, http.StatusOK, resp)
-				return
-			}
-		}
-
-		// Cache the verified claims so subsequent requests in the same
-		// pipeline run avoid the JWKS + revocation round-trips.
-		if app.tokenCache != nil {
-			app.tokenCache.Put(payload.Token, claims)
-		}
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+		app.recordMetric("deny", start)
+		return
+	case tvr.DenyCode != "":
+		verifySpan.SetStatus(codes.Error, tvr.DenyMsg)
+		verifySpan.End()
+		setDecision(span, "deny")
+		app.recordMetric("deny", start)
+		writeJSON(w, http.StatusOK, capability.EnforceResponse{
+			RequestID: requestID,
+			Decision:  capability.DecisionDeny,
+			DecidedAt: time.Now().UTC().Format(time.RFC3339),
+			Denial: &capability.DenialInfo{
+				Code:    tvr.DenyCode,
+				Message: tvr.DenyMsg,
+			},
+		})
+		return
 	}
+	verifySpan.End()
+	claims := tvr.Claims
 
 	// Set claims-level span attributes now that we have verified claims.
 	{
@@ -368,52 +306,21 @@ func (app *App) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Token verification: check in-process cache first (P2-2).
-	var claims *capability.TokenPayload
-	cacheHit := false
-	if app.tokenCache != nil {
-		if cached, ok := app.tokenCache.Get(req.Token); ok {
-			claims = cached
-			cacheHit = true
-		}
+	// Token verification: cache-hit path skips JWKS re-verify and revocation
+	// check (P2-2). D-3 fix: shared verifyAndCacheToken helper.
+	tvr := app.verifyAndCacheToken(r.Context(), req.Token)
+	switch {
+	case tvr.ServiceUnavailable:
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+		return
+	case tvr.DenyCode != "":
+		writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
+			Allowed: false,
+			Reason:  tvr.DenyMsg,
+		})
+		return
 	}
-
-	if !cacheHit {
-		// Verify JWT
-		claims, err = app.deps.JWTVerifier.VerifyToken(r.Context(), req.Token)
-		if err != nil {
-			writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
-				Allowed: false,
-				Reason:  fmt.Sprintf("token verification failed: %v", err),
-			})
-			return
-		}
-
-		// Check revocation so that a revoked token is denied here, just as it
-		// would be by /enforce.
-		if app.deps.Revocation != nil && claims.JWTID != "" {
-			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-			if revErr != nil {
-				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-				return
-			}
-			if revoked {
-				if app.tokenCache != nil {
-					app.tokenCache.Invalidate(req.Token)
-				}
-				writeJSON(w, http.StatusOK, capability.ValidateActionResponse{
-					Allowed: false,
-					Reason:  "token has been revoked",
-				})
-				return
-			}
-		}
-
-		// Cache the verified claims.
-		if app.tokenCache != nil {
-			app.tokenCache.Put(req.Token, claims)
-		}
-	}
+	claims := tvr.Claims
 
 	// Check kill switch so that a blocked subject is denied here, just as it
 	// would be by /enforce.
@@ -496,52 +403,25 @@ func (app *App) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Token verification: check in-process cache first (P2-2).
-	var claims *capability.TokenPayload
-	cacheHit := false
-	if app.tokenCache != nil {
-		if cached, ok := app.tokenCache.Get(token); ok {
-			claims = cached
-			cacheHit = true
-		}
+	// Token verification: cache-hit path skips JWKS re-verify and revocation
+	// check (P2-2). D-3 fix: shared verifyAndCacheToken helper.
+	tvr := app.verifyAndCacheToken(r.Context(), token)
+	switch {
+	case tvr.ServiceUnavailable:
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
+		return
+	case tvr.DenyCode == capability.ErrCodeRevoked:
+		writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
+		return
+	case tvr.DenyCode == capability.ErrCodeExpired:
+		writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
+		return
+	case tvr.DenyCode != "":
+		// ErrCodeAuthorizationFailed: use generic message to avoid leaking internal error details.
+		writeJSON(w, http.StatusUnauthorized, errorResponse("invalid token"))
+		return
 	}
-
-	if !cacheHit {
-		// Verify JWT
-		var err error
-		claims, err = app.deps.JWTVerifier.VerifyToken(r.Context(), token)
-		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, errorResponse("invalid token"))
-			return
-		}
-
-		// Check token expiry
-		if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
-			writeJSON(w, http.StatusUnauthorized, errorResponse("token has expired"))
-			return
-		}
-
-		// Check revocation before DPoP (aligns with handleEnforce order, B-3 fix).
-		if app.deps.Revocation != nil && claims.JWTID != "" {
-			revoked, revErr := app.deps.Revocation.IsRevoked(r.Context(), claims.JWTID)
-			if revErr != nil {
-				writeJSON(w, http.StatusServiceUnavailable, errorResponse("revocation check unavailable"))
-				return
-			}
-			if revoked {
-				if app.tokenCache != nil {
-					app.tokenCache.Invalidate(token)
-				}
-				writeJSON(w, http.StatusForbidden, errorResponse("token revoked"))
-				return
-			}
-		}
-
-		// Cache the verified claims.
-		if app.tokenCache != nil {
-			app.tokenCache.Put(token, claims)
-		}
-	}
+	claims := tvr.Claims
 
 	// DPoP sender-constraint enforcement (F-2 fix).
 	// When the capability token carries a cnf.jkt binding, a valid DPoP proof
