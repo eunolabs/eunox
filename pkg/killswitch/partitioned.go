@@ -176,7 +176,7 @@ func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessio
 	}
 
 	// Ensure a per-agent partition (and subscription) exists for this agentID.
-	part := p.getOrCreatePartition(ctx, agentID)
+	part := p.getOrCreatePartition(agentID)
 
 	// Promote to MRU position on each access (A-3 LRU tracking).
 	p.mu.Lock()
@@ -296,7 +296,7 @@ func (p *PartitionedKillSwitch) DegradedAgents() []string {
 // getOrCreatePartition returns the agentPartition for agentID, creating and starting
 // a per-agent subscription if one does not yet exist. The subscription goroutine is
 // tied to p.lifecycleCtx (set by Start) so that it outlives individual requests.
-func (p *PartitionedKillSwitch) getOrCreatePartition(ctx context.Context, agentID string) *agentPartition {
+func (p *PartitionedKillSwitch) getOrCreatePartition(agentID string) *agentPartition {
 	p.mu.RLock()
 	part, ok := p.partitions[agentID]
 	p.mu.RUnlock()
