@@ -33,6 +33,13 @@ func TestRedis_IncrementAndGet_Basic(t *testing.T) {
 	assert.Equal(t, int64(2), count)
 }
 
+// TestRedis_IncrementAndGet_SlidingWindowExpiry verifies that after the key TTL
+// elapses, the sorted-set key is evicted by Redis and the counter resets to 1.
+//
+// Note: miniredis.FastForward only advances Redis's internal TTL clock; it does
+// not advance Go's time.Now().  The test therefore relies on key expiry (TTL)
+// rather than ZREMRANGEBYSCORE to produce count==1.  After the M-6 fix the key
+// TTL is 2×windowSec (4 s for window=2), so the fast-forward must exceed 4 s.
 func TestRedis_IncrementAndGet_SlidingWindowExpiry(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -41,18 +48,20 @@ func TestRedis_IncrementAndGet_SlidingWindowExpiry(t *testing.T) {
 	counter := callcounter.NewRedis(client)
 	ctx := context.Background()
 
-	// Make 3 calls, then fast-forward miniredis past the window.
+	// Make 3 calls with a 2-second window (key TTL = 2×2 = 4 s after M-6 fix).
 	for i := 0; i < 3; i++ {
 		_, err := counter.IncrementAndGet(ctx, "key1", 2)
 		require.NoError(t, err)
 	}
 
-	mr.FastForward(3 * time.Second) // advance past the 2-second window
+	// Advance past the 4-second TTL so that miniredis evicts the key.
+	mr.FastForward(5 * time.Second)
 
-	// Next call should count 1 (old entries are outside the window).
+	// After TTL expiry the sorted-set key is gone; the next call creates a new
+	// one with exactly 1 entry.
 	count, err := counter.IncrementAndGet(ctx, "key1", 2)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "entries past the sliding window must expire")
+	assert.Equal(t, int64(1), count, "key must be evicted after TTL expires")
 }
 
 func TestRedis_IncrementAndGet_ConcurrentCallsNoDuplicate(t *testing.T) {

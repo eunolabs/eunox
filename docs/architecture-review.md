@@ -364,7 +364,8 @@ set `expected.AnyAudience`.
 
 **LOCATION:** `pkg/audit/audit.go:326,341` (`DefaultPipeline.Append`)  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `p.lastSeqNum` is incremented at line 326 and decremented at line 341
 when `backend.Append` fails. If the backend partially committed the write before
@@ -380,13 +381,21 @@ undetectable without full hash comparison.
 regardless of whether N was committed. Document that sequence numbers are monotonic
 with possible gaps after failures, not gapless.
 
+**IMPLEMENTATION:**
+- `pkg/audit/audit.go` — removed `p.lastSeqNum--` rollback in `DefaultPipeline.Append`;
+  added doc comment explaining monotonic-with-gaps semantics (A-2 doc also added to struct).
+- `pkg/audit/audit_test.go` — `TestPipeline_BackendErrorRollsBackSequence` renamed to
+  `TestPipeline_BackendErrorLeavesSequenceGap`; assertion updated from seq=3 to seq=4
+  and added `require.Len(t, records, 3)` to verify the gap.
+
 ---
 
 ### M-2 — `effectiveAudience` has a dead code path and can return an empty audience
 
 **LOCATION:** `internal/issuer/app.go:704-712`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** The function returns `app.config.Audience` on line 706 when it is
 non-empty. Line 711-712 (`return app.config.Audience`) is never reached. When
@@ -396,13 +405,19 @@ empty audience fails gateway-side audience validation.
 **FIX:** Return an error (or the issuer URL as a default) when both are empty.
 Remove the dead `return app.config.Audience` at line 712.
 
+**IMPLEMENTATION:**
+- `internal/issuer/app.go` — `effectiveAudience` now falls back to `app.config.IssuerURL`
+  when both `app.config.Audience` and `requested` are empty, ensuring tokens always carry
+  a non-empty `aud` claim. The unreachable `return app.config.Audience` line was removed.
+
 ---
 
 ### M-3 — `signToken` builds JWT manually while `verifyCapabilityToken` uses go-jose
 
 **LOCATION:** `internal/issuer/app.go:714-752`  
 **CATEGORY:** Design  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `signToken` marshals a `map[string]string` header, base64url-encodes
 it, and concatenates `header.payload.signature` manually. `verifyCapabilityToken`
@@ -417,13 +432,22 @@ and renewal fail silently. The mismatch is only caught at runtime under the
 **FIX:** Use `jose.NewSigner` + `jwt.Signed(signer).Claims(payload).Serialize()`
 throughout `signToken`. Eliminate the manual header construction.
 
+**IMPLEMENTATION:**
+- `internal/issuer/app.go` — `signToken` rewritten to use `jose.NewSigner` +
+  `jwt.Signed(joseSigner).Claims(payload).Serialize()`. The `typ: "JWT"` and `kid`
+  headers are set via `SignerOptions.WithType("JWT").WithHeader(...)`. The manual
+  base64 header construction and dead `signingDigest` helper were removed.
+- `pkg/crypto/software.go` — `SoftwareSigner.PrivateKey()` method added so `signToken`
+  can access the raw private key for go-jose via the local `privateKeyProvider` interface.
+
 ---
 
 ### M-4 — `Authorization: Bearer` parsing is case-sensitive
 
 **LOCATION:** `internal/gateway/handlers.go:596-600` (`extractBearerToken`)  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `auth[:7] == "Bearer "` rejects `"bearer "` and `"BEARER "`. HTTP
 headers are case-insensitive; many clients send lowercase scheme names.
@@ -431,13 +455,19 @@ headers are case-insensitive; many clients send lowercase scheme names.
 **FIX:** Use `strings.HasPrefix(strings.ToUpper(auth), "BEARER ")` and extract
 `auth[7:]`.
 
+**IMPLEMENTATION:**
+- `internal/gateway/handlers.go` — `extractBearerToken` now uses
+  `strings.EqualFold(auth[:7], "bearer ")`, accepting any capitalisation of the
+  scheme name per RFC 7235 §2.1.
+
 ---
 
 ### M-5 — `TokenCache.Invalidate` is O(n) on the insertion-order slice
 
 **LOCATION:** `pkg/capability/token_cache.go:187-200`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `Invalidate` performs a linear scan through `insertOrder` (line 193)
 to remove the key. With `MaxSize=4096`, a mass-revocation event (e.g., a compromised
@@ -448,13 +478,21 @@ map from key to list node so that removal is O(1). Alternatively, use a generati
 counter: increment on each Invalidate call, and have Get() reject entries from
 prior generations.
 
+**IMPLEMENTATION:**
+- `pkg/capability/token_cache.go` — `insertOrder []string` replaced with
+  `insertOrder *list.List` (`container/list`). Each `tokenCacheEntry` stores a
+  `*list.Element` back-pointer enabling O(1) `Invalidate` and `purgeExpired` removal.
+  `Put` evicts the LRU (front of list) when at capacity. `NewTokenCache` initialises
+  `insertOrder: list.New()`.
+
 ---
 
 ### M-6 — `callcounter/redis.go` sliding window key TTL is one second too short
 
 **LOCATION:** `pkg/callcounter/redis.go:54`  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `pipe.Expire(ctx, windowKey, time.Duration(windowSec)*time.Second+time.Second)`
 adds only one extra second of TTL beyond the window. Under high clock skew between
@@ -465,13 +503,21 @@ undercount.
 **FIX:** Use a 2× safety margin: `time.Duration(windowSec)*2*time.Second`. The
 TTL is used only for key cleanup; a generous margin has negligible cost.
 
+**IMPLEMENTATION:**
+- `pkg/callcounter/redis.go` — `pipe.Expire` TTL changed from `windowSec*time.Second+time.Second`
+  to `time.Duration(windowSec)*2*time.Second`.
+- `pkg/callcounter/redis_test.go` — `TestRedis_IncrementAndGet_SlidingWindowExpiry` updated:
+  `FastForward` advanced from 3 s to 5 s to exceed the new 4 s TTL (2×2 s); comment added
+  explaining the key-expiry-based test mechanism.
+
 ---
 
 ### M-7 — `migration_test.go` test files skip missing directories inconsistently
 
 **LOCATION:** `internal/integration/migration_test.go:47-82` (`TestMigration_ForwardBackwardPairs`, `TestMigration_SQLSyntaxBasicValidation`)  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `TestMigration_MigrationFilesExist` guards against missing directories
 with `os.IsNotExist` and logs a notice. `TestMigration_ForwardBackwardPairs` and
@@ -480,6 +526,12 @@ and will `require.NoError` fail (not skip) if the directory is absent.
 
 **FIX:** Apply the same `os.IsNotExist` guard and `t.Skip` in every test that reads
 a migration directory.
+
+**IMPLEMENTATION:**
+- `internal/integration/migration_test.go` — `os.IsNotExist` guard + `t.Skipf` added
+  at the start of the inner loops in `TestMigration_ForwardBackwardPairs` and
+  `TestMigration_SQLSyntaxBasicValidation`, matching the pattern in
+  `TestMigration_MigrationFilesExist`.
 
 ---
 
@@ -491,7 +543,8 @@ a migration directory.
 
 **LOCATION:** `pkg/enforcement/engine.go:134-141`  
 **CATEGORY:** Architecture  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `Enforcer` is defined inside `pkg/enforcement` alongside the concrete
 `*Engine` type. Consumers (e.g., `internal/gateway`) depend on `pkg/enforcement`
@@ -501,13 +554,24 @@ just to name the interface, creating unnecessary coupling to the producer packag
 `pkg/enforce` interface-only package. Consumers import the interface without
 importing the implementation.
 
+**IMPLEMENTATION:**
+- `pkg/capability/enforce.go` — `Enforcer` and `CallCounter` interfaces defined here
+  with doc comments.
+- `pkg/enforcement/engine.go` — `Enforcer` and `CallCounter` changed to type aliases
+  (`= capability.Enforcer`, `= capability.CallCounter`); compile-time guard
+  `var _ capability.Enforcer = (*Engine)(nil)` added.
+- `internal/gateway/app.go` — `Engine` field type changed from `enforcement.Enforcer`
+  to `capability.Enforcer`; `enforcement` import dropped from `app.go` (still used in
+  `handlers.go` for `enforcement.WithDryRun`).
+
 ---
 
 ### A-2 — `DefaultPipeline` chain state is per-replica and in-memory only
 
 **LOCATION:** `pkg/audit/audit.go:219-268`  
 **CATEGORY:** Architecture  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `lastChainHash` and `lastSeqNum` live in the process heap. In a
 multi-replica deployment, each pod has its own chain with its own genesis hash and
@@ -524,13 +588,21 @@ Consider a distributed sequence allocator (Postgres sequence, Redis INCR) shared
 across replicas so that `SequenceNum` is globally monotonic, enabling gap detection
 without per-replica tracking.
 
+**IMPLEMENTATION:**
+- `pkg/audit/audit.go` — `DefaultPipeline` struct doc comment updated with a detailed
+  "Per-replica chain model (A-2)" section explaining the in-process state, multi-replica
+  semantics, and operator guidance for cross-replica integrity verification.
+  Postgres-sequence / Redis INCR as a future global allocator is documented as an
+  optional upgrade path.
+
 ---
 
 ### A-3 — `PartitionedKillSwitch` partition map grows unbounded
 
 **LOCATION:** `pkg/killswitch/partitioned.go:256-292` (`getOrCreatePartition`)  
 **CATEGORY:** Architecture  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** A new `agentPartition` is created and added to `p.partitions` for
 every unique `agentID` seen in `ShouldBlock`. Partitions are never evicted. In a
@@ -541,13 +613,22 @@ its associated goroutines grow without bound.
 when the limit is reached, canceling its goroutine. Alternatively, accept a
 pre-registered set of agent IDs at startup and reject unknowns.
 
+**IMPLEMENTATION:**
+- `pkg/killswitch/partitioned.go` — `defaultMaxPartitions = 10_000` constant added;
+  `PartitionedKillSwitch` gains `maxPartitions int` and `lruList *list.List` fields;
+  each `agentPartition` carries a `lruElem *list.Element` back-pointer. `WithMaxPartitions`
+  setter added. `getOrCreatePartition` evicts the LRU (front of list) when at capacity;
+  `ShouldBlock` promotes the accessed partition to MRU on each call. `Reset` calls
+  `p.lruList.Init()` to clear the LRU list alongside the partition map.
+
 ---
 
 ### A-4 — `issuer.App` embeds `SCIMStore` directly, preventing independent scaling
 
 **LOCATION:** `internal/issuer/app.go:89-106`  
 **CATEGORY:** Architecture  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed (interface + compile check) — 2026-05-28; Postgres persistence tracked separately
 
 **PROBLEM:** `App.scimStore` is initialized in `New()` as an in-process singleton.
 If the issuer is scaled horizontally, each replica has its own independent SCIM
@@ -557,13 +638,21 @@ state. This is the architectural root of H-5.
 The current in-memory implementation satisfies the interface for single-instance
 deploys. A Postgres-backed implementation satisfies it for multi-replica.
 
+**IMPLEMENTATION:**
+- `internal/issuer/scim.go` — `SCIMRepository` interface extracted (H-5 fix);
+  `var _ SCIMRepository = (*SCIMStore)(nil)` compile-time guard added.
+- `internal/issuer/app.go` — `App.scimStore` field typed as `SCIMRepository` so any
+  conforming implementation (e.g. a Postgres-backed store) can be injected without
+  touching the handler layer.
+
 ---
 
 ### A-5 — DID resolution absent: `DIDProvider` is a trusted-name-only allowlist
 
 **LOCATION:** `pkg/identity/did.go:28-45`, `pkg/did/` (unused by DIDProvider)  
 **CATEGORY:** Architecture  
-**SEVERITY:** High (same root as CR-1)
+**SEVERITY:** High (same root as CR-1)  
+**STATUS:** ✅ Fixed — 2026-05-28 (resolved as part of CR-1)
 
 **PROBLEM:** `pkg/did/` contains `web.go`, `ion.go`, and a `resolver.go`, but
 `DIDProvider.VerifyToken` never calls them. The `trustedDIDs` map is a list of
@@ -575,6 +664,10 @@ verification path.
 issuer DID, extract the `verificationMethod` keys, and use those (not the
 self-asserted embedded JWK) to verify the signature.
 
+**IMPLEMENTATION:** See CR-1 — `DIDConfig` now requires a `did.Resolver`;
+`VerifyToken` resolves the issuer DID document and verifies the signature against
+published `verificationMethod` keys. The header-embedded JWK is never trusted.
+
 ---
 
 ## DESIGN
@@ -585,7 +678,8 @@ self-asserted embedded JWK) to verify the signature.
 
 **LOCATION:** `pkg/audit/audit.go:91-100`  
 **CATEGORY:** Design  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `LedgerBackend` is defined in the same package as `DefaultPipeline`,
 which implements the `Pipeline` interface. Consumers of `LedgerBackend` (transport,
@@ -598,13 +692,21 @@ separate `pkg/audit/contract` or `pkg/auditstore` package. Keep implementations 
 `pkg/audit`. This eliminates the circular dependency risk and lets backends be
 developed independently.
 
+**IMPLEMENTATION:**
+- `pkg/audit/contract/contract.go` — new package containing the canonical definitions
+  of `LogEntry`, `SignedAuditEvidence`, `Pipeline`, and `LedgerBackend`. Imports only
+  standard library, `go.opentelemetry.io/otel/trace`, and `pkg/ocsf`.
+- `pkg/audit/audit.go` — original type definitions replaced with type aliases
+  (`type LogEntry = contract.LogEntry`, etc.) so existing callers compile unchanged.
+
 ---
 
 ### D-2 — `KeyStore` interface defined inside `internal/issuer`, forcing consumers to import it
 
 **LOCATION:** `internal/issuer/app.go:58-64`  
 **CATEGORY:** Design  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `KeyStore` and `PublicKeyInfo` are defined in `internal/issuer` but
 must be implemented by `internal/issuer/keystore.go` and
@@ -615,13 +717,19 @@ issuer types.
 **FIX:** Move `KeyStore` and `PublicKeyInfo` to `pkg/crypto` alongside the signer
 types they depend on, then have `internal/issuer` import from `pkg/crypto`.
 
+**IMPLEMENTATION:**
+- `pkg/crypto/signer.go` — `PublicKeyInfo` struct and `KeyStore` interface added.
+- `internal/issuer/app.go` — original definitions replaced with type aliases from
+  `pkg/crypto`; all existing usages continue to compile unchanged.
+
 ---
 
 ### D-3 — `handleEnforce` and `handleValidate` duplicate token-verification logic
 
 **LOCATION:** `internal/gateway/handlers.go:116-206`, `305-365`  
 **CATEGORY:** Design  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** Both handlers contain near-identical token-verification blocks:
 cache lookup → JWKS verify → expiry check → revocation check → cache store. The
@@ -633,13 +741,22 @@ both handlers.
 helper that handles the common path. Pass a `skipRevocation bool` parameter for
 the rare case that diverges. Both handlers call the helper.
 
+**IMPLEMENTATION:**
+- `internal/gateway/handlers.go` — `tokenVerifyResult` struct and `verifyAndCacheToken`
+  helper extracted. The helper performs: cache lookup → JWT verify → expiry check →
+  revocation check → cache store; returns `DenyCode`, `DenyMsg`, and `ServiceUnavailable`
+  fields so each caller can map the outcome to its own response shape. Duplicate
+  verification blocks in `handleEnforce`, `handleValidate`, and `handleProxy` all
+  replaced with a single call to the helper.
+
 ---
 
 ### D-4 — `ConditionHandler` function signature prevents stateful handlers from implementing an interface
 
 **LOCATION:** `pkg/enforcement/engine.go:22`  
 **CATEGORY:** Design  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `ConditionHandler` is a `func` type, not an interface. Registering a
 stateful external policy evaluator (e.g., an OPA client with connection pooling)
@@ -651,6 +768,15 @@ is not useful for structural checks).
 Register implementations, not closures. The built-in handlers already have
 `*Engine` receiver methods that satisfy this shape.
 
+**IMPLEMENTATION:**
+- `pkg/enforcement/engine.go` — `ConditionHandler` changed from a `func` type to an
+  interface with a single `Handle` method. `ConditionHandlerFunc` adapter type added
+  so plain functions satisfy the interface without boilerplate.
+- `pkg/enforcement/handlers.go` — `registerBuiltins` updated to wrap each method
+  value with `ConditionHandlerFunc(e.handleXxx)`.
+- `pkg/enforcement/enforcement_test.go` — `RegisterCondition` call updated to wrap
+  the inline function with `enforcement.ConditionHandlerFunc(...)`.
+
 ---
 
 ## IMPLEMENTATION
@@ -661,7 +787,8 @@ Register implementations, not closures. The built-in handlers already have
 
 **LOCATION:** `pkg/killswitch/partitioned.go:286-291`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** After releasing `p.mu` (line 277), `inner.ShouldBlock` is called to
 seed the initial kill state (line 286). Meanwhile `runAgentSubscription` is already
@@ -677,13 +804,20 @@ negligible, but it violates the stated fail-closed guarantee.
 the `pubsub.Receive` ping at line 307), not before launching the goroutine. This
 ensures no events are missed between state read and subscription start.
 
+**IMPLEMENTATION:**
+- `pkg/killswitch/partitioned.go` — seed call removed from `getOrCreatePartition`;
+  moved into `runAgentSubscription` immediately after `pubsub.Receive` confirms the
+  subscription is live. The seed now sets both `part.killed = blocked` and
+  `part.degraded = false` atomically under `part.mu`.
+
 ---
 
 ### I-2 — `parseMigrations` panics on non-`.up.sql`/`.down.sql` SQL files
 
 **LOCATION:** `internal/migrate/migrate.go:432-441`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `parseFilename` returns an error for any `.sql` file that does not end
 with `.up.sql` or `.down.sql`. However, `parseMigrations` propagates this as a
@@ -695,13 +829,22 @@ dump committed for documentation).
 strict naming requirement prominently and add a validation step that enumerates
 the directory before `NewRunner` is called.
 
+**IMPLEMENTATION:**
+- `internal/migrate/migrate.go` — `parseMigrations` now calls `slog.Default().Warn`
+  and `continue` when `parseFilename` returns an error, rather than propagating a
+  hard error. When all files are skipped, `NewRunner` returns `ErrNoMigrations`.
+- `internal/migrate/migrate_test.go` — `TestNewRunner_InvalidFilename` and
+  `TestNewRunner_ZeroVersion` updated to assert `ErrNoMigrations` (not `ErrInvalidVersion`)
+  and confirm the file was skipped rather than causing a hard failure.
+
 ---
 
 ### I-3 — `refreshKeys` acquires a write lock and then calls `fetchKeys` (network I/O under lock)
 
 **LOCATION:** `pkg/capability/jwks.go:192-227` (`refreshKeys`)  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** `refreshKeys` acquires `c.mu.Lock()` (line 193) before calling
 `c.fetchKeys` (line 201), which performs an HTTP round-trip. All concurrent token
@@ -723,13 +866,21 @@ result, err, _ := c.sfGroup.Do("refresh", func() (interface{}, error) {
 // store result under c.mu.Lock()
 ```
 
+**IMPLEMENTATION:**
+- `pkg/capability/jwks.go` — `sfGroup singleflight.Group` field added to `JWKSClient`.
+  `refreshKeys` rewritten: the write lock is no longer held during the HTTP fetch;
+  `c.sfGroup.Do("refresh", ...)` deduplicates concurrent fetch calls; only the result
+  storage step acquires `c.mu.Lock()`. A second freshness check inside the lock prevents
+  redundant stores when multiple callers race to refresh.
+
 ---
 
 ### I-4 — `purgeExpired` rebuilds `insertOrder` in O(n) inside a write lock
 
 **LOCATION:** `pkg/capability/token_cache.go:227-244`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29 (resolved by M-5 fix)
 
 **PROBLEM:** The cleanup loop (default: every 60 seconds) deletes expired map
 entries and then rebuilds `insertOrder` by scanning the entire slice under
@@ -742,13 +893,20 @@ then append only surviving keys). This is already the pattern at line 238-243 �
 it's fine. The real fix is to switch from a slice to a structure that allows O(1)
 removal (see M-5).
 
+**IMPLEMENTATION:**
+- Resolved as a side-effect of the M-5 fix (`container/list` replacement). `purgeExpired`
+  now calls `c.insertOrder.Remove(entry.listElem)` for each expired entry — O(1) per
+  removal, holding the write lock only as long as the list traversal takes, which is
+  bounded by the number of expired entries rather than the full cache size.
+
 ---
 
 ### I-5 — `writeEntry` uses `context.Background()`, losing trace context in the drain loop
 
 **LOCATION:** `pkg/audit/async_pipeline.go:224`  
 **CATEGORY:** Implementation  
-**SEVERITY:** Medium
+**SEVERITY:** Medium  
+**STATUS:** ✅ Fixed — 2026-05-29
 
 **PROBLEM:** The background drain goroutine creates a fresh `context.Background()`
 with a write timeout. Any OpenTelemetry trace context from the original `Append`
@@ -759,6 +917,17 @@ in distributed traces.
 `LogEntry` struct as an optional `SpanContext`. Reconstruct a linked context in
 `writeEntry` using `trace.ContextWithRemoteSpanContext`.
 
+**IMPLEMENTATION:**
+- `pkg/audit/contract/contract.go` — `LogEntry` gains `TraceSpanContext trace.SpanContext`
+  field (`json:"-"`, in-process only).
+- `pkg/audit/async_pipeline.go` — `writeEntry` reconstructs a linked context via
+  `trace.ContextWithRemoteSpanContext(base, entry.TraceSpanContext)` when the span
+  context is valid. `WithTraceContext(ctx, entry)` helper exported for callers.
+- `internal/gateway/handlers.go` — `emitEnforceAuditEvent` calls
+  `audit.WithTraceContext(ctx, entry)` before `Append` to stamp the enforcement span
+  context onto the log entry.
+
 ---
 
 _End of review — 21 findings total: 3 Critical, 6 High, 7 Medium (logic/impl), 5 Architecture/Design._
+_All findings resolved as of 2026-05-29._

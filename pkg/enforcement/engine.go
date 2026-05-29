@@ -19,7 +19,25 @@ import (
 
 // ConditionHandler evaluates a single condition against an enforcement request.
 // It returns nil if the condition is satisfied, or a non-nil *ConditionError if not.
-type ConditionHandler func(ctx context.Context, condition capability.Condition, req *capability.EnforceRequest) *ConditionError
+//
+// D-4 fix: ConditionHandler is an interface rather than a func type so that
+// stateful implementations (e.g. an OPA client with connection pooling) can
+// carry their own state without resorting to closures that are opaque to
+// testing and introspection.  Use ConditionHandlerFunc to adapt a plain
+// function to this interface.
+type ConditionHandler interface {
+	Handle(ctx context.Context, condition capability.Condition, req *capability.EnforceRequest) *ConditionError
+}
+
+// ConditionHandlerFunc is a function type that implements [ConditionHandler].
+// It allows plain functions with the matching signature to be used as
+// ConditionHandler values without defining a named struct type.
+type ConditionHandlerFunc func(ctx context.Context, condition capability.Condition, req *capability.EnforceRequest) *ConditionError
+
+// Handle implements [ConditionHandler].
+func (f ConditionHandlerFunc) Handle(ctx context.Context, condition capability.Condition, req *capability.EnforceRequest) *ConditionError {
+	return f(ctx, condition, req)
+}
 
 // ConditionError describes a condition evaluation failure.
 type ConditionError struct {
@@ -203,7 +221,7 @@ func (e *Engine) ValidateAction(ctx context.Context, req *capability.EnforceRequ
 			}, nil
 		}
 
-		if condErr := handler(ctx, cond, req); condErr != nil {
+		if condErr := handler.Handle(ctx, cond, req); condErr != nil {
 			return capability.EnforceResponse{
 				RequestID: requestID,
 				Decision:  capability.DecisionDeny,

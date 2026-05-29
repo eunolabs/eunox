@@ -884,14 +884,15 @@ func TestEngine_RegisterCustomCondition(t *testing.T) {
 	engine := enforcement.New()
 	ctx := context.Background()
 
-	// Override the custom handler to deny all
-	engine.RegisterCondition(capability.ConditionTypeCustom, func(_ context.Context, _ capability.Condition, _ *capability.EnforceRequest) *enforcement.ConditionError {
+	// Override the custom handler to deny all.
+	// D-4: wrap the plain func with enforcement.ConditionHandlerFunc.
+	engine.RegisterCondition(capability.ConditionTypeCustom, enforcement.ConditionHandlerFunc(func(_ context.Context, _ capability.Condition, _ *capability.EnforceRequest) *enforcement.ConditionError {
 		return &enforcement.ConditionError{
 			Code:          capability.ErrCodeConditionFailed,
 			ConditionType: capability.ConditionTypeCustom,
 			Message:       "custom condition denied",
 		}
-	})
+	}))
 
 	req := capability.EnforceRequest{
 		SessionID: "sess-1",

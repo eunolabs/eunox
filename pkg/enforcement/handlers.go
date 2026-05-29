@@ -16,17 +16,19 @@ import (
 )
 
 // registerBuiltins registers all built-in condition handlers.
+// D-4 fix: each method value is wrapped in ConditionHandlerFunc so that it
+// satisfies the ConditionHandler interface.
 func (e *Engine) registerBuiltins() {
-	e.handlers[capability.ConditionTypeTimeWindow] = e.handleTimeWindow
-	e.handlers[capability.ConditionTypeIPRange] = e.handleIPRange
-	e.handlers[capability.ConditionTypeMaxCalls] = e.handleMaxCalls
-	e.handlers[capability.ConditionTypeAllowedOperations] = e.handleAllowedOperations
-	e.handlers[capability.ConditionTypeAllowedExtensions] = e.handleAllowedExtensions
-	e.handlers[capability.ConditionTypeAllowedTables] = e.handleAllowedTables
-	e.handlers[capability.ConditionTypeRecipientDomain] = e.handleRecipientDomain
-	e.handlers[capability.ConditionTypeAllowedValues] = e.handleAllowedValues
-	e.handlers[capability.ConditionTypePolicy] = e.handlePolicy
-	e.handlers[capability.ConditionTypeCustom] = e.handleCustom
+	e.handlers[capability.ConditionTypeTimeWindow] = ConditionHandlerFunc(e.handleTimeWindow)
+	e.handlers[capability.ConditionTypeIPRange] = ConditionHandlerFunc(e.handleIPRange)
+	e.handlers[capability.ConditionTypeMaxCalls] = ConditionHandlerFunc(e.handleMaxCalls)
+	e.handlers[capability.ConditionTypeAllowedOperations] = ConditionHandlerFunc(e.handleAllowedOperations)
+	e.handlers[capability.ConditionTypeAllowedExtensions] = ConditionHandlerFunc(e.handleAllowedExtensions)
+	e.handlers[capability.ConditionTypeAllowedTables] = ConditionHandlerFunc(e.handleAllowedTables)
+	e.handlers[capability.ConditionTypeRecipientDomain] = ConditionHandlerFunc(e.handleRecipientDomain)
+	e.handlers[capability.ConditionTypeAllowedValues] = ConditionHandlerFunc(e.handleAllowedValues)
+	e.handlers[capability.ConditionTypePolicy] = ConditionHandlerFunc(e.handlePolicy)
+	e.handlers[capability.ConditionTypeCustom] = ConditionHandlerFunc(e.handleCustom)
 }
 
 func (e *Engine) handleTimeWindow(_ context.Context, cond capability.Condition, _ *capability.EnforceRequest) *ConditionError {

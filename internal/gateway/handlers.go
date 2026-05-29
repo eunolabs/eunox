@@ -523,12 +523,100 @@ func errorResponse(msg string) apiError {
 	return apiError{Error: msg}
 }
 
+// extractBearerToken extracts the token from an Authorization header.
+// M-4 fix: comparison is now case-insensitive ("bearer", "Bearer", "BEARER"
+// are all accepted) per RFC 7235 §2.1 which treats the auth-scheme as
+// case-insensitive.
 func extractBearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
-	if len(auth) > 7 && auth[:7] == "Bearer " {
+	if len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") {
 		return auth[7:]
 	}
 	return ""
+}
+
+// tokenVerifyResult holds the outcome of verifyAndCacheToken. Each handler
+// maps these fields to its own response shape and HTTP status code.
+type tokenVerifyResult struct {
+	// Claims is set on success; nil when any deny field is set.
+	Claims *capability.TokenPayload
+	// CacheHit is true when the claims were served from the in-process cache.
+	CacheHit bool
+	// DenyCode is a capability.ErrCode* constant set when verification failed.
+	// Empty string means success.
+	DenyCode string
+	// DenyMsg is the human-readable reason for the denial.
+	DenyMsg string
+	// ServiceUnavailable is true when the revocation backend is unreachable.
+	// Callers should respond with HTTP 503 rather than a structured deny response.
+	ServiceUnavailable bool
+}
+
+// verifyAndCacheToken performs the common token verification flow shared by
+// handleEnforce, handleValidate, and handleProxy:
+//
+//  1. Cache lookup (P2-2) — return early if cached claims are available.
+//  2. JWT signature and standard-claim verification (JWKS round-trip on cache miss).
+//  3. Belt-and-suspenders expiry check.
+//  4. Revocation check (Redis round-trip, skipped on cache hits).
+//  5. Cache store on success.
+//
+// On success Claims is non-nil and all deny fields are zero values.
+// On failure exactly one of DenyCode or ServiceUnavailable is set.
+//
+// D-3 fix: extracting this block eliminates near-identical verification logic
+// that was duplicated across all three enforcement handlers.
+func (app *App) verifyAndCacheToken(ctx context.Context, tokenStr string) tokenVerifyResult {
+	// 1. Cache hit — skip JWKS and revocation round-trips.
+	if app.tokenCache != nil {
+		if cached, ok := app.tokenCache.Get(tokenStr); ok {
+			return tokenVerifyResult{Claims: cached, CacheHit: true}
+		}
+	}
+
+	// 2. JWT signature and standard-claim verification.
+	claims, err := app.deps.JWTVerifier.VerifyToken(ctx, tokenStr)
+	if err != nil {
+		return tokenVerifyResult{
+			DenyCode: capability.ErrCodeAuthorizationFailed,
+			DenyMsg:  fmt.Sprintf("token verification failed: %v", err),
+		}
+	}
+
+	// 3. Belt-and-suspenders expiry check (go-jose validates exp, but an
+	// explicit check here ensures the remaining pipeline never operates on a
+	// logically expired token regardless of verifier behaviour).
+	if claims.ExpiresAt > 0 && time.Now().Unix() >= claims.ExpiresAt {
+		return tokenVerifyResult{
+			DenyCode: capability.ErrCodeExpired,
+			DenyMsg:  "token has expired",
+		}
+	}
+
+	// 4. Revocation check — Redis round-trip.
+	if app.deps.Revocation != nil && claims.JWTID != "" {
+		revoked, revErr := app.deps.Revocation.IsRevoked(ctx, claims.JWTID)
+		if revErr != nil {
+			return tokenVerifyResult{ServiceUnavailable: true}
+		}
+		if revoked {
+			// Evict from cache so that this token is not served again.
+			if app.tokenCache != nil {
+				app.tokenCache.Invalidate(tokenStr)
+			}
+			return tokenVerifyResult{
+				DenyCode: capability.ErrCodeRevoked,
+				DenyMsg:  "token has been revoked",
+			}
+		}
+	}
+
+	// 5. Store verified claims for subsequent requests in the same pipeline run.
+	if app.tokenCache != nil {
+		app.tokenCache.Put(tokenStr, claims)
+	}
+
+	return tokenVerifyResult{Claims: claims}
 }
 
 // isTrustedProxy reports whether ip is within one of the configured trusted proxy CIDRs.
@@ -685,6 +773,9 @@ func (app *App) emitEnforceAuditEvent(
 		Outcome:   outcome,
 		OCSFEvent: ocsfEvent,
 	}
+	// I-5 fix: stamp the caller's span context so the async drain goroutine
+	// can link its write spans to the originating enforcement span.
+	audit.WithTraceContext(ctx, entry)
 
 	// Fire-and-forget: enforcement correctness is independent of audit writes.
 	// Log a warning when the async buffer is full so operators can detect

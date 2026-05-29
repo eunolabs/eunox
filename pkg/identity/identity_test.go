@@ -166,7 +166,7 @@ func TestDIDProviderVerifyToken(t *testing.T) {
 	const issuerDID = "did:example:123"
 
 	// CR-1 fix: resolver supplies the authoritative public key; no embedded JWK is trusted.
-	doc := mustDIDDocFromJWK(t, issuerDID, publicJWK)
+	doc := mustDIDDocFromJWK(t, issuerDID, &publicJWK)
 	provider, err := NewDIDProvider(DIDConfig{
 		TrustedDIDs: []string{issuerDID},
 		Resolver:    &testDIDResolver{doc: doc},
@@ -398,7 +398,7 @@ func (r *testDIDResolver) Resolve(_ context.Context, _ string) (*did.Document, e
 // carries the public part of the supplied jose.JSONWebKey. This lets tests
 // construct DID documents backed by RSA (or any other jose-supported) keys
 // without manually encoding the key material.
-func mustDIDDocFromJWK(t *testing.T, issuerDID string, jwk jose.JSONWebKey) *did.Document {
+func mustDIDDocFromJWK(t *testing.T, issuerDID string, jwk *jose.JSONWebKey) *did.Document {
 	t.Helper()
 	// Marshal the public JWK to JSON and round-trip it through did.JWK so that
 	// extractDIDVerificationKey can deserialise it back via go-jose.
@@ -459,7 +459,7 @@ func TestDIDProvider_EmbeddedJWKBypassRejected(t *testing.T) {
 	const victimDID = "did:example:victim"
 
 	// DID document contains only the legitimate key — NOT the attacker's key.
-	doc := mustDIDDocFromJWK(t, victimDID, legitimateJWK)
+	doc := mustDIDDocFromJWK(t, victimDID, &legitimateJWK)
 	provider, err := NewDIDProvider(DIDConfig{
 		TrustedDIDs: []string{victimDID},
 		Resolver:    &testDIDResolver{doc: doc},
