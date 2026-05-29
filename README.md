@@ -2,154 +2,109 @@
   <img src="https://github.com/eunolabs/eunox/blob/main/site/public/eunolabs.png?raw=true" alt="eunox" height="160">
 </p>
 
-<h1 align="center">eunox</h1>
+<h1 align="center">eunox-mcp</h1>
 
 <p align="center">
-  <strong>Zero-trust enforcement gateway for AI agents</strong><br>
-  A single YAML policy file defines and enforces every action an agent is permitted to take, validating each tool call before it reaches your backend and producing a tamper‑evident audit trail.
+  <strong>Policy-enforcement proxy for MCP servers</strong><br>
+  Sits between your MCP host and any MCP server subprocess. Every <code>tools/call</code> is checked against a YAML policy before it is forwarded — and every decision is written to a tamper-evident audit log.
 </p>
 
 <p align="center">
   <a href="https://github.com/eunolabs/eunox/blob/main/cmd/mcp/LICENSE"><img alt="eunox-mcp: Apache-2.0" src="https://img.shields.io/badge/eunox--mcp-Apache--2.0-green.svg"></a>
-  <a href="https://github.com/eunolabs/eunox/blob/main/LICENSE"><img alt="Platform: BUSL-1.1" src="https://img.shields.io/badge/platform-BUSL--1.1-blue.svg"></a>
   <a href="https://go.dev/"><img alt="Go 1.25+" src="https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8"></a>
   <a href="https://spec.modelcontextprotocol.io/"><img alt="MCP" src="https://img.shields.io/badge/MCP-supported-7c3aed"></a>
 </p>
 
 ---
 
-## What is eunox?
-
-Eunox — from Eunomia, the Greek goddess of law and order — is a zero-trust enforcement gateway for AI agents. Every tool call is authorized against a cryptographically signed, time-limited capability token before it reaches your backend. No ambient authority, no implicit trust, no exceptions — and a tamper-evident audit trail your compliance team can actually use.
-
-## Services
-
-| Service               | Path                     | Description                                                         |
-| --------------------- | ------------------------ | ------------------------------------------------------------------- |
-| Gateway               | `cmd/gateway/`           | Enforcement gateway — policy evaluation, rate limiting, kill switch |
-| Issuer                | `cmd/issuer/`            | Capability token issuance, IdP integration                          |
-| Minter                | `cmd/minter/`            | API-key lifecycle, admin auth, anomaly detection                    |
-| DB Token Service      | `cmd/db-token-svc/`      | Short-lived DB credentials (AWS RDS, Azure SQL, GCP Cloud SQL)      |
-| Storage Grant Service | `cmd/storage-grant-svc/` | Presigned URLs (AWS S3, Azure Blob, GCP GCS)                        |
-| Posture Emitter       | `cmd/posture-emitter/`   | Security posture reporting                                          |
-| MCP Proxy             | `cmd/mcp/`               | MCP proxy PDP/PEP                                                   |
-
-## Project Structure
-
-```
-eunox/
-├── cmd/                    # Service entry points
-│   ├── gateway/
-│   ├── issuer/
-│   ├── minter/
-│   ├── db-token-svc/
-│   ├── storage-grant-svc/
-│   ├── posture-emitter/
-│   └── mcp/                # MCP proxy PDP/PEP (Apache-2.0 license)
-├── internal/               # Private application code
-├── pkg/                    # Public importable packages
-├── migrations/             # SQL migrations
-├── k8s/                    # Kubernetes manifests & Helm charts
-├── infra/                  # Infrastructure (Docker Compose, Terraform, etc.)
-├── docs/                   # Documentation
-├── site/                   # Astro site (landing page, blog, docs hub)
-├── blogs/                  # Blog content
-├── Makefile
-├── go.mod
-└── go.sum
-```
-
-## Development
-
-### Prerequisites
-
-- Go 1.25+
-- golangci-lint v2.1.6+
-
-### Commands
+## Install
 
 ```bash
-# Run all tests with race detector
-make test
-
-# Run linter (go vet + golangci-lint)
-make lint
-
-# Build all packages
-make build
-
-# Generate coverage report
-make coverage
-
-# Check BSL license headers
-make check-license
-
-# Clean build artifacts
-make clean
+go install github.com/eunolabs/eunox/cmd/mcp@latest
 ```
 
-## Deployment
-
-### Quick Start — Production
+Or pull the Docker image:
 
 ```bash
-# 1. Build gateway binary
-go build -o ./bin/gateway ./cmd/gateway
-
-# 2. Set minimum production environment
-export GATEWAY_NODE_ENV=production
-export GATEWAY_PORT=3002
-export GATEWAY_ADMIN_PORT=3003
-export GATEWAY_ADMIN_HOST=127.0.0.1
-export GATEWAY_ADMIN_API_KEY=$(openssl rand -hex 32)
-export GATEWAY_TENANT_ID="my-tenant"
-export GATEWAY_REDIS_URL="redis-sentinel://sentinel1:26379,sentinel2:26379/0?sentinel_master_name=mymaster"
-export GATEWAY_ISSUER_JWKS_URL="https://issuer.internal/.well-known/jwks.json"
-
-# 3. Run
-./bin/gateway
+docker pull ghcr.io/eunolabs/eunox-mcp:latest
 ```
 
-### Kubernetes (Helm)
+## One-minute example
+
+**`policy.yaml`** — define which tools the model may call:
+
+```yaml
+version: "1"
+tools:
+  - name: read_file
+    allow: true
+  - name: write_file
+    allow: true
+    conditions:
+      - path_prefix: /data/
+  - name: execute_command
+    allow: false        # deny — model cannot run arbitrary shell commands
+```
+
+**Run it** — wrap your existing MCP server subprocess:
 
 ```bash
-helm install eunox k8s/helm/eunox/ \
-  --namespace eunox-system --create-namespace \
-  -f k8s/helm/eunox/values.yaml
+eunox-mcp proxy --policy policy.yaml -- npx -y @modelcontextprotocol/server-filesystem /data
 ```
 
-See [`docs/deployment.md`](./docs/deployment.md) for the full configuration
-reference, [`docs/deploy-eks.md`](./docs/deploy-eks.md) for EKS, and
-[`docs/deploy-gke.md`](./docs/deploy-gke.md) for GKE.
+That's it. `eunox-mcp` starts the subprocess, negotiates the MCP handshake, and filters every tool call through the policy. Denied calls return a structured error to the model; allowed calls are forwarded transparently. All decisions are appended to `~/.eunox/audit.jsonl` (HMAC-SHA256 signed, OCSF format).
 
-### Other Targets
+## How it works
 
-- **Docker Compose** (dev/pilot): `infra/docker-compose.yml`
-- **Air-gapped**: `k8s/air-gap-images.txt` + `scripts/pull-air-gap-images.sh`
-- **Self-hosted**: [`docs/self-host.md`](./docs/self-host.md)
+- **Intercepts** every `tools/call` JSON-RPC request over `stdio` (default) or HTTP.
+- **Evaluates** the call against your capability manifest — tool name, argument constraints, rate limits, session scope.
+- **Forwards** allowed calls to the upstream MCP server and streams the response back.
+- **Blocks** denied calls and returns a structured error without touching the upstream.
+- **Audits** every decision to `~/.eunox/audit.jsonl` with a cryptographic HMAC chain.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `eunox-mcp proxy --policy <file> -- <cmd> [args...]` | Start the proxy wrapping a subprocess |
+| `eunox-mcp validate --policy <file>` | Validate a capability manifest without running |
+| `eunox-mcp kill --session <id>` | Immediately revoke an active session |
+| `eunox-mcp stats` | Print per-tool call counts from the audit log |
+| `eunox-mcp validate-token --token <jwt>` | Inspect and verify a capability token |
+
+## Claude Desktop integration
+
+Add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "eunox-mcp",
+      "args": [
+        "proxy",
+        "--policy", "/path/to/policy.yaml",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
+      ]
+    }
+  }
+}
+```
 
 ## Documentation
 
-- 🌐 **Website:** [`site/`](./site/) — landing page, quick start, features, deploy guides
-- 🏗 **Architecture:** [`docs/architecture.md`](./docs/architecture.md)
-- 🚀 **Deployment:** [`docs/deployment.md`](./docs/deployment.md)
-- 🔧 **Self-hosting:** [`docs/self-host.md`](./docs/self-host.md)
-- 📡 **OpenTelemetry:** [`docs/otel-integration.md`](./docs/otel-integration.md) — span attributes, Grafana dashboard, sampling
-- ⚖️ **Licensing FAQ:** [`docs/licensing-faq.md`](./docs/licensing-faq.md) — Apache 2.0 vs BUSL-1.1 explained
+- 📋 **Capability manifest guide** — [`docs/capability-manifest-guide.md`](./docs/capability-manifest-guide.md)
+- 🔍 **Audit log & compliance** — [`docs/audit-retention-compliance.md`](./docs/audit-retention-compliance.md)
+- 🏗 **Full platform architecture** — [`docs/architecture.md`](./docs/architecture.md)
+- 🚀 **Deployment (gateway, Helm, EKS, GKE)** — [`docs/deployment.md`](./docs/deployment.md)
+- ⚖️ **Licensing FAQ** — [`docs/licensing-faq.md`](./docs/licensing-faq.md)
 
 ## License
 
 **`cmd/mcp/`** (`eunox-mcp` binary) — **Apache License 2.0** — free to use, embed,
 redistribute, and build on. See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE).
 
-**Everything else** (gateway, issuer, minter, pkg/, internal/, infra) —
-**Business Source License 1.1** — self-hostable for your own use; commercial
-hosted-service offering requires a commercial licence. See [`LICENSE`](./LICENSE).
-
-BUSL-licensed code converts to Apache 2.0 four years after the official project
-launch date. The launch date will be announced publicly and recorded in each
-release's `LICENSE` file. The conversion is automatic and irrevocable — no
-action required on your part.
-
-For a plain-English breakdown of what you can and cannot do, see
-[`docs/licensing-faq.md`](./docs/licensing-faq.md).
+**The rest of the eunox platform** (gateway, issuer, minter, enforcement packages) —
+**Business Source License 1.1**. See [`docs/licensing-faq.md`](./docs/licensing-faq.md)
+for a plain-English breakdown of what you can and cannot do.
