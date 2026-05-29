@@ -4,8 +4,6 @@
 
 **Protected tools and APIs do not need to individually validate capability tokens.** Token validation is centralized at the tools gateway (reference monitor), which serves as the single enforcement point for all agent-initiated actions. The architectural foundation is straightforward: agents have **no direct network path to protected tools** — all traffic must transit the gateway, which performs cryptographic token verification before forwarding authorized requests. Requests to perform actions are funneled through the Tool Gateway (policy enforcement point), which consults the agent's set of Capability Tokens to decide allow or deny — no tool invocation or external side effect is possible unless explicitly authorized.
 
-This model has a direct precedent in internal enterprise systems. The Dynamic Validations Proposal for Titan services establishes that **Titan services rely exclusively on FD's token and will not conduct internal role validations**, in alignment with the agreement that the upstream issuer (FD) is responsible for authoring scenarios that determine what actions are permitted. This is architecturally identical to the capability model: the gateway validates the token, and downstream services trust the gateway's forwarded requests without re-parsing authorization credentials.
-
 To enforce gateway-only access without deep agent framework modifications, the recommended approach combines **network-level controls** (Kubernetes NetworkPolicies, host firewalls) with **proxy environment configuration** (HTTP_PROXY/HTTPS_PROXY injection). AKS natively supports this pattern: when configured with an HTTP proxy, both AKS nodes and Pods are automatically configured with proxy environment variables, so that standard HTTP clients route all external traffic through the designated proxy without code changes. [\[techcommun...rosoft.com\]](https://techcommunity.microsoft.com/blog/coreinfrastructureandsecurityblog/controlling-aks-egress-using-an-http-proxy/4119407)
 
 ---
@@ -18,7 +16,7 @@ Centralizing capability checks at the gateway provides four distinct advantages 
 
 **Minimal changes to tools.** Protected services remain unmodified. They do not need to parse or validate capability tokens, avoiding changes to potentially hundreds of microservices. The gateway validates tokens and forwards authorized requests using its own trusted identity (e.g., mTLS or a service account). Services see nothing unusual — just a call from a known, trusted entity.
 
-**Single source of truth for authorization.** Policy updates (revoking a capability, updating scope definitions, rotating signing keys) happen in one place. Without relying on each service team to correctly implement token checks, the system avoids configuration drift or inconsistent interpretations. The Ghost Options Comparison evaluates proposals along dimensions including trust boundary, blast radius, replay resistance, FD autonomy, and audit quality— centralizing enforcement scores highest across these dimensions because it eliminates the possibility of inconsistent enforcement across distributed services.
+**Single source of truth for authorization.** Policy updates (revoking a capability, updating scope definitions, rotating signing keys) happen in one place. Without relying on each service team to correctly implement token checks, the system avoids configuration drift or inconsistent interpretations.
 
 **Performance efficiency.** Token verification (signature check + claims parsing + scope comparison) is a lightweight operation performed once at the gateway per request. If every microservice duplicated this verification, aggregate latency and CPU overhead would scale linearly with the number of downstream services per request chain.
 
@@ -35,7 +33,7 @@ Tool-level validation is warranted only in narrow scenarios:
 | Extremely high-stakes operations (e.g., financial settlement, destructive infrastructure actions) | **Optional double validation** — gateway validates the token, and the service performs a lightweight secondary check (e.g., verifying the token signature and expiry, or requiring the gateway's mTLS identity). |
 | Tools exposed directly to the internet without a gateway in front                                 | **Mandatory tool-level validation.** This scenario should be avoided in production agent architectures.                                                                                                          |
 
-**Long-term target:** Eliminate all direct agent-to-tool communication paths, making tool-level capability checks unnecessary. The signed-payload design from the Ghost Options Comparison demonstrates this principle: user intent, scope, and parameters are cryptographically bound into a signed request, and a compromised agent cannot mint new requests since it lacks signing material. The tool (in that case, the FD Agent on the host) validates the signed request — but in our model, this validation is performed by the gateway on behalf of all tools.
+**Long-term target:** Eliminate all direct agent-to-tool communication paths, making tool-level capability checks unnecessary.
 
 ---
 

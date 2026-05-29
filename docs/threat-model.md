@@ -44,9 +44,9 @@ Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access contr
 ### 1.2 Component map
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Enterprise Identity Provider (Entra ID / Cognito / GCP CI) │
-└──────────────────────────────┬──────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Enterprise Identity Provider (Entra ID / Cognito / GCP CI)  │
+└──────────────────────────────┬───────────────────────────────┘
                                │ OIDC (verified)
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
