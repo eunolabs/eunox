@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrAsyncPipelineClosed is returned by AsyncPipeline.Append when the
@@ -220,8 +222,17 @@ func (p *AsyncPipeline) drainAvailable() {
 // WriteTimeout is always applied to cap how long a single inner-pipeline
 // Append call may block, preventing a slow or stalled backend from blocking
 // the graceful-shutdown drain indefinitely.
+//
+// I-5 fix: if the entry carries a valid TraceSpanContext (populated by the
+// caller via audit.WithTraceContext), the write context is linked to that span
+// so that audit-write spans appear as children of the originating enforcement
+// span in distributed traces rather than as unlinked root spans.
 func (p *AsyncPipeline) writeEntry(entry *LogEntry) {
-	writeCtx, cancel := context.WithTimeout(context.Background(), p.cfg.WriteTimeout)
+	base := context.Background()
+	if entry.TraceSpanContext.IsValid() {
+		base = trace.ContextWithRemoteSpanContext(base, entry.TraceSpanContext)
+	}
+	writeCtx, cancel := context.WithTimeout(base, p.cfg.WriteTimeout)
 	defer cancel()
 	if err := p.inner.Append(writeCtx, entry); err != nil {
 		p.cfg.Logger.Error("audit: async pipeline write failed",
@@ -229,5 +240,17 @@ func (p *AsyncPipeline) writeEntry(entry *LogEntry) {
 			slog.String("tenant_id", entry.TenantID),
 			slog.String("error", err.Error()),
 		)
+	}
+}
+
+// WithTraceContext stamps entry.TraceSpanContext with the active span from ctx
+// so that the async drain goroutine can link its write spans to the caller's
+// trace. Call this before passing an entry to Append:
+//
+//	audit.WithTraceContext(ctx, entry)
+//	pipeline.Append(ctx, entry)
+func WithTraceContext(ctx context.Context, entry *LogEntry) {
+	if entry != nil {
+		entry.TraceSpanContext = trace.SpanFromContext(ctx).SpanContext()
 	}
 }

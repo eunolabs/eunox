@@ -4,6 +4,7 @@
 package capability
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,11 +39,13 @@ const (
 	defaultCleanupInterval = 60 * time.Second
 )
 
-// tokenCacheEntry holds a cached token payload and its eviction deadline.
+// tokenCacheEntry holds a cached token payload, its eviction deadline, and a
+// pointer to its node in the insertion-order list.
 type tokenCacheEntry struct {
 	payload    *TokenPayload
 	expiresAt  time.Time
-	insertedAt time.Time // for LRU-style eviction when MaxSize is reached
+	insertedAt time.Time
+	listElem   *list.Element // back-pointer for O(1) removal from insertOrder
 }
 
 // TokenCache is an in-process LRU-like cache for verified capability token
@@ -68,8 +71,12 @@ type TokenCache struct {
 	// entries is keyed by the hex-encoded SHA-256 of the raw token string so
 	// that large tokens do not occupy significant key memory.
 	entries map[string]*tokenCacheEntry
-	// insertOrder tracks insertion order for MaxSize eviction.
-	insertOrder []string
+	// insertOrder is a doubly-linked list of cache keys in insertion order
+	// (front = oldest). Each tokenCacheEntry holds a back-pointer to its list
+	// element, enabling O(1) eviction in both Put (oldest entry) and Invalidate
+	// (arbitrary entry). M-5 fix: replaced []string slice (O(n) removal) with
+	// container/list.
+	insertOrder *list.List
 	stopCh      chan struct{}
 	stopped     bool
 }
@@ -91,7 +98,7 @@ func NewTokenCache(cfg TokenCacheConfig) *TokenCache {
 	return &TokenCache{
 		cfg:         cfg,
 		entries:     make(map[string]*tokenCacheEntry, cfg.MaxSize),
-		insertOrder: make([]string, 0, cfg.MaxSize),
+		insertOrder: list.New(),
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -145,9 +152,6 @@ func (c *TokenCache) Put(tokenStr string, payload *TokenPayload) {
 	now := c.cfg.Now()
 
 	// Determine eviction time: min(MaxEntryTTL, token's remaining lifetime).
-	// Use sub-second precision (time.Unix(ExpiresAt, 0).Sub(now)) so that the
-	// cache entry never outlives the token by up to one full second, which
-	// could otherwise happen with integer-second truncation.
 	entryTTL := c.cfg.MaxEntryTTL
 	if payload.ExpiresAt > 0 {
 		tokenRemaining := time.Unix(payload.ExpiresAt, 0).Sub(now)
@@ -170,13 +174,19 @@ func (c *TokenCache) Put(tokenStr string, payload *TokenPayload) {
 	defer c.mu.Unlock()
 
 	if _, exists := c.entries[key]; !exists {
-		// Evict oldest entries if at capacity.
-		for len(c.entries) >= c.cfg.MaxSize && len(c.insertOrder) > 0 {
-			oldest := c.insertOrder[0]
-			c.insertOrder = c.insertOrder[1:]
+		// Evict oldest entries if at capacity (O(1): remove front of list).
+		for c.insertOrder.Len() >= c.cfg.MaxSize {
+			front := c.insertOrder.Front()
+			if front == nil {
+				break
+			}
+			oldest := front.Value.(string)
+			c.insertOrder.Remove(front)
 			delete(c.entries, oldest)
 		}
-		c.insertOrder = append(c.insertOrder, key)
+		// Add new key to back of list and store the element pointer.
+		elem := c.insertOrder.PushBack(key)
+		entry.listElem = elem
 	}
 	c.entries[key] = entry
 }
@@ -184,18 +194,17 @@ func (c *TokenCache) Put(tokenStr string, payload *TokenPayload) {
 // Invalidate removes a specific token from the cache immediately. This is
 // called on explicit revocation events so that the cached entry does not
 // outlive the propagation of the revocation.
+//
+// M-5 fix: removal is now O(1) — each entry holds a back-pointer to its
+// node in the insertion-order doubly-linked list.
 func (c *TokenCache) Invalidate(tokenStr string) {
 	key := tokenKey(tokenStr)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.entries[key]; ok {
+	if entry, ok := c.entries[key]; ok {
 		delete(c.entries, key)
-		// Remove from insertOrder without preserving order for simplicity.
-		for i, k := range c.insertOrder {
-			if k == key {
-				c.insertOrder = append(c.insertOrder[:i], c.insertOrder[i+1:]...)
-				break
-			}
+		if entry.listElem != nil {
+			c.insertOrder.Remove(entry.listElem)
 		}
 	}
 }
@@ -231,16 +240,11 @@ func (c *TokenCache) purgeExpired() {
 	for key, entry := range c.entries {
 		if now.After(entry.expiresAt) {
 			delete(c.entries, key)
+			if entry.listElem != nil {
+				c.insertOrder.Remove(entry.listElem)
+			}
 		}
 	}
-	// Rebuild insertOrder to remove evicted keys.
-	surviving := c.insertOrder[:0]
-	for _, k := range c.insertOrder {
-		if _, ok := c.entries[k]; ok {
-			surviving = append(surviving, k)
-		}
-	}
-	c.insertOrder = surviving
 }
 
 // tokenKey returns the cache key for a raw token string. Using a fixed-size

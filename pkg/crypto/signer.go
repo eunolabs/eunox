@@ -54,3 +54,25 @@ type KeyPair interface {
 	Signer
 	Verifier
 }
+
+// PublicKeyInfo describes a public key for JWKS publication.
+// D-2 fix: moved here from internal/issuer so that external consumers
+// (e.g. additional keystore implementations) can reference it without
+// creating an import cycle through internal/issuer.
+type PublicKeyInfo struct {
+	KeyID     string
+	Algorithm Algorithm
+	PublicKey interface{} // *rsa.PublicKey, *ecdsa.PublicKey, or ed25519.PublicKey
+	Use       string      // "sig"
+}
+
+// KeyStore manages signing keys and JWKS publication.
+// D-2 fix: moved here alongside PublicKeyInfo so that implementations
+// (SingleKeyStore, RotatingKeyStore) and consumers live in sibling packages
+// rather than creating an import from the implementation back to the issuer.
+type KeyStore interface {
+	// CurrentSigner returns the active signing key.
+	CurrentSigner() Signer
+	// PublicKeys returns all public keys for JWKS.
+	PublicKeys() []PublicKeyInfo
+}

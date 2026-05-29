@@ -19,7 +19,6 @@ import (
 
 	"github.com/eunolabs/eunox/pkg/capability"
 	"github.com/eunolabs/eunox/pkg/did"
-	"github.com/eunolabs/eunox/pkg/enforcement"
 	"github.com/eunolabs/eunox/pkg/federation"
 	"github.com/eunolabs/eunox/pkg/killswitch"
 	"github.com/eunolabs/eunox/pkg/observability"
@@ -110,7 +109,9 @@ type Config struct {
 
 // Dependencies holds the injected backends for the gateway.
 type Dependencies struct {
-	Engine          enforcement.Enforcer
+	// Engine is typed as capability.Enforcer (A-1 fix) so the gateway does not
+	// need to import pkg/enforcement just to name the interface.
+	Engine          capability.Enforcer
 	KillSwitch      killswitch.Manager
 	Revocation      revocation.Store
 	JWTVerifier     JWTVerifier

@@ -6,8 +6,8 @@ package issuer
 
 import (
 	"context"
+	stdcrypto "crypto"
 	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -55,21 +55,14 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string) (bool, error)
 }
 
-// KeyStore manages signing keys and JWKS publication.
-type KeyStore interface {
-	// CurrentSigner returns the active signing key.
-	CurrentSigner() crypto.Signer
-	// PublicKeys returns all public keys for JWKS.
-	PublicKeys() []PublicKeyInfo
-}
-
-// PublicKeyInfo describes a public key for JWKS endpoints.
-type PublicKeyInfo struct {
-	KeyID     string
-	Algorithm crypto.Algorithm
-	PublicKey interface{} // *rsa.PublicKey, *ecdsa.PublicKey, or ed25519.PublicKey
-	Use       string      // "sig"
-}
+// KeyStore and PublicKeyInfo are defined in pkg/crypto and re-exported here
+// as type aliases for backward compatibility. D-2 fix: moved to pkg/crypto so
+// that keystore implementations (SingleKeyStore, RotatingKeyStore) and the
+// issuer share the same definition without risking import cycles.
+type (
+	KeyStore      = crypto.KeyStore
+	PublicKeyInfo = crypto.PublicKeyInfo
+)
 
 // Dependencies holds the injected backends for the issuer.
 type Dependencies struct {
@@ -703,6 +696,11 @@ func (app *App) effectiveTTL(requested int, role string) int {
 	return min(requested, maxTTL)
 }
 
+// effectiveAudience returns the audience that should be embedded in a token.
+// Priority: configured Audience > caller-requested audience > issuer URL default.
+// M-2 fix: removed dead-code fallback (line that re-returned config.Audience when
+// both were empty) and added the issuer URL as a meaningful default so that tokens
+// always carry a non-empty aud claim.
 func (app *App) effectiveAudience(requested string) string {
 	if app.config.Audience != "" {
 		return app.config.Audience
@@ -710,48 +708,50 @@ func (app *App) effectiveAudience(requested string) string {
 	if requested != "" {
 		return requested
 	}
-	return app.config.Audience
+	// Fall back to the issuer URL so tokens always have a non-empty audience.
+	// An empty audience would fail gateway-side validation (H-6 fix).
+	return app.config.IssuerURL
 }
 
-func (app *App) signToken(ctx context.Context, payload *capability.TokenPayload) (string, error) {
+// privateKeyProvider is a narrow interface satisfied by *crypto.SoftwareSigner.
+// It lets signToken obtain the raw private key for go-jose without widening the
+// public crypto.Signer interface.
+type privateKeyProvider interface {
+	PrivateKey() stdcrypto.PrivateKey
+}
+
+// signToken serialises payload as a signed JWT using go-jose so that the token
+// format is unconditionally compatible with the go-jose parser used in
+// verifyCapabilityToken, attenuation, and renewal.  M-3 fix: the previous
+// manual base64 construction diverged from go-jose's expected header format;
+// using go-jose end-to-end eliminates that risk.
+func (app *App) signToken(_ context.Context, payload *capability.TokenPayload) (string, error) {
 	signer := app.deps.KeyStore.CurrentSigner()
 	if signer == nil {
 		return "", errors.New("no signing key available")
 	}
 
-	payloadBytes, err := json.Marshal(payload)
+	pkp, ok := signer.(privateKeyProvider)
+	if !ok {
+		return "", fmt.Errorf("signer type %T does not expose private key for JWT signing", signer)
+	}
+
+	joseSigner, err := jose.NewSigner(
+		jose.SigningKey{
+			Algorithm: jose.SignatureAlgorithm(signer.Algorithm()),
+			Key:       pkp.PrivateKey(),
+		},
+		(&jose.SignerOptions{}).WithHeader(jose.HeaderKey("kid"), signer.KeyID()),
+	)
 	if err != nil {
-		return "", fmt.Errorf("marshal payload: %w", err)
+		return "", fmt.Errorf("create JWT signer: %w", err)
 	}
 
-	// Build JWT: header.payload.signature
-	header := map[string]string{
-		"alg": string(signer.Algorithm()),
-		"typ": "JWT",
-		"kid": signer.KeyID(),
-	}
-
-	headerBytes, err := json.Marshal(header)
+	token, err := jwt.Signed(joseSigner).Claims(payload).Serialize()
 	if err != nil {
-		return "", fmt.Errorf("marshal header: %w", err)
+		return "", fmt.Errorf("serialize JWT: %w", err)
 	}
-
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerBytes)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	signingInput := headerB64 + "." + payloadB64
-
-	digest, err := signingDigest(signer.Algorithm(), signingInput)
-	if err != nil {
-		return "", err
-	}
-
-	sig, err := signer.Sign(ctx, digest)
-	if err != nil {
-		return "", fmt.Errorf("sign token: %w", err)
-	}
-
-	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-	return signingInput + "." + sigB64, nil
+	return token, nil
 }
 
 func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capability.TokenPayload, error) {
@@ -828,23 +828,7 @@ func (app *App) verifyCapabilityToken(_ context.Context, tokenStr string) (*capa
 	return &claims, nil
 }
 
-func signingDigest(alg crypto.Algorithm, signingInput string) ([]byte, error) {
-	switch alg {
-	case crypto.EdDSA:
-		return []byte(signingInput), nil
-	case crypto.RS256, crypto.PS256, crypto.ES256:
-		h := sha256.Sum256([]byte(signingInput))
-		return h[:], nil
-	case crypto.RS384, crypto.PS384, crypto.ES384:
-		h := sha512.Sum384([]byte(signingInput))
-		return h[:], nil
-	case crypto.RS512, crypto.PS512, crypto.ES512:
-		h := sha512.Sum512([]byte(signingInput))
-		return h[:], nil
-	default:
-		return nil, fmt.Errorf("unsupported signing algorithm: %s", alg)
-	}
-}
+
 
 func (app *App) requireAdminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

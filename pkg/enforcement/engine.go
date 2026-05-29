@@ -40,9 +40,9 @@ type Clock interface {
 }
 
 // CallCounter is the interface for tracking per-key call counts (used by maxCalls condition).
-type CallCounter interface {
-	IncrementAndGet(ctx context.Context, key string, windowSec int) (int64, error)
-}
+// A-1 fix: the canonical definition lives in pkg/capability.CallCounter; this
+// type alias keeps backward compatibility for callers that import pkg/enforcement.
+type CallCounter = capability.CallCounter
 
 // PolicyEvaluator evaluates a policy condition against an enforce request by
 // calling an external policy decision point (e.g. OPA, Cedar). Implementations
@@ -127,18 +127,14 @@ func New(opts ...Option) *Engine {
 	return e
 }
 
-// Enforcer is the minimal interface that enforcement consumers (e.g. the
-// gateway) should depend on rather than the concrete *Engine type. Accepting
-// Enforcer instead of *Engine decouples the caller from the implementation,
-// making it straightforward to substitute a remote enforcement backend or a
-// test double without modifying call sites.
-type Enforcer interface {
-	// ValidateAction evaluates req against capabilities and returns a decision.
-	ValidateAction(ctx context.Context, req *capability.EnforceRequest, capabilities []capability.Constraint) (capability.EnforceResponse, error)
-	// FindMatchingCapability returns the most specific matching constraint, or
-	// nil if none match.
-	FindMatchingCapability(req *capability.EnforceRequest, capabilities []capability.Constraint) *capability.Constraint
-}
+// Enforcer is the canonical interface for enforcement consumers. A-1 fix: the
+// definition has moved to pkg/capability.Enforcer so that consumers can import
+// the interface without importing this implementation package. This type alias
+// keeps full backward compatibility for callers that still use enforcement.Enforcer.
+type Enforcer = capability.Enforcer
+
+// Compile-time check: *Engine must satisfy the canonical capability.Enforcer.
+var _ capability.Enforcer = (*Engine)(nil)
 
 // RegisterCondition registers a custom condition handler. It overwrites any existing handler
 // for the same condition type.

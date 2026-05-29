@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eunolabs/eunox/pkg/audit/contract"
 	"github.com/eunolabs/eunox/pkg/crypto"
-	"github.com/eunolabs/eunox/pkg/ocsf"
 	"github.com/google/uuid"
 )
 
@@ -34,70 +34,17 @@ var (
 	ErrLockContention = errors.New("audit: advisory lock contention")
 )
 
-// LogEntry represents a single audit event before signing.
-type LogEntry struct {
-	// ID is a unique identifier for the audit record.
-	ID string `json:"id"`
-	// Timestamp is when the event occurred.
-	Timestamp time.Time `json:"timestamp"`
-	// TenantID scopes the record.
-	TenantID string `json:"tenantId"`
-	// EventType classifies the audit event.
-	EventType string `json:"eventType"`
-	// Actor who performed the action.
-	Actor ocsf.Actor `json:"actor"`
-	// Action performed.
-	Action string `json:"action"`
-	// Resource targeted.
-	Resource ocsf.Resource `json:"resource,omitempty"`
-	// Outcome (success/failure).
-	Outcome string `json:"outcome"`
-	// Detail is arbitrary structured data.
-	Detail json.RawMessage `json:"detail,omitempty"`
-	// OCSFEvent optionally holds the full OCSF event for export.
-	OCSFEvent any `json:"ocsfEvent,omitempty"`
-}
-
-// SignedAuditEvidence wraps a signed audit entry with chain integrity metadata.
-type SignedAuditEvidence struct {
-	// Record is the audit log entry.
-	Record LogEntry `json:"record"`
-	// Signature is the digital signature over the canonical record bytes.
-	Signature string `json:"signature"`
-	// Algorithm is the signing algorithm used.
-	Algorithm string `json:"algorithm"`
-	// KeyID identifies the signing key.
-	KeyID string `json:"keyId"`
-	// ChainHash is the HMAC chain hash linking this record to the previous one.
-	ChainHash string `json:"chainHash"`
-	// PreviousHash is the chain hash of the immediately preceding record.
-	PreviousHash string `json:"previousHash"`
-	// ReplicaID identifies which replica produced this record (for per-replica chains).
-	ReplicaID string `json:"replicaId,omitempty"`
-	// SequenceNum is the monotonic sequence within the chain.
-	SequenceNum int64 `json:"sequenceNum"`
-}
-
-// Pipeline is the core interface for appending audit entries.
-type Pipeline interface {
-	// Append adds an audit log entry to the pipeline. The entry is signed,
-	// chained, and persisted atomically.
-	Append(ctx context.Context, entry *LogEntry) error
-	// Close flushes pending operations and releases resources.
-	Close() error
-}
-
-// LedgerBackend is the storage interface for persisting signed audit evidence.
-type LedgerBackend interface {
-	// Append persists a signed audit evidence record.
-	Append(ctx context.Context, evidence *SignedAuditEvidence) error
-	// LastChainHash returns the chain hash of the most recent record.
-	LastChainHash(ctx context.Context) (string, error)
-	// LastSequenceNum returns the latest sequence number.
-	LastSequenceNum(ctx context.Context) (int64, error)
-	// Close releases any held resources.
-	Close() error
-}
+// LogEntry, SignedAuditEvidence, Pipeline, and LedgerBackend are defined in
+// pkg/audit/contract and re-exported here as type aliases so that existing
+// callers (e.g. internal/gateway) continue to compile without modification.
+// D-1 fix: moving the canonical definitions to the contract sub-package
+// decouples interface consumers from the implementation package.
+type (
+	LogEntry            = contract.LogEntry
+	SignedAuditEvidence = contract.SignedAuditEvidence
+	Pipeline            = contract.Pipeline
+	LedgerBackend       = contract.LedgerBackend
+)
 
 // EvidenceSigner signs audit entries to produce tamper-evident records.
 type EvidenceSigner struct {
@@ -216,6 +163,25 @@ func VerifyChainHashWithSecret(chainSecret string, evidence *SignedAuditEvidence
 }
 
 // DefaultPipeline is the standard implementation of the Pipeline interface.
+//
+// # Per-replica chain model (A-2)
+//
+// lastChainHash and lastSeqNum are in-process state. In a multi-replica
+// deployment each pod maintains its own independent chain starting from its
+// own genesis hash; there is no global ordering across replicas. Sequence
+// numbers are monotonically increasing within a single replica with possible
+// gaps after backend failures (see M-1 fix), but they are NOT globally
+// monotonic across replicas.
+//
+// Cross-replica audit integrity verification requires external tooling that
+// groups records by ReplicaID and validates each replica's chain independently.
+// A replica restart calls Initialize to reload lastChainHash and lastSeqNum
+// from the backend, but in-flight writes that were lost in the async pipeline
+// on a crash produce silent gaps in the chain.
+//
+// Operators who need globally monotonic sequence numbers should front the
+// pipeline with a distributed allocator (Postgres sequence or Redis INCR)
+// and set that value as the record's SequenceNum before calling Append.
 type DefaultPipeline struct {
 	signer          *EvidenceSigner
 	backend         LedgerBackend
@@ -337,8 +303,12 @@ func (p *DefaultPipeline) Append(ctx context.Context, entry *LogEntry) error {
 	}
 
 	// Persist to backend.
+	// M-1 fix: do NOT roll back lastSeqNum on failure. If the backend partially
+	// committed before returning an error, rolling back causes the next record to
+	// reuse the same sequence number — a collision that chain integrity tools cannot
+	// detect without a full hash scan. Sequence numbers are monotonically increasing
+	// with possible gaps after failures, not gapless.
 	if err := p.backend.Append(ctx, evidence); err != nil {
-		p.lastSeqNum--
 		return err
 	}
 

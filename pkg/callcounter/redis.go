@@ -50,8 +50,12 @@ func (r *Redis) IncrementAndGet(ctx context.Context, key string, windowSec int) 
 	// Count entries in window
 	countCmd := pipe.ZCard(ctx, windowKey)
 
-	// Set TTL for cleanup
-	pipe.Expire(ctx, windowKey, time.Duration(windowSec)*time.Second+time.Second)
+	// Set TTL for cleanup. M-6 fix: use a 2× safety margin instead of +1 s so
+	// that entries at the start of the window are not evicted before the
+	// ZREMRANGEBYSCORE cleanup fires under high clock skew (>1 s between app
+	// and Redis). The TTL is used only for key cleanup; the margin has negligible
+	// storage cost.
+	pipe.Expire(ctx, windowKey, time.Duration(windowSec)*2*time.Second)
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
