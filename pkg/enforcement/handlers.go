@@ -335,10 +335,26 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 			}
 		}
 
-		// Check column restrictions if specified
+		// Check column restrictions if specified.
+		// H-3 fix: when the capability defines column restrictions for a table, an
+		// empty access.Columns slice must be explicitly denied. Previously the guard
+		// `if hasColumnRestriction && len(access.Columns) > 0` skipped the check
+		// entirely for empty slices, allowing agents to bypass column-level ACLs by
+		// omitting the columns field.
 		if at.Columns != nil {
 			allowedCols, hasColumnRestriction := at.Columns[access.Table]
-			if hasColumnRestriction && len(access.Columns) > 0 {
+			if hasColumnRestriction {
+				if len(access.Columns) == 0 {
+					return &ConditionError{
+						Code:          capability.ErrCodeMissingContext,
+						ConditionType: capability.ConditionTypeAllowedTables,
+						Message:       fmt.Sprintf("column list required for table %q (column restrictions are configured)", access.Table),
+						Details: map[string]interface{}{
+							"table":          access.Table,
+							"allowedColumns": allowedCols,
+						},
+					}
+				}
 				colSet := make(map[string]bool, len(allowedCols))
 				for _, c := range allowedCols {
 					colSet[c] = true

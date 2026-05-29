@@ -553,6 +553,45 @@ func TestEngine_AllowedTables_DenyColumn(t *testing.T) {
 	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 }
 
+// TestEngine_AllowedTables_EmptyColumnsWithRestriction is the H-3 regression test.
+//
+// When a capability defines column restrictions for a table, an agent that sends
+// an empty columns slice must be denied. Previously, `if hasColumnRestriction &&
+// len(access.Columns) > 0` skipped the column check entirely for an empty slice,
+// allowing full-column access to tables with configured restrictions.
+func TestEngine_AllowedTables_EmptyColumnsWithRestriction(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-h3",
+		ToolName:  "db:query",
+		Context: capability.EnforceRequestContext{
+			Tables: []capability.TableAccess{
+				{Table: "payments", Columns: []string{}}, // empty — bypasses column ACL pre-fix
+			},
+		},
+	}
+
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "db:query",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedTablesCondition{
+					Tables:  []string{"payments"},
+					Columns: map[string][]string{"payments": {"amount", "currency"}},
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision, "empty column list must be denied when column restrictions exist (H-3)")
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ConditionTypeAllowedTables, resp.Denial.ConditionType)
+}
+
 func TestEngine_RecipientDomain_Allow(t *testing.T) {
 	engine := enforcement.New()
 	ctx := context.Background()

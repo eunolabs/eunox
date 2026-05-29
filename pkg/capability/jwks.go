@@ -63,7 +63,7 @@ func NewJWKSClient(cfg JWKSClientConfig) *JWKSClient {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &JWKSClient{
+	client := &JWKSClient{
 		jwksURI:    cfg.JWKSURL,
 		audience:   cfg.Audience,
 		requireKID: cfg.RequireKID,
@@ -72,6 +72,13 @@ func NewJWKSClient(cfg JWKSClientConfig) *JWKSClient {
 		breaker:    cfg.Breaker,
 		cacheTTL:   cfg.CacheTTL,
 	}
+	if cfg.Audience == "" {
+		// H-6: Audience should always be set. Without it, tokens whose aud claim
+		// is non-empty will be rejected (fail-closed), but a misconfigured gateway
+		// accepting any empty-audience token is also insecure. Set GATEWAY_AUDIENCE.
+		cfg.Logger.Warn("JWKSClient created without an Audience; all tokens with a non-empty aud claim will be rejected")
+	}
+	return client
 }
 
 // jwksAlgorithms lists all algorithms accepted for capability tokens.
@@ -136,11 +143,15 @@ func (c *JWKSClient) VerifyToken(ctx context.Context, tokenStr string) (*TokenPa
 			return nil, fmt.Errorf("validate claims: token missing sub claim")
 		}
 
+		// H-6 fix: always set AnyAudience so that an unconfigured (empty) audience
+		// causes all tokens to fail — fail-closed rather than accepting tokens for
+		// any audience. When audience is empty the expected set is [""], which will
+		// only match tokens whose aud claim is also ""; a real token with aud set to
+		// a service name is rejected, preventing cross-audience replay.
+		// NewJWKSClient logs a warning when audience is empty.
 		expected := jwt.Expected{
-			Time: time.Now(),
-		}
-		if c.audience != "" {
-			expected.AnyAudience = []string{c.audience}
+			Time:        time.Now(),
+			AnyAudience: []string{c.audience},
 		}
 		if err := claims.ValidateWithLeeway(expected, time.Minute); err != nil {
 			return nil, fmt.Errorf("validate claims: %w", err)

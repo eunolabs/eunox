@@ -137,7 +137,8 @@ that the child is at least as restrictive:
 
 **LOCATION:** `internal/gateway/handlers.go:208-230`  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** DPoP verification fires only `if payload.DPoP != nil` (line 209). There
 is no check that a token carrying a `cnf.jkt` confirmation claim _must_ present a
@@ -163,13 +164,20 @@ if claims.Confirmation != nil && claims.Confirmation.JKT != "" && payload.DPoP =
 }
 ```
 
+**IMPLEMENTATION:**
+- `internal/gateway/handlers.go` — added a mandatory DPoP check immediately after
+  the token cache/verify block in `handleEnforce`. When `claims.Confirmation.JKT`
+  is non-empty and no DPoP proof was supplied, the handler returns `DecisionDeny`
+  with `ErrCodeAuthorizationFailed` before any enforcement engine evaluation.
+
 ---
 
 ### H-2 — Resilient revocation cache stores `revoked=false`, breaking fail-closed semantics
 
 **LOCATION:** `pkg/revocation/resilient_redis.go:72`  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** `r.cache.Put(jti, revoked)` on the success path (line 72) stores
 `false` for non-revoked tokens. During a Redis outage, `r.cache.Get(jti)` returns
@@ -193,13 +201,25 @@ if revoked {
 return revoked, nil
 ```
 
+**IMPLEMENTATION:**
+- `pkg/revocation/resilient_redis.go` — `r.cache.Put(jti, revoked)` replaced with
+  `if revoked { r.cache.Put(jti, true) }`. Non-revoked tokens are no longer cached,
+  so a Redis outage causes `IsRevoked` to fail-closed (return `true`) rather than
+  serving a stale `false` from cache.
+- `pkg/revocation/resilient_redis_test.go` — replaced `TestResilientRedis_CacheServesStale`
+  (which asserted the now-removed insecure behaviour) with two new tests:
+  `TestResilientRedis_FailClosedDuringOutage` (non-revoked token → blocked during outage)
+  and `TestResilientRedis_RevokedTokenCachedAndServedDuringOutage` (revoked token →
+  still blocked during outage because the positive signal is still cached).
+
 ---
 
 ### H-3 — Empty `access.Columns` bypasses column-level restrictions in `allowedTables`
 
 **LOCATION:** `pkg/enforcement/handlers.go:339-364` (`handleAllowedTables`)  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** The inner condition at line 341 is `if hasColumnRestriction && len(access.Columns) > 0`.
 When `access.Columns` is an empty slice, the column check is skipped entirely even
@@ -228,13 +248,23 @@ if at.Columns != nil {
 }
 ```
 
+**IMPLEMENTATION:**
+- `pkg/enforcement/handlers.go` — `handleAllowedTables` restructured so that when
+  `hasColumnRestriction` is true and `len(access.Columns) == 0`, a `ConditionError`
+  with `ErrCodeMissingContext` is returned immediately. The existing per-column
+  allowlist check runs only when a non-empty column list is provided.
+- `pkg/enforcement/enforcement_test.go` — `TestEngine_AllowedTables_EmptyColumnsWithRestriction`
+  added: sends `Columns: []string{}` against a capability with column restrictions and
+  asserts `DecisionDeny` with `ConditionTypeAllowedTables`.
+
 ---
 
 ### H-4 — SCIM PATCH has a data race on the shared user pointer
 
 **LOCATION:** `internal/issuer/scim.go:500-525` (`handleSCIMPatchUser`)  
 **CATEGORY:** Implementation  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** `GetUser` (line 489) acquires a read lock, returns the raw `*SCIMUser`
 pointer from the map, and releases the lock. `applySCIMUserPatch` (line 514) then
@@ -250,13 +280,21 @@ request are silently overwritten by a concurrent one.
 `Clone()` method to `SCIMUser` and `SCIMGroup` that copies the struct and its slice
 fields, and return that from the Get methods.
 
+**IMPLEMENTATION:**
+- `internal/issuer/scim.go` — `SCIMUser.Clone()` added (deep-copies Schemas, Emails,
+  Groups slices); `SCIMGroup.Clone()` added (deep-copies Schemas, Members slices).
+  `GetUser` and `GetGroup` now return `u.Clone()` / `g.Clone()` instead of the raw
+  map pointer, so each PATCH handler works on an exclusively owned copy. The modified
+  copy is written back under the write lock via `UpdateUser`/`UpdateGroup`.
+
 ---
 
 ### H-5 — SCIMStore is purely in-memory; all provisioned identities lost on restart
 
 **LOCATION:** `internal/issuer/scim.go:28-44` (`SCIMStore`)  
 **CATEGORY:** Architecture  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed (interface + compile check) — 2026-05-28; Postgres persistence tracked separately
 
 **PROBLEM:** `SCIMStore` is a plain in-memory map. Restarts, deployments, and
 crashes wipe all SCIM-provisioned users and groups.
@@ -271,13 +309,25 @@ changes made between restarts.
 to an external identity store. The in-memory implementation is acceptable only as a
 test double behind an interface.
 
+**IMPLEMENTATION:**
+- `internal/issuer/scim.go` — `SCIMRepository` interface extracted, covering all
+  CRUD operations for users and groups. `var _ SCIMRepository = (*SCIMStore)(nil)`
+  compile-time guard added to keep `SCIMStore` in sync with the interface.
+- `internal/issuer/app.go` — `App.scimStore` field type changed from `*SCIMStore`
+  to `SCIMRepository`, enabling injection of any conforming implementation (e.g., a
+  future Postgres-backed store) without touching the handler layer.
+- Postgres persistence is intentionally deferred: the interface boundary is in place;
+  a `pgSCIMRepository` implementation can be added independently once the schema
+  migrations are authored.
+
 ---
 
 ### H-6 — Audience claim not validated when gateway `Audience` config is empty
 
 **LOCATION:** `pkg/capability/jwks.go:139-146` (`JWKSClient.VerifyToken`)  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** High
+**SEVERITY:** High  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** Audience validation fires only `if c.audience != ""` (line 142). A
 gateway deployed without `GATEWAY_AUDIENCE` set accepts any token for any audience.
@@ -289,6 +339,20 @@ the issuer intended them for a different audience.
 **FIX:** Make `Audience` a required field in both `Config` (gateway config) and
 `JWKSVerifierConfig`. Fail fast at startup if empty. Remove the nil-guard and always
 set `expected.AnyAudience`.
+
+**IMPLEMENTATION:**
+- `pkg/capability/jwks.go` — the `if c.audience != ""` guard removed from
+  `VerifyToken`. `expected.AnyAudience` is now always set to `[]string{c.audience}`.
+  An unconfigured (empty) audience causes all tokens whose `aud` claim is non-empty
+  to be rejected — fail-closed. `NewJWKSClient` logs a `Warn` when `Audience` is
+  empty to surface misconfiguration at startup.
+- `cmd/gateway/main.go` — startup validation added: if `GATEWAY_AUDIENCE` is unset
+  or blank, `run()` returns a fatal error before the verifier is constructed.
+- `internal/gateway/jwks_verifier_test.go` — three tests updated to set a matching
+  `Audience` in both verifier config and token claims (`TestJWKSVerifier_VerifyToken_Success`,
+  `TestJWKSVerifier_VerifyToken_CachesKeys`, `TestJWKSVerifier_TracingTransport`).
+  Existing negative-path tests (`TestJWKSVerifier_VerifyToken_AudienceCheck`) continue
+  to pass unchanged.
 
 ---
 

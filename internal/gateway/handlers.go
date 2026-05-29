@@ -235,6 +235,27 @@ func (app *App) handleEnforce(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	// H-1 fix: a sender-constrained token (cnf.jkt set) MUST present a DPoP
+	// proof. Without this check, a stolen JKT-bound token can be replayed
+	// against /api/v1/enforce without supplying any proof-of-possession.
+	// handleProxy (line ~529) has the equivalent check; the two paths must
+	// remain in sync.
+	if claims.Confirmation != nil && claims.Confirmation.JKT != "" && payload.DPoP == nil {
+		resp := capability.EnforceResponse{
+			RequestID: requestID,
+			Decision:  capability.DecisionDeny,
+			DecidedAt: time.Now().UTC().Format(time.RFC3339),
+			Denial: &capability.DenialInfo{
+				Code:    capability.ErrCodeAuthorizationFailed,
+				Message: "DPoP proof required for sender-constrained token",
+			},
+		}
+		setDecision(span, "deny")
+		app.recordMetric("deny", start)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	// Check DPoP replay
 	if payload.DPoP != nil {
 		_, dpopSpan := gatewayTracer.Start(ctx, "gateway.enforce.dpop_check")

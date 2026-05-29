@@ -136,6 +136,72 @@ const (
 	scimPatchSchema = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 )
 
+// SCIMRepository defines the storage contract for SCIM 2.0 resources.
+//
+// H-5 fix: abstracting the store behind this interface decouples the HTTP
+// handlers from the in-memory implementation and allows a Postgres-backed
+// implementation to be substituted for multi-replica deployments without
+// changing any handler code.
+type SCIMRepository interface {
+	CreateUser(user *SCIMUser)
+	GetUser(id string) (*SCIMUser, bool)
+	ListUsers(filter string) []*SCIMUser
+	UpdateUser(user *SCIMUser)
+	DeleteUser(id string) bool
+
+	CreateGroup(group *SCIMGroup)
+	GetGroup(id string) (*SCIMGroup, bool)
+	ListGroups(filter string) []*SCIMGroup
+	UpdateGroup(group *SCIMGroup)
+	DeleteGroup(id string) bool
+}
+
+// Ensure SCIMStore satisfies SCIMRepository at compile time.
+var _ SCIMRepository = (*SCIMStore)(nil)
+
+// --- Clone helpers (H-4 fix) ---
+
+// Clone returns a deep copy of the SCIMUser, safe to mutate without holding
+// any store lock. GetUser returns a clone to prevent the PATCH handler's
+// applySCIMUserPatch from racing with concurrent PATCH requests on the shared
+// map pointer.
+func (u *SCIMUser) Clone() *SCIMUser {
+	if u == nil {
+		return nil
+	}
+	c := *u // copy scalar fields and slice headers
+	if u.Schemas != nil {
+		c.Schemas = make([]string, len(u.Schemas))
+		copy(c.Schemas, u.Schemas)
+	}
+	if u.Emails != nil {
+		c.Emails = make([]SCIMEmail, len(u.Emails))
+		copy(c.Emails, u.Emails)
+	}
+	if u.Groups != nil {
+		c.Groups = make([]SCIMGroupRef, len(u.Groups))
+		copy(c.Groups, u.Groups)
+	}
+	return &c
+}
+
+// Clone returns a deep copy of the SCIMGroup.
+func (g *SCIMGroup) Clone() *SCIMGroup {
+	if g == nil {
+		return nil
+	}
+	c := *g
+	if g.Schemas != nil {
+		c.Schemas = make([]string, len(g.Schemas))
+		copy(c.Schemas, g.Schemas)
+	}
+	if g.Members != nil {
+		c.Members = make([]SCIMMember, len(g.Members))
+		copy(c.Members, g.Members)
+	}
+	return &c
+}
+
 // --- Store Methods ---
 
 // CreateUser adds a user to the store.
@@ -146,11 +212,14 @@ func (s *SCIMStore) CreateUser(user *SCIMUser) {
 }
 
 // GetUser retrieves a user by ID.
+// H-4 fix: returns a deep copy so callers can mutate the struct (e.g., during
+// PATCH) without holding the store lock, eliminating the data race between
+// concurrent PATCH requests that obtained the same map pointer.
 func (s *SCIMStore) GetUser(id string) (*SCIMUser, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	u, ok := s.users[id]
-	return u, ok
+	return u.Clone(), ok
 }
 
 // ListUsers returns all users, optionally filtered by SCIM filter expression.
@@ -194,11 +263,12 @@ func (s *SCIMStore) CreateGroup(group *SCIMGroup) {
 }
 
 // GetGroup retrieves a group by ID.
+// H-4 fix: returns a deep copy for the same reason as GetUser.
 func (s *SCIMStore) GetGroup(id string) (*SCIMGroup, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	g, ok := s.groups[id]
-	return g, ok
+	return g.Clone(), ok
 }
 
 // ListGroups returns all groups, optionally filtered by SCIM filter expression.

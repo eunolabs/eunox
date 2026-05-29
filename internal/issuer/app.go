@@ -91,7 +91,9 @@ type App struct {
 	config    Config
 	deps      Dependencies
 	router    chi.Router
-	scimStore *SCIMStore
+	// H-5 fix: typed as SCIMRepository so a Postgres-backed implementation can
+	// be injected for multi-replica deployments without changing handler code.
+	scimStore SCIMRepository
 }
 
 // New creates a new issuer App with the given configuration and dependencies.

@@ -66,8 +66,11 @@ func TestJWKSVerifier_VerifyToken_Success(t *testing.T) {
 	t.Parallel()
 	key, kid, srv := newTestJWKS(t)
 
+	// H-6 fix: Audience is now always validated — the verifier must have a
+	// matching audience for the token to be accepted.
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
 		JWKSURL:  srv.URL,
+		Audience: "gateway",
 		CacheTTL: 1 * time.Second,
 	})
 
@@ -261,8 +264,10 @@ func TestJWKSVerifier_VerifyToken_CachesKeys(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
+	// H-6 fix: audience must match the token's aud claim.
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
 		JWKSURL:  srv.URL,
+		Audience: "test-gateway",
 		CacheTTL: 10 * time.Minute, // long cache
 	})
 
@@ -270,6 +275,7 @@ func TestJWKSVerifier_VerifyToken_CachesKeys(t *testing.T) {
 	claims := map[string]interface{}{
 		"iss": "https://issuer.example.com",
 		"sub": "user-123",
+		"aud": "test-gateway",
 		"iat": now.Unix(),
 		"exp": now.Add(1 * time.Hour).Unix(),
 	}
@@ -311,8 +317,10 @@ func TestJWKSVerifier_TracingTransport(t *testing.T) {
 	key, kid, srv := newTestJWKS(t)
 
 	// The verifier wraps the default HTTP client in a tracingTransport.
+	// H-6 fix: audience must be set and match the token.
 	verifier := gateway.NewJWKSVerifier(gateway.JWKSVerifierConfig{
 		JWKSURL:  srv.URL,
+		Audience: "test-gateway",
 		CacheTTL: time.Minute,
 	})
 
@@ -320,6 +328,7 @@ func TestJWKSVerifier_TracingTransport(t *testing.T) {
 	claims := map[string]interface{}{
 		"iss":           "https://issuer.example.com",
 		"sub":           "traced-user",
+		"aud":           "test-gateway",
 		"iat":           now.Unix(),
 		"exp":           now.Add(time.Hour).Unix(),
 		"schemaVersion": "1.0",

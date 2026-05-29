@@ -32,7 +32,11 @@ func TestResilientRedis_FailClosed_UnknownToken(t *testing.T) {
 	assert.Equal(t, redisfailover.Degraded, reporter.State())
 }
 
-func TestResilientRedis_CacheServesStale(t *testing.T) {
+// TestResilientRedis_FailClosedDuringOutage verifies the H-2 fix: non-revoked
+// tokens are NOT cached. During a Redis outage, every token that was previously
+// seen as valid (revoked=false) fails closed rather than being served from a
+// stale "not revoked" cache entry. Only confirmed revocations are cached.
+func TestResilientRedis_FailClosedDuringOutage(t *testing.T) {
 	monitor := redisfailover.NewMonitor()
 	reporter := monitor.Register("revocation")
 
@@ -43,24 +47,56 @@ func TestResilientRedis_CacheServesStale(t *testing.T) {
 		&revocation.ResilientRedisConfig{StaleTTL: 60 * time.Second},
 	)
 
-	// First call: Redis healthy, token not revoked
+	// First call: Redis healthy, token not revoked (result is NOT cached).
 	revoked, err := store.IsRevoked(context.Background(), "token-1")
 	require.NoError(t, err)
 	assert.False(t, revoked)
 	assert.Equal(t, redisfailover.Healthy, reporter.State())
 
-	// Simulate Redis going down
+	// Simulate Redis going down.
 	inner.SetFailing(true)
 
-	// Token-1 should be served from cache (not revoked)
+	// token-1 was NOT cached (it was not revoked). On Redis failure it is treated
+	// as revoked (fail-closed) rather than served as valid from a stale cache.
 	revoked, err = store.IsRevoked(context.Background(), "token-1")
 	require.NoError(t, err)
-	assert.False(t, revoked, "cached token should retain its state")
+	assert.True(t, revoked, "non-revoked token must fail-closed during Redis outage (H-2 fix)")
 
-	// Unknown token during outage: fail-closed
+	// Unknown token during outage: also fail-closed.
 	revoked, err = store.IsRevoked(context.Background(), "new-token")
 	require.NoError(t, err)
 	assert.True(t, revoked, "unknown token during outage must fail-closed")
+}
+
+// TestResilientRedis_RevokedTokenCachedAndServedDuringOutage verifies that a
+// confirmed revocation IS cached so revoked tokens remain blocked even when
+// Redis is unreachable.
+func TestResilientRedis_RevokedTokenCachedAndServedDuringOutage(t *testing.T) {
+	monitor := redisfailover.NewMonitor()
+	reporter := monitor.Register("revocation")
+
+	inner := &toggleStore{store: revocation.NewInMemory()}
+	store := revocation.NewResilientRedisFromStore(
+		inner,
+		reporter,
+		&revocation.ResilientRedisConfig{StaleTTL: 60 * time.Second},
+	)
+
+	// Revoke the token while Redis is healthy.
+	require.NoError(t, inner.store.Revoke(context.Background(), "revoked-tok", 0))
+
+	// First read: Redis healthy, token IS revoked → cached as true.
+	revoked, err := store.IsRevoked(context.Background(), "revoked-tok")
+	require.NoError(t, err)
+	assert.True(t, revoked)
+
+	// Simulate Redis outage.
+	inner.SetFailing(true)
+
+	// Revoked status is served from cache even during the outage.
+	revoked, err = store.IsRevoked(context.Background(), "revoked-tok")
+	require.NoError(t, err)
+	assert.True(t, revoked, "revoked token must remain blocked during Redis outage (served from cache)")
 }
 
 func TestResilientRedis_Revoke_CachesLocally(t *testing.T) {

@@ -133,6 +133,14 @@ func run() error {
 
 	engine := enforcement.New(enforcement.WithCallCounter(backends.counter))
 
+	// H-6 fix: GatewayAudience is required. An empty audience causes every token
+	// with a real audience claim to be rejected (fail-closed), but also allows
+	// tokens with no audience to pass unchecked — creating cross-service replay
+	// risk. The config default is "tool-gateway"; fail fast if it was cleared.
+	if strings.TrimSpace(cfg.GatewayAudience) == "" {
+		return fmt.Errorf("GATEWAY_AUDIENCE must be set; an empty audience disables audience validation for capability tokens")
+	}
+
 	// JWT verifier — JWKS-based when configured; noop fallback for development.
 	var jwtVerifier gateway.JWTVerifier
 	if cfg.IssuerJWKSURL != "" {

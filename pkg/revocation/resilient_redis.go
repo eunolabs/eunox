@@ -69,7 +69,14 @@ func (r *ResilientRedis) IsRevoked(ctx context.Context, jti string) (bool, error
 	}
 
 	r.reporter.MarkHealthy()
-	r.cache.Put(jti, revoked)
+	// H-2 fix: only cache the positive revocation signal. Caching revoked=false
+	// would allow a token revoked during a Redis outage to be served as valid
+	// for up to StaleTTL seconds because the in-memory cache would return false
+	// on every lookup. Fail-closed semantics require that only confirmed revocations
+	// are cached; everything else is re-checked against Redis on the next request.
+	if revoked {
+		r.cache.Put(jti, true)
+	}
 	return revoked, nil
 }
 
