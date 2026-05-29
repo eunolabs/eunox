@@ -406,21 +406,21 @@ and is a no-op (noop provider) when `OTEL_EXPORTER_OTLP_ENDPOINT` is not set.
 
 These are standard [OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) and must **not** be prefixed with a service name:
 
-| Variable | Default | Description |
-|---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty — tracing disabled)_ | gRPC collector address, e.g. `otel-collector:4317` |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set `true` to disable TLS (same-cluster collectors) |
-| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Trace sampling ratio in `[0.0, 1.0]` |
+| Variable                      | Default                      | Description                                         |
+| ----------------------------- | ---------------------------- | --------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty — tracing disabled)_ | gRPC collector address, e.g. `otel-collector:4317`  |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false`                      | Set `true` to disable TLS (same-cluster collectors) |
+| `OTEL_TRACES_SAMPLER_ARG`     | `1.0`                        | Trace sampling ratio in `[0.0, 1.0]`                |
 
 ### Service Names
 
 Spans are emitted under the following `service.name` resource attributes:
 
-| Service | `service.name` |
-|---|---|
-| Gateway | `gateway` |
-| Issuer | `issuer` |
-| Minter | `minter` |
+| Service         | `service.name`    |
+| --------------- | ----------------- |
+| Gateway         | `gateway`         |
+| Issuer          | `issuer`          |
+| Minter          | `minter`          |
 | Posture Emitter | `posture-emitter` |
 
 ### Example: Jaeger (development)
@@ -431,8 +431,8 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "4317:4317"     # OTLP gRPC
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC
 
 environment:
   OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
@@ -448,9 +448,9 @@ env:
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
     value: "otel-collector.observability.svc.cluster.local:4317"
   - name: OTEL_EXPORTER_OTLP_INSECURE
-    value: "true"          # TLS termination at collector
+    value: "true" # TLS termination at collector
   - name: OTEL_TRACES_SAMPLER_ARG
-    value: "0.1"           # 10 % head-based sampling in production
+    value: "0.1" # 10 % head-based sampling in production
 ```
 
 ---
@@ -479,79 +479,79 @@ deployments. It satisfies the multi-AZ reference architecture requirement from
 ### Diagram
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  Region: us-east-1 (or equivalent)                                           │
-│                                                                              │
-│  ┌────────────────────────────┐   ┌────────────────────────────┐             │
-│  │  Availability Zone A       │   │  Availability Zone B       │             │
-│  │                            │   │                            │             │
-│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │             │
-│  │  │  Gateway Pod (×N/2)  │  │   │  │  Gateway Pod (×N/2)  │  │             │
-│  │  │  port 3002 (public)  │  │   │  │  port 3002 (public)  │  │             │
-│  │  │  port 3003 (admin)   │  │   │  │  port 3003 (admin)   │  │             │
-│  │  └──────────┬───────────┘  │   │  └──────────┬───────────┘  │             │
-│  │             │              │   │             │              │             │
-│  │  ┌──────────┴───────────┐  │   │  ┌──────────┴───────────┐  │             │
-│  │  │  Issuer Pod (×N/2)   │  │   │  │  Issuer Pod (×N/2)   │  │             │
-│  │  │  port 3001           │  │   │  │  port 3001           │  │             │
-│  │  └──────────────────────┘  │   │  └──────────────────────┘  │             │
-│  │                            │   │                            │             │
-│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │             │
-│  │  │ Redis Sentinel A     │  │   │  │ Redis Sentinel B     │  │             │
-│  │  │ (voting member)      │◄─┼───┼─►│ (voting member)      │  │             │
-│  │  └──────────────────────┘  │   │  └──────────────────────┘  │             │
-│  │                            │   │                            │             │
-│  └────────────────────────────┘   └────────────────────────────┘             │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────┐             │
-│  │  Shared Services (region-scoped, AZ-agnostic)               │             │
-│  │                                                             │             │
-│  │  ┌───────────────────┐  ┌──────────────────┐               │             │
-│  │  │  Redis Primary    │  │  Redis Replica   │               │             │
-│  │  │  (AZ A)           │  │  (AZ B)          │               │             │
-│  │  │                   │◄─┤  (async repl.)   │               │             │
-│  │  └───────────────────┘  └──────────────────┘               │             │
-│  │                                                             │             │
-│  │  ┌───────────────────┐  ┌──────────────────┐               │             │
-│  │  │ PostgreSQL        │  │ PostgreSQL       │               │             │
-│  │  │ Primary (AZ A)    │  │ Read Replica     │               │             │
-│  │  │ (audit writes)    │  │ (AZ B)           │               │             │
-│  │  └───────────────────┘  └──────────────────┘               │             │
-│  │                                                             │             │
-│  │  ┌─────────────────────────────────────────┐               │             │
-│  │  │  L7 Load Balancer / Kubernetes Ingress  │               │             │
-│  │  │  (routes :443 → gateway :3002)          │               │             │
-│  │  │  PodDisruptionBudget: minAvailable=1    │               │             │
-│  │  └─────────────────────────────────────────┘               │             │
-│  │                                                             │             │
-│  └─────────────────────────────────────────────────────────────┘             │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│  Region: us-east-1 (or equivalent)                                │
+│                                                                   │
+│  ┌────────────────────────────┐   ┌────────────────────────────┐  │
+│  │  Availability Zone A       │   │  Availability Zone B       │  │
+│  │                            │   │                            │  │
+│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │  │
+│  │  │  Gateway Pod (×N/2)  │  │   │  │  Gateway Pod (×N/2)  │  │  │
+│  │  │  port 3002 (public)  │  │   │  │  port 3002 (public)  │  │  │
+│  │  │  port 3003 (admin)   │  │   │  │  port 3003 (admin)   │  │  │
+│  │  └──────────┬───────────┘  │   │  └──────────┬───────────┘  │  │
+│  │             │              │   │             │              │  │
+│  │  ┌──────────┴───────────┐  │   │  ┌──────────┴───────────┐  │  │
+│  │  │  Issuer Pod (×N/2)   │  │   │  │  Issuer Pod (×N/2)   │  │  │
+│  │  │  port 3001           │  │   │  │  port 3001           │  │  │
+│  │  └──────────────────────┘  │   │  └──────────────────────┘  │  │
+│  │                            │   │                            │  │
+│  │  ┌──────────────────────┐  │   │  ┌──────────────────────┐  │  │
+│  │  │ Redis Sentinel A     │  │   │  │ Redis Sentinel B     │  │  │
+│  │  │ (voting member)      │◄─┼───┼─►│ (voting member)      │  │  │
+│  │  └──────────────────────┘  │   │  └──────────────────────┘  │  │
+│  │                            │   │                            │  │
+│  └────────────────────────────┘   └────────────────────────────┘  │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Shared Services (region-scoped, AZ-agnostic)               │  │
+│  │                                                             │  │
+│  │  ┌───────────────────┐  ┌──────────────────┐                │  │
+│  │  │  Redis Primary    │  │  Redis Replica   │                │  │
+│  │  │  (AZ A)           │  │  (AZ B)          │                │  │
+│  │  │                   │◄─┤  (async repl.)   │                │  │
+│  │  └───────────────────┘  └──────────────────┘                │  │
+│  │                                                             │  │
+│  │  ┌───────────────────┐  ┌──────────────────┐                │  │
+│  │  │ PostgreSQL        │  │ PostgreSQL       │                │  │
+│  │  │ Primary (AZ A)    │  │ Read Replica     │                │  │
+│  │  │ (audit writes)    │  │ (AZ B)           │                │  │
+│  │  └───────────────────┘  └──────────────────┘                │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────┐                │  │
+│  │  │  L7 Load Balancer / Kubernetes Ingress  │                │  │
+│  │  │  (routes :443 → gateway :3002)          │                │  │
+│  │  │  PodDisruptionBudget: minAvailable=1    │                │  │
+│  │  └─────────────────────────────────────────┘                │  │
+│  │                                                             │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ### Failure Domain Labels
 
-| Component | Failure Domain | AZ Affinity |
-|-----------|---------------|-------------|
-| Gateway pods | Pod-level | Spread across AZ A and AZ B via `topologySpreadConstraints` |
-| Issuer pods | Pod-level | Spread across AZ A and AZ B |
-| Redis Sentinels | Node-level | One sentinel per AZ; 3rd sentinel on any AZ for quorum |
-| Redis Primary | Host-level | AZ A (Sentinel promotes replica on failure) |
-| Redis Replica | Host-level | AZ B (receives async replication from Primary) |
-| PostgreSQL Primary | Host-level | AZ A |
-| PostgreSQL Read Replica | Host-level | AZ B (audit query reads; enforcement does not depend on it) |
-| Load Balancer | Regional | Spans both AZs; distributes to healthy gateway pods |
+| Component               | Failure Domain | AZ Affinity                                                 |
+| ----------------------- | -------------- | ----------------------------------------------------------- |
+| Gateway pods            | Pod-level      | Spread across AZ A and AZ B via `topologySpreadConstraints` |
+| Issuer pods             | Pod-level      | Spread across AZ A and AZ B                                 |
+| Redis Sentinels         | Node-level     | One sentinel per AZ; 3rd sentinel on any AZ for quorum      |
+| Redis Primary           | Host-level     | AZ A (Sentinel promotes replica on failure)                 |
+| Redis Replica           | Host-level     | AZ B (receives async replication from Primary)              |
+| PostgreSQL Primary      | Host-level     | AZ A                                                        |
+| PostgreSQL Read Replica | Host-level     | AZ B (audit query reads; enforcement does not depend on it) |
+| Load Balancer           | Regional       | Spans both AZs; distributes to healthy gateway pods         |
 
 ### RTO / RPO Table
 
-| Failure Scenario | RTO (Recovery Time Objective) | RPO (Recovery Point Objective) | Notes |
-|-----------------|-------------------------------|-------------------------------|-------|
-| Single gateway pod crash | < 30 s | 0 (stateless) | Kubernetes restarts pod; other replicas serve traffic |
-| AZ A network partition | < 60 s | 0 (stateless gateway) | Load balancer stops routing to AZ A; AZ B serves all traffic |
-| Redis Primary failure | < 30 s | Up to last async replication lag | Sentinel promotes AZ B replica; gateway reconnects automatically |
-| Redis Sentinel quorum loss (≥2 sentinels down) | Manual recovery required | N/A | Enforce degraded-mode procedures; see `docs/redis-failure-modes.md` |
-| PostgreSQL Primary failure | < 5 min (manual failover) or < 60 s (automated) | Up to WAL lag | Audit write failures logged; enforcement unaffected; promote replica |
-| Full AZ A loss | < 2 min | 0 (gateway) / WAL lag (PostgreSQL) | AZ B serves gateway + issuer; Redis sentinel promotes AZ B replica |
-| Full region loss | Manual region failover | Depends on cross-region replication | Out of scope for single-region topology; see `docs/multi-region-consistency.md` |
+| Failure Scenario                               | RTO (Recovery Time Objective)                   | RPO (Recovery Point Objective)      | Notes                                                                           |
+| ---------------------------------------------- | ----------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------- |
+| Single gateway pod crash                       | < 30 s                                          | 0 (stateless)                       | Kubernetes restarts pod; other replicas serve traffic                           |
+| AZ A network partition                         | < 60 s                                          | 0 (stateless gateway)               | Load balancer stops routing to AZ A; AZ B serves all traffic                    |
+| Redis Primary failure                          | < 30 s                                          | Up to last async replication lag    | Sentinel promotes AZ B replica; gateway reconnects automatically                |
+| Redis Sentinel quorum loss (≥2 sentinels down) | Manual recovery required                        | N/A                                 | Enforce degraded-mode procedures; see `docs/redis-failure-modes.md`             |
+| PostgreSQL Primary failure                     | < 5 min (manual failover) or < 60 s (automated) | Up to WAL lag                       | Audit write failures logged; enforcement unaffected; promote replica            |
+| Full AZ A loss                                 | < 2 min                                         | 0 (gateway) / WAL lag (PostgreSQL)  | AZ B serves gateway + issuer; Redis sentinel promotes AZ B replica              |
+| Full region loss                               | Manual region failover                          | Depends on cross-region replication | Out of scope for single-region topology; see `docs/multi-region-consistency.md` |
 
 ### Kubernetes Topology Configuration
 
@@ -564,7 +564,7 @@ metadata:
   name: gateway
   namespace: eunox-system
 spec:
-  replicas: 4       # minimum 2; 4 for N+1 redundancy across 2 AZs
+  replicas: 4 # minimum 2; 4 for N+1 redundancy across 2 AZs
   strategy:
     type: RollingUpdate
     rollingUpdate:

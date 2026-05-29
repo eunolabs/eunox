@@ -93,37 +93,37 @@ the issuance front-door changes.
 ## 3. Architecture overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Your infrastructure (self-hosted)                                  │
-│                                                                     │
-│  ┌─────────────────┐   sign   ┌──────────────────────────────────┐  │
-│  │  Capability     │ ───────► │  KMS / signing key               │  │
-│  │  Issuer         │          │  (Azure KV, AWS KMS, GCP KMS)    │  │
-│  │  :3001          │          └──────────────────────────────────┘  │
-│  │                 │  JWKS    ┌──────────────────────────────────┐  │
-│  │  POST /issue    │ ◄──────  │  Tool Gateway :3002              │  │
-│  └────────┬────────┘          │                                  │  │
-│           │ JWT               │  POST /api/v1/enforce            │  │
-│           │                   │  GET  /api/v1/audit/records      │  │
-│           ▼                   │  POST /admin/kill-switch/...     │  │
-│  ┌────────────────┐           │                                  │  │
-│  │  eunox-mcp     │ ─ JWT ──► │  verifier → PDP → audit         │  │
-│  │  (agent proxy) │           └──────────┬───────────────────────┘  │
-│  └────────────────┘                      │  R/W                     │
-│                                          ▼                          │
-│                              ┌────────────────────┐                 │
-│                              │  Redis :6379        │                 │
-│                              │  call counters,     │                 │
-│                              │  kill-switch,       │                 │
-│                              │  revocation         │                 │
-│                              └────────────────────┘                 │
-│                              ┌────────────────────┐                 │
-│                              │  Postgres :5432     │                 │
-│                              │  audit ledger,      │                 │
-│                              │  kill-switch,       │                 │
-│                              │  revocation         │                 │
-│                              └────────────────────┘                 │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│  Your infrastructure (self-hosted)                                │
+│                                                                   │
+│  ┌─────────────────┐   sign   ┌────────────────────────────────┐  │
+│  │  Capability     │ ───────► │  KMS / signing key             │  │
+│  │  Issuer         │          │  (Azure KV, AWS KMS, GCP KMS)  │  │
+│  │  :3001          │          └────────────────────────────────┘  │
+│  │                 │  JWKS    ┌────────────────────────────────┐  │
+│  │  POST /issue    │ ◄──────  │  Tool Gateway :3002            │  │
+│  └────────┬────────┘          │                                │  │
+│           │ JWT               │  POST /api/v1/enforce          │  │
+│           │                   │  GET  /api/v1/audit/records    │  │
+│           ▼                   │  POST /admin/kill-switch/...   │  │
+│  ┌────────────────┐           │                                │  │
+│  │  eunox-mcp     │ ─ JWT ──► │  verifier → PDP → audit        │  │
+│  │  (agent proxy) │           └──────────┬─────────────────────┘  │
+│  └────────────────┘                      │  R/W                   │
+│                                          ▼                        │
+│                              ┌────────────────────┐               │
+│                              │  Redis :6379       │               │
+│                              │  call counters,    │               │
+│                              │  kill-switch,      │               │
+│                              │  revocation        │               │
+│                              └────────────────────┘               │
+│                              ┌────────────────────┐               │
+│                              │  Postgres :5432    │               │
+│                              │  audit ledger,     │               │
+│                              │  kill-switch,      │               │
+│                              │  revocation        │               │
+│                              └────────────────────┘               │
+└──────────────────────────────────────────────────────────── ──────┘
 ```
 
 The Capability Issuer and the Tool Gateway are separate processes with separate
@@ -1292,55 +1292,55 @@ available in both the hosted product and the self-host bundle at parity.
 The enterprise self-host stack includes four additional services beyond the base:
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  Your infrastructure (self-hosted — full stack)                              │
-│                                                                              │
-│  ┌────────────────┐ sign ┌─────────────────────────────────────────────┐     │
-│  │  Capability    │────► │  KMS / signing key                          │     │
-│  │  Issuer :3001  │      │  (Azure KV, AWS KMS, GCP KMS)               │     │
-│  │                │      └─────────────────────────────────────────────┘     │
-│  │  OIDC / SCIM   │                                                          │
-│  │  /scim/v2/*    │ ◄──  Okta / Entra ID / Ping Identity (SCIM push)         │
-│  │  /.well-known/ │                                                          │
-│  │  capability-   │      ┌─────────────────────────────────────────────┐     │
-│  │  issuer        │      │  Partner Issuer (remote org)                │     │
-│  └───────┬────────┘      │  did:web / did:ion                          │     │
-│          │ JWT            │  issues tokens from partner signing key     │     │
-│          │                └──────────────────┬──────────────────────────┘    │
-│          ▼                                   │ partner JWT                   │
-│  ┌───────────────────┐                       │                               │
-│  │  eunox-mcp        │── JWT ──────────────► │                               │
-│  │  (agent proxy)    │                       ▼                               │
-│  │  + Runtime        │             ┌─────────────────────────────────────┐   │
-│  │  (in-process)     │             │  Tool Gateway :3002                 │   │
-│  └───────────────────┘             │                                     │   │
-│                                    │  POST /api/v1/enforce               │   │
-│                                    │  GET  /api/v1/audit/records         │   │
-│                                    │  GET  /api/v1/audit/export  (new)   │   │
-│                                    │  GET  /api/v1/audit/chain-proof(new)│   │
-│                                    │  POST /admin/partner-dids/proposals │   │
-│                                    │  POST /admin/kill-switch/...        │   │
-│                                    └──────────────┬──────────────────────┘   │
-│                                                   │  R/W                     │
-│           ┌───────────────────────────────────────┤                          │
-│           │                                       │                          │
-│  ┌────────▼──────┐    ┌───────────┐    ┌──────────▼──────┐                  │
-│  │   Redis       │    │  Postgres │    │  Posture         │                  │
-│  │  (>= 6.2)     │    │  (>= 14)  │    │  Emitter         │                  │
-│  │  revocation   │    │  audit    │    │  (OCSF export    │                  │
-│  │  kill-switch  │    │  ledger   │    │   durable queue) │                  │
-│  │  partner-DID  │    │  scim     │    └──────────────────┘                  │
-│  │  circuit-brk  │    │  tables   │                                          │
-│  └───────────────┘    └───────────┘                                          │
-│                                                                              │
-│  ┌────────────────────┐   ┌──────────────────────┐                           │
-│  │  db-token-service  │   │ storage-grant-service │                          │
-│  │  :5050             │   │ :5051                 │                          │
-│  │  POST /exchange    │   │ POST /grant           │                          │
-│  │  (CAP token ->     │   │ (CAP token ->         │                          │
-│  │   DB credentials)  │   │  presigned URL/SAS)   │                          │
-│  └────────────────────┘   └──────────────────────┘                           │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Your infrastructure (self-hosted — full stack)                             │
+│                                                                             │
+│  ┌────────────────┐ sign ┌─────────────────────────────────────────────┐    │
+│  │  Capability    │────► │  KMS / signing key                          │    │
+│  │  Issuer :3001  │      │  (Azure KV, AWS KMS, GCP KMS)               │    │
+│  │                │      └─────────────────────────────────────────────┘    │
+│  │  OIDC / SCIM   │                                                         │
+│  │  /scim/v2/*    │ ◄──  Okta / Entra ID / Ping Identity (SCIM push)        │
+│  │  /.well-known/ │                                                         │
+│  │  capability-   │      ┌─────────────────────────────────────────────┐    │
+│  │  issuer        │      │  Partner Issuer (remote org)                │    │
+│  └───────┬────────┘      │  did:web / did:ion                          │    │
+│          │ JWT           │  issues tokens from partner signing key     │    │
+│          │               └──────────────────┬──────────────────────────┘    │
+│          ▼                                  │ partner JWT                   │
+│  ┌───────────────────┐                      │                               │
+│  │  eunox-mcp        │── JWT ─────────────► │                               │
+│  │  (agent proxy)    │                      ▼                               │
+│  │  + Runtime        │             ┌─────────────────────────────────────┐  │
+│  │  (in-process)     │             │  Tool Gateway :3002                 │  │
+│  └───────────────────┘             │                                     │  │
+│                                    │  POST /api/v1/enforce               │  │
+│                                    │  GET  /api/v1/audit/records         │  │
+│                                    │  GET  /api/v1/audit/export  (new)   │  │
+│                                    │  GET  /api/v1/audit/chain-proof(new)│  │
+│                                    │  POST /admin/partner-dids/proposals │  │
+│                                    │  POST /admin/kill-switch/...        │  │
+│                                    └──────────────┬──────────────────────┘  │
+│                                                   │  R/W                    │
+│           ┌───────────────────────────────────────┤                         │
+│           │                                       │                         │
+│  ┌────────▼──────┐    ┌───────────┐    ┌──────────▼───────┐                 │
+│  │   Redis       │    │  Postgres │    │  Posture         │                 │
+│  │  (>= 6.2)     │    │  (>= 14)  │    │  Emitter         │                 │
+│  │  revocation   │    │  audit    │    │  (OCSF export    │                 │
+│  │  kill-switch  │    │  ledger   │    │   durable queue) │                 │
+│  │  partner-DID  │    │  scim     │    └──────────────────┘                 │
+│  │  circuit-brk  │    │  tables   │                                         │
+│  └───────────────┘    └───────────┘                                         │
+│                                                                             │
+│  ┌────────────────────┐   ┌───────────────────────┐                         │
+│  │  db-token-service  │   │ storage-grant-service │                         │
+│  │  :5050             │   │ :5051                 │                         │
+│  │  POST /exchange    │   │ POST /grant           │                         │
+│  │  (CAP token ->     │   │ (CAP token ->         │                         │
+│  │   DB credentials)  │   │  presigned URL/SAS)   │                         │
+│  └────────────────────┘   └───────────────────────┘                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Updated service list

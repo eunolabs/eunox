@@ -26,12 +26,12 @@ dashboard quick-start.
 
 ## Prerequisites
 
-| Requirement | Version |
-|---|---|
-| OpenTelemetry Collector (or compatible) | 0.100+ |
-| Grafana (optional) | 10+ |
-| Grafana Tempo (optional) | 2.4+ |
-| Prometheus (optional) | 2.50+ |
+| Requirement                             | Version |
+| --------------------------------------- | ------- |
+| OpenTelemetry Collector (or compatible) | 0.100+  |
+| Grafana (optional)                      | 10+     |
+| Grafana Tempo (optional)                | 2.4+    |
+| Prometheus (optional)                   | 2.50+   |
 
 ---
 
@@ -74,17 +74,17 @@ All eunox services share a single set of `eunox.*` attribute keys, defined in
 `pkg/observability/attributes.go`. This ensures consistent filtering across
 services in Grafana Tempo and Jaeger.
 
-| Attribute Key | Type | Description |
-|---|---|---|
-| `eunox.agent_id` | string | Subject claim from the capability token (agent identity) |
-| `eunox.session_id` | string | Session identifier from the tool-call payload |
-| `eunox.task_id` | string | Task identifier from `X-Eunox-Task-Id` header |
-| `eunox.capability_token_id` | string | JWT ID (`jti`) or minted credential ID |
-| `eunox.tool_name` | string | MCP/tool name being enforced |
-| `eunox.policy_decision` | string | `allow` or `deny` |
-| `eunox.tenant_id` | string | Tenant identifier from token claims |
-| `eunox.denial_code` | string | Machine-readable reason for a `deny` decision |
-| `eunox.db_adapter` | string | DB adapter name (`aws-rds`, `azure-sql`, `gcp-cloudsql`) |
+| Attribute Key               | Type   | Description                                              |
+| --------------------------- | ------ | -------------------------------------------------------- |
+| `eunox.agent_id`            | string | Subject claim from the capability token (agent identity) |
+| `eunox.session_id`          | string | Session identifier from the tool-call payload            |
+| `eunox.task_id`             | string | Task identifier from `X-Eunox-Task-Id` header            |
+| `eunox.capability_token_id` | string | JWT ID (`jti`) or minted credential ID                   |
+| `eunox.tool_name`           | string | MCP/tool name being enforced                             |
+| `eunox.policy_decision`     | string | `allow` or `deny`                                        |
+| `eunox.tenant_id`           | string | Tenant identifier from token claims                      |
+| `eunox.denial_code`         | string | Machine-readable reason for a `deny` decision            |
+| `eunox.db_adapter`          | string | DB adapter name (`aws-rds`, `azure-sql`, `gcp-cloudsql`) |
 
 ### Example query — all denied tool calls in the last hour
 
@@ -216,12 +216,12 @@ The dashboard provides:
 In addition to traces, all services expose Prometheus metrics on the main HTTP
 port under `/metrics`.
 
-| Metric | Labels | Description |
-|---|---|---|
-| `gateway_http_requests_total` | `method`, `path`, `status` | HTTP request count |
-| `gateway_http_request_duration_seconds` | `method`, `path` | Latency histogram |
-| `dbtokensvc_db_tokens_minted_total` | `adapter`, `status` | Tokens minted |
-| `dbtokensvc_db_token_mint_duration_seconds` | `adapter` | Mint latency histogram |
+| Metric                                      | Labels                     | Description            |
+| ------------------------------------------- | -------------------------- | ---------------------- |
+| `gateway_http_requests_total`               | `method`, `path`, `status` | HTTP request count     |
+| `gateway_http_request_duration_seconds`     | `method`, `path`           | Latency histogram      |
+| `dbtokensvc_db_tokens_minted_total`         | `adapter`, `status`        | Tokens minted          |
+| `dbtokensvc_db_token_mint_duration_seconds` | `adapter`                  | Mint latency histogram |
 
 ### Alert example — high denial rate
 
@@ -253,7 +253,7 @@ head-based sampling at the collector:
 ```yaml
 processors:
   probabilistic_sampler:
-    sampling_percentage: 10   # keep 10% of traces
+    sampling_percentage: 10 # keep 10% of traces
 ```
 
 For tail-based sampling (keep all traces containing a `deny` decision):
@@ -277,10 +277,10 @@ processors:
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| No spans in Tempo | `OTEL_EXPORTER_OTLP_ENDPOINT` unset | Set the env var and restart |
-| `connection refused` on startup | Collector not reachable at startup | Traces are dropped silently — service starts normally; check collector health |
-| Missing `eunox.*` attributes | Old service binary | Rebuild from `main`; attributes were added in T-08 |
-| `eunox.task_id` absent | Client not sending `X-Eunox-Task-Id` | Add header to DB token mint requests from agent runtime |
-| High cardinality warnings in Prometheus | Many unique agent IDs as labels | `eunox.*` attributes are span attributes, not Prometheus labels — this is expected |
+| Symptom                                 | Likely cause                         | Fix                                                                                |
+| --------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| No spans in Tempo                       | `OTEL_EXPORTER_OTLP_ENDPOINT` unset  | Set the env var and restart                                                        |
+| `connection refused` on startup         | Collector not reachable at startup   | Traces are dropped silently — service starts normally; check collector health      |
+| Missing `eunox.*` attributes            | Old service binary                   | Rebuild from `main`; attributes were added in T-08                                 |
+| `eunox.task_id` absent                  | Client not sending `X-Eunox-Task-Id` | Add header to DB token mint requests from agent runtime                            |
+| High cardinality warnings in Prometheus | Many unique agent IDs as labels      | `eunox.*` attributes are span attributes, not Prometheus labels — this is expected |

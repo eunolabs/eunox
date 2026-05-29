@@ -72,8 +72,8 @@ if len(parent.Actions) == 0 {
 **SEVERITY:** Critical
 
 **PROBLEM:** `containsAllConditionTypes` verifies that the child's conditions include
-every condition *type* found in the parent, but not that the child's condition
-*values* are at least as restrictive. A child with `maxCalls: 10_000_000` satisfies
+every condition _type_ found in the parent, but not that the child's condition
+_values_ are at least as restrictive. A child with `maxCalls: 10_000_000` satisfies
 the check against a parent with `maxCalls: 10` because both have the
 `ConditionTypeMaxCalls` type.
 
@@ -105,7 +105,7 @@ that the child is at least as restrictive:
 **SEVERITY:** High
 
 **PROBLEM:** DPoP verification fires only `if payload.DPoP != nil` (line 209). There
-is no check that a token carrying a `cnf.jkt` confirmation claim *must* present a
+is no check that a token carrying a `cnf.jkt` confirmation claim _must_ present a
 DPoP proof. The same enforcement (line 499) is correctly implemented in
 `handleProxy` but is absent in `handleEnforce`.
 
@@ -574,7 +574,7 @@ and start in the `killed=false` state even though the agent is killed.
 is treated as alive by a new partition. Under normal Redis latency this is
 negligible, but it violates the stated fail-closed guarantee.
 
-**FIX:** Seed the initial state *after* the subscription is confirmed live (after
+**FIX:** Seed the initial state _after_ the subscription is confirmed live (after
 the `pubsub.Receive` ping at line 307), not before launching the goroutine. This
 ensures no events are missed between state read and subscription start.
 
@@ -662,4 +662,4 @@ in distributed traces.
 
 ---
 
-*End of review — 21 findings total: 3 Critical, 6 High, 7 Medium (logic/impl), 5 Architecture/Design.*
+_End of review — 21 findings total: 3 Critical, 6 High, 7 Medium (logic/impl), 5 Architecture/Design._

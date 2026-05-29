@@ -21,31 +21,31 @@ of a valid, scoped capability token for every side-effecting operation.
 ### 2.1 Trust Boundaries
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  UNTRUSTED ZONE — Agent Sandbox                                     │
-│                                                                     │
-│  ┌──────────────────────────────────────┐                           │
-│  │  Agent Process (LLM + tools)         │                           │
-│  │  ├── agentruntime library            │                           │
-│  │  │   ├── TokenProvider (caches JWT)  │                           │
-│  │  │   ├── DPoP key pair (ephemeral)   │                           │
-│  │  │   └── ToolInvoker                 │                           │
-│  │  └── Application code                │                           │
-│  └──────────────────────────────────────┘                           │
-│           │ HTTPS only (network egress restricted)                   │
-│           ▼                                                         │
-├─────────────────────────────────────────────────────────────────────┤
-│  TRUSTED ZONE — Platform Services                                   │
-│                                                                     │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐    │
-│  │  Issuer      │   │  Gateway     │   │  Protected Backends  │    │
-│  │  (port 3001) │   │  (port 3002) │   │  (CRM, DB, Storage)  │    │
-│  └──────────────┘   └──────────────┘   └──────────────────────┘    │
-│                                                                     │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐    │
-│  │  Redis       │   │  KMS/HSM     │   │  Audit Ledger        │    │
-│  └──────────────┘   └──────────────┘   └──────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  UNTRUSTED ZONE — Agent Sandbox                                  │
+│                                                                  │
+│  ┌──────────────────────────────────────┐                        │
+│  │  Agent Process (LLM + tools)         │                        │
+│  │  ├── agentruntime library            │                        │
+│  │  │   ├── TokenProvider (caches JWT)  │                        │
+│  │  │   ├── DPoP key pair (ephemeral)   │                        │
+│  │  │   └── ToolInvoker                 │                        │
+│  │  └── Application code                │                        │
+│  └──────────────────────────────────────┘                        │
+│           │ HTTPS only (network egress restricted)               │
+│           ▼                                                      │
+├──────────────────────────────────────────────────────────────── ─┤
+│  TRUSTED ZONE — Platform Services                                │
+│                                                                  │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐  │
+│  │  Issuer      │   │  Gateway     │   │  Protected Backends  │  │
+│  │  (port 3001) │   │  (port 3002) │   │  (CRM, DB, Storage)  │  │
+│  └──────────────┘   └──────────────┘   └──────────────────────┘  │
+│                                                                  │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐  │
+│  │  Redis       │   │  KMS/HSM     │   │  Audit Ledger        │  │
+│  └──────────────┘   └──────────────┘   └──────────────────────┘  │
+└──────────────────────────────────────────────────────────────── ─┘
 ```
 
 **Key trust boundary:** The agent process is entirely within the untrusted zone.

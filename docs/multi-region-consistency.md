@@ -56,8 +56,8 @@ Region A                              Region B
 │  ├── Local cache     │              │  ├── Local cache     │
 │  └── Pub/sub listener│              │  └── Pub/sub listener│
 └──────────┬───────────┘              └──────────┬───────────┘
-           │                                      │
-           ▼                                      ▼
+           │                                     │
+           ▼                                     ▼
 ┌──────────────────────┐              ┌──────────────────────┐
 │  Redis Primary       │◄────────────►│  Redis Replica       │
 │  (Region A)          │  Replication │  (Region B)          │
@@ -224,14 +224,14 @@ Region A                              Region B
 │  Gateway → Audit     │              │  Gateway → Audit     │
 │  Transport → Backend │              │  Transport → Backend │
 └──────────┬───────────┘              └──────────┬───────────┘
-           │                                      │
-           ▼                                      ▼
+           │                                     │
+           ▼                                     ▼
 ┌──────────────────────┐              ┌──────────────────────┐
 │  PostgreSQL          │              │  PostgreSQL          │
 │  (Regional)          │              │  (Regional)          │
 └──────────┬───────────┘              └──────────┬───────────┘
-           │                                      │
-           └──────────────┬───────────────────────┘
+           │                                     │
+           └──────────────┬──────────────────────┘
                           ▼
               ┌──────────────────────┐
               │  Cross-Chain Anchor  │

@@ -28,22 +28,23 @@ Redis clusters, with isolation enforced at the application layer through
 consistent `tenant_id` scoping across all data paths.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Load Balancer                       │
-└─────────────┬───────────────────────────┬───────────┘
-              │                           │
+┌─────────────────────────────────────────────────┐
+│                   Load Balancer                 │
+└─────────────┬──────────────────────────┬────────┘
+              │                          │
      ┌────────▼────────┐        ┌────────▼────────┐
      │  Gateway (Pod)  │        │  Gateway (Pod)  │
      │  tenant_id=acme │        │  tenant_id=corp │
      └────────┬────────┘        └────────┬────────┘
-              │                           │
-     ┌────────▼───────────────────────────▼────────┐
-     │           Shared PostgreSQL Instance          │
-     │   ┌─────────────────────────────────────┐    │
-     │   │  Row-level tenant_id filtering       │    │
-     │   │  Composite indexes (tenant_id, ...)  │    │
-     │   └─────────────────────────────────────┘    │
-     └──────────────────────────────────────────────┘
+              │                          │
+     ┌────────▼──────────────────────────▼────────┐
+     │           Shared PostgreSQL Instance       │
+     │           Shared PostgreSQL Instance       │
+     │   ┌─────────────────────────────────────┐  │
+     │   │  Row-level tenant_id filtering      │  │
+     │   │  Composite indexes (tenant_id, ...) │  │
+     │   └─────────────────────────────────────┘  │
+     └────────────────────────────────────────────┘
 ```
 
 ### Design Principles

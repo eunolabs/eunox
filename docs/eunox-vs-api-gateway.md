@@ -25,22 +25,22 @@ the value is clear.
 
 ## What API Gateways Do
 
-| Capability | Kong / Apigee / AWS APIM |
-|------------|--------------------------|
-| TLS termination | ✅ |
-| Rate limiting (service-to-service) | ✅ |
-| Authentication (API key, OAuth 2.0) | ✅ |
-| Request routing and load balancing | ✅ |
-| Caching, circuit breaking | ✅ |
-| Plugin ecosystem | ✅ |
-| Per-request capability verification | ❌ |
-| Cryptographic agent identity | ❌ |
-| Kill-switch (sub-second propagation) | ❌ |
-| Tamper-evident audit chain (HMAC) | ❌ |
-| Condition-based enforcement (time, count, approval) | ❌ |
-| Obligation enforcement (redaction, rate limits per capability) | ❌ |
-| Revocation of individual capability tokens | ❌ |
-| DPoP proof binding (prevents replay across agents) | ❌ |
+| Capability                                                     | Kong / Apigee / AWS APIM |
+| -------------------------------------------------------------- | ------------------------ |
+| TLS termination                                                | ✅                       |
+| Rate limiting (service-to-service)                             | ✅                       |
+| Authentication (API key, OAuth 2.0)                            | ✅                       |
+| Request routing and load balancing                             | ✅                       |
+| Caching, circuit breaking                                      | ✅                       |
+| Plugin ecosystem                                               | ✅                       |
+| Per-request capability verification                            | ❌                       |
+| Cryptographic agent identity                                   | ❌                       |
+| Kill-switch (sub-second propagation)                           | ❌                       |
+| Tamper-evident audit chain (HMAC)                              | ❌                       |
+| Condition-based enforcement (time, count, approval)            | ❌                       |
+| Obligation enforcement (redaction, rate limits per capability) | ❌                       |
+| Revocation of individual capability tokens                     | ❌                       |
+| DPoP proof binding (prevents replay across agents)             | ❌                       |
 
 **API gateways enforce policy at the service boundary.** They can check whether a
 caller has a valid API key or OAuth token. They cannot check whether the AI agent
@@ -91,13 +91,13 @@ is recorded in an immutable audit chain regardless of outcome.
 This question comes up frequently. The answer is: technically yes, but the resulting
 system inherits the plugin execution model's constraints.
 
-| Constraint | Impact |
-|------------|--------|
-| Plugin execution is sandboxed (limited to request/response) | Cannot maintain shared kill-switch state across requests |
-| Plugins run in the gateway process; state is per-instance | Redis pub/sub kill-switch cannot propagate sub-second across plugin instances without custom plumbing |
-| Plugin SDKs do not expose DPoP binding primitives | DPoP proof verification (nonce, `jkt` confirmation) requires custom crypto not available in standard plugin SDKs |
-| HMAC audit chain requires sequential, stateful write ordering | Plugin model processes requests independently; chaining requires a separate write-ordering service |
-| Plugin upgrade and rollout is tied to gateway version | Capability token schema migrations are blocked on gateway upgrades |
+| Constraint                                                    | Impact                                                                                                           |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Plugin execution is sandboxed (limited to request/response)   | Cannot maintain shared kill-switch state across requests                                                         |
+| Plugins run in the gateway process; state is per-instance     | Redis pub/sub kill-switch cannot propagate sub-second across plugin instances without custom plumbing            |
+| Plugin SDKs do not expose DPoP binding primitives             | DPoP proof verification (nonce, `jkt` confirmation) requires custom crypto not available in standard plugin SDKs |
+| HMAC audit chain requires sequential, stateful write ordering | Plugin model processes requests independently; chaining requires a separate write-ordering service               |
+| Plugin upgrade and rollout is tied to gateway version         | Capability token schema migrations are blocked on gateway upgrades                                               |
 
 A Kong or Apigee plugin that replicated Eunox's full enforcement model would
 effectively be re-implementing Eunox inside a plugin sandbox with fewer primitives.
@@ -165,12 +165,12 @@ This is the right question. The honest answer:
 For regulated enterprises, centralization is not a liability — it is the compliance
 requirement.
 
-| Requirement | Decentralized / per-service enforcement | Eunox centralized enforcement |
-|-------------|----------------------------------------|-------------------------------|
-| SOC 2 CC6.1: Single access control decision point | No — each service enforces independently | Yes — one gateway evaluates every request |
-| HIPAA §164.312: Complete audit trail | Fragmented — each service logs independently | Yes — single tamper-evident chain |
-| NIST 800-207 §3: Policy Enforcement Point | Distributed PEP — harder to audit | Centralized PEP — single audit scope |
-| PCI-DSS 10.x: Log all access to cardholder data | Per-service audit logs — no chain proof | Cryptographic chain proof per request |
+| Requirement                                       | Decentralized / per-service enforcement      | Eunox centralized enforcement             |
+| ------------------------------------------------- | -------------------------------------------- | ----------------------------------------- |
+| SOC 2 CC6.1: Single access control decision point | No — each service enforces independently     | Yes — one gateway evaluates every request |
+| HIPAA §164.312: Complete audit trail              | Fragmented — each service logs independently | Yes — single tamper-evident chain         |
+| NIST 800-207 §3: Policy Enforcement Point         | Distributed PEP — harder to audit            | Centralized PEP — single audit scope      |
+| PCI-DSS 10.x: Log all access to cardholder data   | Per-service audit logs — no chain proof      | Cryptographic chain proof per request     |
 
 A compliance reviewer auditing "which AI agents had access to PHI last quarter"
 needs a single, complete, verifiable answer. Eunox provides it. Distributed
@@ -180,15 +180,15 @@ enforcement across N services with N log aggregation pipelines does not.
 
 ## Decision Guidance
 
-| If your primary concern is... | Recommendation |
-|-------------------------------|----------------|
-| Adding authentication to existing services | API gateway |
-| Routing traffic between microservices | API gateway |
-| Governing which AI agents can call which tools | Eunox |
-| Creating a tamper-evident audit trail of agent actions | Eunox |
-| Satisfying SOC 2 / HIPAA for AI agent access | Eunox |
-| Reducing per-agent blast radius | Eunox sidecar mode |
-| All of the above | API gateway (upstream) + Eunox (agent layer) |
+| If your primary concern is...                          | Recommendation                               |
+| ------------------------------------------------------ | -------------------------------------------- |
+| Adding authentication to existing services             | API gateway                                  |
+| Routing traffic between microservices                  | API gateway                                  |
+| Governing which AI agents can call which tools         | Eunox                                        |
+| Creating a tamper-evident audit trail of agent actions | Eunox                                        |
+| Satisfying SOC 2 / HIPAA for AI agent access           | Eunox                                        |
+| Reducing per-agent blast radius                        | Eunox sidecar mode                           |
+| All of the above                                       | API gateway (upstream) + Eunox (agent layer) |
 
 ---
 

@@ -24,7 +24,7 @@ This is not a "nice polish" task. If the policy surface is only accessible to en
 
 1. A non-engineer can create, edit, and delete a role policy without touching JSON or YAML.
 2. Policies authored via the UI are semantically identical to policies authored by hand — no capability surface is hidden or locked away.
-3. Real-time feedback: the user understands what an agent *can* and *cannot* do before saving.
+3. Real-time feedback: the user understands what an agent _can_ and _cannot_ do before saving.
 4. The UI is embedded in the existing issuer binary — zero new infrastructure to deploy.
 5. Template library for SOC 2, HIPAA, and PCI-DSS reduces time-to-first-policy to under 5 minutes.
 
@@ -48,8 +48,9 @@ The policy editor is a stateful admin application with complex nested forms (rol
 
 The `site/` directory already uses Astro, but that is a documentation/marketing site built for static output to Cloudflare Workers. Embedding a complex stateful app in Astro adds unnecessary framework bridging. The policy editor is a separate concern and warrants its own SPA.
 
-**Alternatives considered:**  
-- **Svelte 5** — Smaller bundle, but fewer form library options and no team familiarity established. The discriminated-union condition form is the hardest UX problem; React's ecosystem reduces that risk.  
+**Alternatives considered:**
+
+- **Svelte 5** — Smaller bundle, but fewer form library options and no team familiarity established. The discriminated-union condition form is the hardest UX problem; React's ecosystem reduces that risk.
 - **Vue 3** — Viable, but no existing Vue code in the repo and no compelling advantage over React for this use case.
 - **HTMX + Go templates** — Appealing for minimal footprint, but the live-preview panel (real-time policy simulation) requires enough client-side state that a SPA is the more honest approach. A hybrid would end up as a SPA anyway.
 
@@ -90,7 +91,7 @@ The policy editor has enough state that React Context + `useReducer` gets verbos
 
 Undo/redo (Ctrl+Z during policy editing) uses the `zundo` middleware for Zustand — this adds temporal state slices with minimal overhead.
 
-**Form state** stays in react-hook-form (controlled by `useForm` + `useFieldArray`). Zustand holds everything *outside* the form: server validation responses, simulation panel state, template selection.
+**Form state** stays in react-hook-form (controlled by `useForm` + `useFieldArray`). Zustand holds everything _outside_ the form: server validation responses, simulation panel state, template selection.
 
 ---
 
@@ -103,7 +104,9 @@ The `RoleCapabilityPolicy` structure maps cleanly to a Zod schema:
 ```typescript
 const ConstraintSchema = z.object({
   resource: z.string().min(1),
-  actions: z.array(z.enum(["read","write","execute","delete","admin","*"])).min(1),
+  actions: z
+    .array(z.enum(["read", "write", "execute", "delete", "admin", "*"]))
+    .min(1),
   argumentSchema: ArgumentSchemaZ.optional(),
   conditions: z.array(ConditionWrapperSchema).optional(),
 });
@@ -156,7 +159,7 @@ Authorization: Bearer <admin-key>
 }
 ```
 
-This endpoint runs the Go validation logic (`IntersectCapabilities`, `ValidateSubset`, condition type checks) against a proposed policy *without persisting it*. The frontend calls this debounced (400 ms) on significant form changes.
+This endpoint runs the Go validation logic (`IntersectCapabilities`, `ValidateSubset`, condition type checks) against a proposed policy _without persisting it_. The frontend calls this debounced (400 ms) on significant form changes.
 
 This keeps the frontend's Zod schema as a fast first-pass check (field presence, type coercion) while the Go backend is authoritative for semantic correctness (glob intersection, subset constraints, condition compatibility).
 
@@ -190,13 +193,13 @@ Currently, the issuer loads policies from a JSON file at startup and hot-reloads
 
 For T-16 to be useful, policies authored in the UI must survive restarts. Three options:
 
-| Option | Notes |
-|--------|-------|
-| Write-back to the policy JSON file | Simple; consistent with existing hot-reload model; works for both self-hosted and `eunox dev` |
-| Persist to Postgres (minter's `key_policies` table) | Correct long-term; the schema already exists; requires the issuer to connect to Postgres |
-| Both (file for dev, Postgres for hosted) | Too much indirection for Phase 1 |
+| Option                                              | Notes                                                                                         |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Write-back to the policy JSON file                  | Simple; consistent with existing hot-reload model; works for both self-hosted and `eunox dev` |
+| Persist to Postgres (minter's `key_policies` table) | Correct long-term; the schema already exists; requires the issuer to connect to Postgres      |
+| Both (file for dev, Postgres for hosted)            | Too much indirection for Phase 1                                                              |
 
-**Decision:** Write-back to the policy JSON file for Phase 1. When `POST /admin/role-policy/{role}` is called, the issuer updates its in-memory engine *and* rewrites the policy file atomically (write to `.tmp`, then `os.Rename`). The existing `Engine.StartHotReload()` poll loop detects the new mtime and confirms consistency.
+**Decision:** Write-back to the policy JSON file for Phase 1. When `POST /admin/role-policy/{role}` is called, the issuer updates its in-memory engine _and_ rewrites the policy file atomically (write to `.tmp`, then `os.Rename`). The existing `Engine.StartHotReload()` poll loop detects the new mtime and confirms consistency.
 
 For the Cloud Team tier (post T-18), Postgres persistence replaces the file write-back. The issuer's policy source is feature-flagged at startup: `EUNOX_POLICY_BACKEND=file|postgres`.
 
@@ -236,6 +239,7 @@ Tasks are ordered by dependency. Each task specifies the file(s) it touches, wha
 **Why now:** The SPA edit flow needs to load a single policy by role name. The current `GET /admin/role-policy` returns all policies but has no single-resource variant. Adding it is a one-day backend task with no frontend dependency, so it ships first and unblocks the edit form.
 
 **What to build:**
+
 - Handler `handleGetRolePolicy` that calls `app.policyEngine.GetPolicy(role)` and returns the `RoleCapabilityPolicy` as JSON.
 - Returns 404 with `{"error": "no policy found for role"}` when the role does not exist (matches the `ErrPolicyNotFound` sentinel in `internal/issuer/policy/policy.go:22`).
 - Route registration: `r.Get("/admin/role-policy/{role}", app.handleGetRolePolicy)` — add to the existing admin route block at `internal/issuer/app.go:144`.
@@ -252,6 +256,7 @@ Tasks are ordered by dependency. Each task specifies the file(s) it touches, wha
 **What to build:**
 
 `ValidateRequest` struct:
+
 ```go
 type ValidateRequest struct {
     Policy   policy.RoleCapabilityPolicy `json:"policy"`
@@ -266,6 +271,7 @@ type SimulateInput struct {
 ```
 
 `ValidateResponse` struct:
+
 ```go
 type ValidateResponse struct {
     Valid      bool              `json:"valid"`
@@ -286,12 +292,13 @@ type SimulationResult struct {
 ```
 
 Validation logic (in order):
+
 1. Structural: role name non-empty, `maxTtlSeconds` ≥ 60, at least one capability.
 2. Per-capability: resource non-empty, actions non-empty.
 3. Condition type validity: each condition's `type` field must be a known discriminator (use the constants in `pkg/capability/condition.go`).
 4. If `simulate` is provided: call `engine.IntersectCapabilities` with the simulate resource/actions against the submitted policy (not the stored one). Return the decision and the matched capability resource.
 
-Route: `r.Post("/admin/role-policy/validate", app.handleValidatePolicy)` — add *before* `{role}` routes to avoid chi routing the literal string "validate" as a role name.
+Route: `r.Post("/admin/role-policy/validate", app.handleValidatePolicy)` — add _before_ `{role}` routes to avoid chi routing the literal string "validate" as a role name.
 
 **Acceptance:** Posting a valid policy returns `{"valid": true, "errors": []}`. Posting a policy with an empty `capabilities` array returns `{"valid": false, "errors": [{"field": "capabilities", "message": "at least one capability required"}]}`.
 
@@ -303,12 +310,13 @@ Route: `r.Post("/admin/role-policy/validate", app.handleValidatePolicy)` — add
 **Why now:** Without this, policies authored in the UI vanish on issuer restart. This is a correctness requirement before the UI ships.
 
 **What to build:**
+
 - Add `WriteToFile(filePath string) error` method on `policy.Engine`. It marshals the current in-memory policies to a `policy.File` struct and writes atomically: `os.WriteFile` to `filePath+".tmp"`, then `os.Rename`.
 - Call `engine.WriteToFile` at the end of `handleSetRolePolicy` and `handleDeleteRolePolicy` (only if the engine was initialized with a file path).
 - If `filePath` is empty (in-memory-only mode, e.g. tests), skip the write silently.
 - The existing hot-reload poll loop in `StartHotReload` already detects mtime changes — no changes needed there.
 
-**Failure mode:** If `WriteToFile` fails (disk full, permissions), the API returns 500 and does *not* update in-memory state (rollback). Log the error with the file path.
+**Failure mode:** If `WriteToFile` fails (disk full, permissions), the API returns 500 and does _not_ update in-memory state (rollback). Log the error with the file path.
 
 **Acceptance:** Create a policy via `POST /admin/role-policy/newrole`, restart the issuer, confirm the policy is present via `GET /admin/role-policy/newrole`.
 
@@ -350,6 +358,7 @@ func uiHandler() http.Handler {
 Route registration in `app.go`: `r.Handle("/ui/*", http.StripPrefix("/ui", uiHandler()))`.
 
 **Makefile target:**
+
 ```makefile
 ui-build:
 	cd internal/issuer/ui && npm ci && npm run build
@@ -367,6 +376,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Why now:** Establishes the build pipeline that all subsequent frontend tasks build on.
 
 **What to build:**
+
 - `npm create vite@latest . -- --template react-ts` inside `internal/issuer/ui/`
 - Configure `vite.config.ts`:
   - `base: "/ui/"` — all asset paths are relative to the issuer's `/ui/` mount point
@@ -378,6 +388,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 - Add `internal/issuer/ui/node_modules/` to `.gitignore`
 
 **App shell layout:**
+
 ```
 /ui/                          → redirect to /ui/policies
 /ui/policies                  → roles list page
@@ -396,6 +407,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Why now:** This is the entry point UX. Every user lands here. It must load quickly and communicate what exists before they open any editor.
 
 **What to build:**
+
 - Fetch `GET /admin/role-policy` on mount.
 - Render a card grid. Each card shows:
   - Role name (bold)
@@ -410,6 +422,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 - Error state: inline error with a retry button (do not throw to the router error boundary for a list fetch failure).
 
 **Data shape returned by `GET /admin/role-policy`** (current, from `handleListRolePolicies`):
+
 ```json
 { "policies": [ { "role": "developer", "description": "...", ... } ] }
 ```
@@ -424,6 +437,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Why now:** The simplest part of the form, and a good place to establish the react-hook-form + Zod integration pattern that all subsequent sections follow.
 
 **What to build:**
+
 - `role` field: text input, disabled when editing an existing role (role name is the PK; renaming requires delete + create). Pattern validation: `^[a-zA-Z][a-zA-Z0-9_-]*$`. Shows error inline.
 - `description` field: textarea, optional.
 - `maxTtlSeconds` field: number input with a human-readable hint that updates live. Input is in seconds; hint reads "= 15 minutes" or "= 4 hours". Max 86400 (24 hours). Min 60 (1 minute).
@@ -439,6 +453,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Why now:** This is the core of every policy. Getting the resource/action UX right is the highest-stakes interaction — it must be clear that resources are glob-matched URI strings, not literal paths.
 
 **What to build:**
+
 - `useFieldArray` for the `capabilities` array.
 - Each capability row:
   - **Resource** text input with placeholder `"api://tools/**"`. Below the input: a one-line hint showing what the glob matches ("matches all paths starting with api://tools/"). Hint uses the `resourceCovers` glob logic re-implemented in TypeScript.
@@ -463,21 +478,22 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 
 **Condition sub-forms to build (one component each):**
 
-| Condition type | Fields | Notes |
-|---|---|---|
-| `timeWindow` | notBefore (datetime), notAfter (datetime) | ISO 8601; both optional but at least one required |
-| `ipRange` | cidrs (tag input) | Validate each tag as a valid CIDR on add |
-| `allowedOperations` | operations (tag input) | Free-form strings; hint shows example for DB ("SELECT", "INSERT") |
-| `allowedExtensions` | extensions (tag input) | Dot prefix normalised (`.pdf` not `pdf`); maps to `AllowedExtensionsCondition` |
-| `allowedTables` | tables (tag input), columns (per-table column list) | Column list is optional; add table → expand column config |
-| `maxCalls` | count (number), windowSeconds (number + unit picker: seconds/minutes/hours) | Both required; min count 1 |
-| `recipientDomain` | domains (tag input) | Validate domain format on add |
-| `redactFields` | fields (tag input) | Field path strings; hint: "e.g. patient.ssn" for HIPAA |
-| `allowedValues` | argument (text), values (tag input for scalars) | Argument is the key in the tool call's arguments map |
-| `policy` | backend (text), config (CodeMirror JSON editor) | Advanced; show a warning "requires backend integration" |
-| `custom` | name (text), config (CodeMirror JSON editor) | Show warning "implementation-specific" |
+| Condition type      | Fields                                                                      | Notes                                                                          |
+| ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `timeWindow`        | notBefore (datetime), notAfter (datetime)                                   | ISO 8601; both optional but at least one required                              |
+| `ipRange`           | cidrs (tag input)                                                           | Validate each tag as a valid CIDR on add                                       |
+| `allowedOperations` | operations (tag input)                                                      | Free-form strings; hint shows example for DB ("SELECT", "INSERT")              |
+| `allowedExtensions` | extensions (tag input)                                                      | Dot prefix normalised (`.pdf` not `pdf`); maps to `AllowedExtensionsCondition` |
+| `allowedTables`     | tables (tag input), columns (per-table column list)                         | Column list is optional; add table → expand column config                      |
+| `maxCalls`          | count (number), windowSeconds (number + unit picker: seconds/minutes/hours) | Both required; min count 1                                                     |
+| `recipientDomain`   | domains (tag input)                                                         | Validate domain format on add                                                  |
+| `redactFields`      | fields (tag input)                                                          | Field path strings; hint: "e.g. patient.ssn" for HIPAA                         |
+| `allowedValues`     | argument (text), values (tag input for scalars)                             | Argument is the key in the tool call's arguments map                           |
+| `policy`            | backend (text), config (CodeMirror JSON editor)                             | Advanced; show a warning "requires backend integration"                        |
+| `custom`            | name (text), config (CodeMirror JSON editor)                                | Show warning "implementation-specific"                                         |
 
 **Sheet UX flow:**
+
 1. User clicks "Add condition" on a capability row.
 2. Sheet opens with a condition type selector (dropdown of 11 types with human-readable labels and a one-line description for each).
 3. After selecting a type, the matching sub-form renders below.
@@ -496,6 +512,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Two modes (tab toggle on each capability row):**
 
 **Guided mode (default):**
+
 - Type selector: `string`, `number`, `boolean`, `object`, `array` (maps to `SchemaType`).
 - For `object`: add/remove property rows. Each property has a name field + recursive type selector.
 - `required` checkbox per property.
@@ -503,6 +520,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 - This covers the common case: validate a `path` argument is a string matching a regex, or validate a `tableName` is one of an enum.
 
 **Raw mode (fallback):**
+
 - CodeMirror 6 JSON editor with the `ArgumentSchema` JSON Schema wired for inline validation.
 - The editor is pre-populated from the guided mode state when switching to raw.
 - Switching back to guided mode attempts to parse the raw JSON; if the raw JSON has constructs the guided mode cannot represent, it stays in raw mode and shows a notice.
@@ -519,6 +537,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **Two sections:**
 
 **"What this agent can do" summary:**
+
 - Renders each capability as a human-readable sentence. Example:
   - "Read and execute anything under `api://tools/**`"
   - "Read from `storage://sales-data/**`, limited to 10 calls per 5 minutes, only from IP ranges 10.0.0.0/8"
@@ -527,6 +546,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 - Updates in real time as the user types.
 
 **"Try a tool call" simulator:**
+
 - Resource input, action selector, optional arguments (CodeMirror JSON editor, small).
 - "Check" button calls `POST /admin/role-policy/validate` with `simulate: { resource, actions, arguments }` and the current policy draft (unsaved).
 - Shows result:
@@ -546,21 +566,25 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **What to build:**
 
 **Save button:**
+
 - Calls `POST /admin/role-policy/validate` first (pre-save validation). If invalid, shows errors and does not proceed.
 - Calls `POST /admin/role-policy/{role}` with the policy JSON.
 - On success: shows toast "Policy saved", marks form as clean, updates the URL to `/ui/policies/:role` if creating a new role.
 - On 409 conflict (role already exists, create flow): shows inline error "A role with this name already exists".
 
 **Cancel button:**
+
 - If form is dirty: shows a "Discard unsaved changes?" dialog.
 - If clean: navigates back to the roles list.
 
 **Delete button (edit flow only):**
+
 - Opens a confirmation dialog: "Delete role {roleName}? This will immediately prevent any agents using this role from receiving capability tokens."
 - On confirm: calls `DELETE /admin/role-policy/{role}`.
 - On success: navigates to `/ui/policies`, shows toast "Role deleted".
 
 **Unsaved changes guard:**
+
 - React Router v7's `useBeforeUnload` + `useBlocker` hooks prompt the user if they navigate away with unsaved changes.
 
 **Acceptance:** Creating a new role, saving, refreshing the page, and navigating back to that role shows the saved values. Attempting to navigate away with unsaved changes shows the discard dialog.
@@ -590,7 +614,8 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
    Broad access (`api://**`, `storage://**`) with a `timeWindow` condition (business hours only, Mon–Fri 09:00–18:00 local). TTL: 1 hour. Explicitly labeled "not for production."
 
 **Template picker UX:**
-- Shown on the "New role" page *before* the empty form.
+
+- Shown on the "New role" page _before_ the empty form.
 - Cards with title, one-line description, and compliance badge (SOC 2 / HIPAA / PCI-DSS / None).
 - "Start from template" pre-fills the form; user must still name the role.
 - "Start from scratch" skips to the empty form.
@@ -607,6 +632,7 @@ The `go build` for the issuer should fail with a clear message if `ui/dist` does
 **What to build:**
 
 Makefile targets:
+
 ```makefile
 .PHONY: ui-install ui-build ui-dev
 
@@ -625,6 +651,7 @@ build: ui-build
 ```
 
 Build tag in `internal/issuer/ui.go`:
+
 ```go
 //go:build !noembed
 ```
@@ -632,6 +659,7 @@ Build tag in `internal/issuer/ui.go`:
 A companion file `internal/issuer/ui_stub.go` with `//go:build noembed` provides a stub `uiHandler()` that returns a plain 404, allowing `go test ./...` (which does not run `make ui-build` first) to compile cleanly.
 
 CI pipeline additions:
+
 - Cache `internal/issuer/ui/node_modules` by `package-lock.json` hash.
 - Run `npm run build` and `npm run typecheck` as a separate CI job.
 - The Go build in CI uses `-tags noembed` for unit tests; the release build does not.
@@ -645,6 +673,7 @@ CI pipeline additions:
 From the GTM plan: **50% of Cloud Team users author policies via the UI rather than raw YAML by month 7.**
 
 Proxy metrics to track before month 7:
+
 - Time from `/ui/` load to first policy saved, for new users (target: under 5 minutes with a template, under 15 minutes without).
 - `POST /admin/role-policy/{role}` calls with `User-Agent: eunox-ui/*` vs. `curl`/other (requires a user-agent header from the frontend).
 - Number of validate endpoint calls per policy saved (high ratio = user is iterating, which is healthy).

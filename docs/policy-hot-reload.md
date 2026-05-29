@@ -175,26 +175,26 @@ After startup, a background goroutine polls for changes:
 ### Thread Safety
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  PolicyEngine                         │
-│                                                      │
-│  ┌──────────────────────────────────────────────┐   │
-│  │  sync.RWMutex                                 │   │
-│  │                                               │   │
-│  │  Read path (token issuance):                  │   │
-│  │    RLock() → IntersectCapabilities() → RUnlock│   │
-│  │                                               │   │
-│  │  Write path (hot-reload):                     │   │
-│  │    Lock() → swap policies → Unlock()          │   │
-│  │                                               │   │
-│  └──────────────────────────────────────────────┘   │
-│                                                      │
-│  pollLoop goroutine:                                 │
-│    ticker (30s) → stat file → reload if changed      │
-│                                                      │
-│  stopCh: channel for graceful shutdown               │
-│  sync.Once: ensures Stop() is idempotent             │
-└─────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│                      PolicyEngine                      │
+│                                                        │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │  sync.RWMutex                                    │  │
+│  │                                                  │  │
+│  │  Read path (token issuance):                     │  │
+│  │    RLock() → IntersectCapabilities() → RUnlock() │  │
+│  │                                                  │  │
+│  │  Write path (hot-reload):                        │  │
+│  │    Lock() → swap policies → Unlock()             │  │
+│  │                                                  │  │
+│  └──────────────────────────────────────────────────┘  │
+│                                                        │
+│  pollLoop goroutine:                                   │
+│    ticker (30s) → stat file → reload if changed        │
+│                                                        │
+│  stopCh: channel for graceful shutdown                 │
+│  sync.Once: ensures Stop() is idempotent               │
+└────────────────────────────────────────────────────────┘
 ```
 
 ### Concurrency Guarantees

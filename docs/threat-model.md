@@ -33,13 +33,13 @@ eunox is a **capability-native zero-trust enforcement plane for AI agents**. It 
 
 ### 1.1 What problem eunox solves
 
-Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access control at the HTTP layer based on static identity — who the caller is. They have no concept of *what an agent is doing*, *what it has already done this session*, or *whether a sequence of individually permitted calls is collectively dangerous*. eunox introduces three constructs that existing infrastructure cannot provide:
+Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access control at the HTTP layer based on static identity — who the caller is. They have no concept of _what an agent is doing_, _what it has already done this session_, or _whether a sequence of individually permitted calls is collectively dangerous_. eunox introduces three constructs that existing infrastructure cannot provide:
 
-| Construct | What it enables |
-|---|---|
-| **Capability token** | A signed, scoped, time-limited credential issued per-task — not per-user. Limits what a specific agent invocation can do, regardless of the identity of the user who spawned it. |
-| **Session context** | The gateway tracks tool call history within a task. Policies can express sequential constraints ("deny `write_external_endpoint` if `read_credentials` was called earlier this session"). |
-| **Task-lifecycle revocation** | Credentials minted for a task are revoked when the task completes or fails — not when the static token expires. Privilege exposure window is bounded by task duration, not token TTL. |
+| Construct                     | What it enables                                                                                                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Capability token**          | A signed, scoped, time-limited credential issued per-task — not per-user. Limits what a specific agent invocation can do, regardless of the identity of the user who spawned it.          |
+| **Session context**           | The gateway tracks tool call history within a task. Policies can express sequential constraints ("deny `write_external_endpoint` if `read_credentials` was called earlier this session"). |
+| **Task-lifecycle revocation** | Credentials minted for a task are revoked when the task completes or fails — not when the static token expires. Privilege exposure window is bounded by task duration, not token TTL.     |
 
 ### 1.2 Component map
 
@@ -50,7 +50,7 @@ Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access contr
                                │ OIDC (verified)
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    Capability Issuer (:3001)                  │
+│                    Capability Issuer (:3001)                 │
 │  • Validates IdP token via OIDC                              │
 │  • Maps identity → role → capability policy                  │
 │  • Mints signed capability token (JWT, KMS-backed)           │
@@ -66,30 +66,30 @@ Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access contr
                                │ Tool call + capability token
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    Tool Gateway (:3002)                       │
+│                    Tool Gateway (:3002)                      │
 │  • Verifies token signature (JWKS / KMS)                     │
 │  • Checks revocation (Redis JTI store)                       │
 │  • Checks kill-switch state (Redis Pub/Sub)                  │
 │  • Evaluates capability conditions (IP, time, quota, policy) │
 │  • Validates DPoP binding (if present)                       │
-│  • Emits signed audit event (OCSF 1.1.0)                    │
+│  • Emits signed audit event (OCSF 1.1.0)                     │
 │  • Proxies request to backend on ALLOW                       │
 └───────────────┬──────────────────────────┬───────────────────┘
-                │ Authorized requests       │ Signed audit events
-                ▼                           ▼
-      Protected backends             SIEM / audit store
-      (APIs, DBs, files)             (Splunk / Sentinel /
-                                      custom OCSF sink)
+                │ Authorized requests      │ Signed audit events
+                ▼                          ▼
+      Protected backends            SIEM / audit store
+      (APIs, DBs, files)            (Splunk / Sentinel /
+                                     custom OCSF sink)
 ```
 
 **Supporting services:**
 
-| Service | Role |
-|---|---|
-| Redis | Kill-switch state, token revocation list, DPoP replay store, call-counter quotas |
-| PostgreSQL | API key store (minter), policy store, audit ledger |
-| KMS / HSM | Private signing key holder (Azure Key Vault / AWS KMS / GCP Cloud KMS) |
-| Admin API (:3003) | Kill-switch activation, bulk revocation — localhost-bound by default |
+| Service           | Role                                                                             |
+| ----------------- | -------------------------------------------------------------------------------- |
+| Redis             | Kill-switch state, token revocation list, DPoP replay store, call-counter quotas |
+| PostgreSQL        | API key store (minter), policy store, audit ledger                               |
+| KMS / HSM         | Private signing key holder (Azure Key Vault / AWS KMS / GCP Cloud KMS)           |
+| Admin API (:3003) | Kill-switch activation, bulk revocation — localhost-bound by default             |
 
 ---
 
@@ -99,14 +99,14 @@ Existing API gateways and policy engines (Envoy, OPA, Kong) enforce access contr
 
 ```
 ╔═══════════════════════════════════════════════════════════════╗
-║  TRUSTED ZONE — cryptographically verified before use        ║
+║  TRUSTED ZONE — cryptographically verified before use         ║
 ║                                                               ║
 ║  • Capability token claims (after JWT signature verified      ║
 ║    against JWKS and revocation confirmed)                     ║
 ║  • IdP identity claims (after OIDC validation with PKCE S256) ║
 ║  • Partner issuer tokens (after DID resolution + signature    ║
-║    verification against resolved DID document)               ║
-║  • KMS-returned signatures (TLS to KMS endpoint required)    ║
+║    verification against resolved DID document)                ║
+║  • KMS-returned signatures (TLS to KMS endpoint required)     ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 ╔═══════════════════════════════════════════════════════════════╗
@@ -158,30 +158,30 @@ These claims are not re-validated against the issuer's policy store on every req
 
 ### 2.3 Trust decisions NOT made by eunox
 
-| Decision | Who is responsible |
-|---|---|
-| Whether the LLM's instructions are safe | Application / LLM provider |
-| Whether a prompt injection has occurred | Application / input sanitizer |
-| Whether the agent executable has been tampered with | Host OS / container runtime |
-| Whether the backend service correctly processes an authorized request | The backend itself |
-| Whether the user who requested the token had legitimate intent | Enterprise IdP + HR process |
+| Decision                                                              | Who is responsible            |
+| --------------------------------------------------------------------- | ----------------------------- |
+| Whether the LLM's instructions are safe                               | Application / LLM provider    |
+| Whether a prompt injection has occurred                               | Application / input sanitizer |
+| Whether the agent executable has been tampered with                   | Host OS / container runtime   |
+| Whether the backend service correctly processes an authorized request | The backend itself            |
+| Whether the user who requested the token had legitimate intent        | Enterprise IdP + HR process   |
 
 ---
 
 ## 3. Asset Inventory
 
-| Asset | Sensitivity | Location | Compromise impact |
-|---|---|---|---|
-| KMS / HSM private signing key | Critical | Azure Key Vault / AWS KMS / GCP Cloud KMS | Full token forgery for the tenant; all tokens become untrustworthy |
-| Admin API key / admin JWT signing key | Critical | Environment variable / secrets manager | Attacker can create arbitrary policies, activate kill-switches, revoke any token |
-| JWKS public keys | Public | `/.well-known/jwks.json` | No direct impact; compromise of private key makes rotation necessary |
-| Redis revocation store | High | Redis cluster | Cleared store: revoked tokens become valid again until expiry |
-| Redis kill-switch state | High | Redis cluster | Cleared state: killed agents can resume tool calls |
-| Capability tokens (in transit) | High | Agent memory / TLS | Token theft enables tool calls up to expiry (typically 15 minutes) |
-| Audit log database | Medium | PostgreSQL | Deleted records: compliance and forensic capability lost; tampering detectable via HMAC chain |
-| Role-capability policy file | Medium | Filesystem / PostgreSQL | Widened policies: agents receive broader capabilities than intended |
-| Tool call metadata (audit records) | Medium | PostgreSQL | Tool names, resource paths, outcomes — not argument values |
-| Enterprise IdP credentials | High | Managed by customer IdP | IdP compromise allows issuance of tokens for any role the IdP maps |
+| Asset                                 | Sensitivity | Location                                  | Compromise impact                                                                             |
+| ------------------------------------- | ----------- | ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| KMS / HSM private signing key         | Critical    | Azure Key Vault / AWS KMS / GCP Cloud KMS | Full token forgery for the tenant; all tokens become untrustworthy                            |
+| Admin API key / admin JWT signing key | Critical    | Environment variable / secrets manager    | Attacker can create arbitrary policies, activate kill-switches, revoke any token              |
+| JWKS public keys                      | Public      | `/.well-known/jwks.json`                  | No direct impact; compromise of private key makes rotation necessary                          |
+| Redis revocation store                | High        | Redis cluster                             | Cleared store: revoked tokens become valid again until expiry                                 |
+| Redis kill-switch state               | High        | Redis cluster                             | Cleared state: killed agents can resume tool calls                                            |
+| Capability tokens (in transit)        | High        | Agent memory / TLS                        | Token theft enables tool calls up to expiry (typically 15 minutes)                            |
+| Audit log database                    | Medium      | PostgreSQL                                | Deleted records: compliance and forensic capability lost; tampering detectable via HMAC chain |
+| Role-capability policy file           | Medium      | Filesystem / PostgreSQL                   | Widened policies: agents receive broader capabilities than intended                           |
+| Tool call metadata (audit records)    | Medium      | PostgreSQL                                | Tool names, resource paths, outcomes — not argument values                                    |
+| Enterprise IdP credentials            | High        | Managed by customer IdP                   | IdP compromise allows issuance of tokens for any role the IdP maps                            |
 
 ---
 
@@ -238,6 +238,7 @@ The enforcement engine (`pkg/enforcement/engine.go`) is the sole policy decision
 **Prevention layer 2 — Short TTL:** The default token TTL is 15 minutes (`maxTtlSeconds: 900`). Maximum configurable TTL is 24 hours. Task-lifecycle revocation (§4.4) further reduces the effective window to average task duration (typically seconds to minutes for most tool calls).
 
 **Prevention layer 3 — DPoP binding (RFC 9449):** When DPoP is enabled, the capability token contains a `cnf.jkt` claim binding it to a specific client public key. The gateway verifies:
+
 - The DPoP proof JWT is signed by the key whose thumbprint matches `cnf.jkt`
 - The `htm` (method) and `htu` (URI) claims match the actual request
 - The `iat` claim is within the acceptable clock skew
@@ -316,6 +317,7 @@ If Redis becomes unavailable after a kill switch has been activated, the in-proc
 The gateway admin API is bound to `localhost` (port 3003) by default and is not exposed externally. Operators access it via a privileged pod exec or VPN-gated jump host.
 
 Authentication supports two modes:
+
 - **JWT mode (recommended):** `Authorization: Bearer <jwt>` validated against `ADMIN_JWKS_URI`. Required claims: `sub`, `aud` (must match `ADMIN_JWT_AUDIENCE`), `iss`, `exp`. Cross-tenant operations additionally require the `platformAdmin` claim.
 - **Static key mode (legacy):** `X-Admin-Api-Key` header; constant-time comparison using `subtle.ConstantTimeCompare` on SHA-256 hashes. Emits a deprecation warning log.
 
@@ -357,9 +359,9 @@ The following attack classes are explicitly outside eunox's enforcement boundary
 
 **What it is:** An attacker embeds malicious instructions in data that an LLM reads (a document, a database record, a web page), causing the agent to take actions that the legitimate user did not authorize.
 
-**Why it is out of scope:** Prompt injection is a property of the LLM's behavior in response to input content. eunox operates at the tool-call layer — it enforces *what the agent is permitted to do* given a valid capability token, not *why the agent decided to do it*. An agent that has been prompt-injected to call `read_file("/reports/Q4.xlsx")` will be authorized by eunox if the token permits that call, because the call is indistinguishable from a legitimate one at the protocol layer.
+**Why it is out of scope:** Prompt injection is a property of the LLM's behavior in response to input content. eunox operates at the tool-call layer — it enforces _what the agent is permitted to do_ given a valid capability token, not _why the agent decided to do it_. An agent that has been prompt-injected to call `read_file("/reports/Q4.xlsx")` will be authorized by eunox if the token permits that call, because the call is indistinguishable from a legitimate one at the protocol layer.
 
-**What eunox does reduce (but does not eliminate):** By scoping capability tokens to specific resources, actions, and argument patterns, eunox limits the *blast radius* of a successful prompt injection. An injected agent cannot access resources outside its capability token's scope, and cannot remain active beyond the token's TTL or the task lifecycle.
+**What eunox does reduce (but does not eliminate):** By scoping capability tokens to specific resources, actions, and argument patterns, eunox limits the _blast radius_ of a successful prompt injection. An injected agent cannot access resources outside its capability token's scope, and cannot remain active beyond the token's TTL or the task lifecycle.
 
 **Recommended complementary controls:** Input sanitization at the application layer; LLM-specific guardrails (e.g., constitutional AI, system prompt hardening); content scanning before feeding external data to the agent.
 
@@ -421,14 +423,14 @@ eunox defaults to **fail-closed**: when a dependency required for a security dec
 
 Redis serves four enforcement functions. Each has a distinct failure mode:
 
-| Function | Failure behavior | Config to change |
-|---|---|---|
-| Token revocation store | 503 Service Unavailable — cannot confirm token not revoked | `REDIS_REVOCATION_FAILOPEN=true` (not recommended; documents the override exists) |
-| Kill-switch state | Falls back to in-process cached state from last successful refresh (up to `KILL_SWITCH_REFRESH_INTERVAL_MS`, default 30 seconds) | N/A — in-process cache is the designed fallback |
-| DPoP replay store | 403 Forbidden — treats unavailability as a replay | No override; fail-closed is intentional |
-| Call counter (`maxCalls` condition) | 503 Service Unavailable — cannot verify quota | N/A |
+| Function                            | Failure behavior                                                                                                                 | Config to change                                                                  |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Token revocation store              | 503 Service Unavailable — cannot confirm token not revoked                                                                       | `REDIS_REVOCATION_FAILOPEN=true` (not recommended; documents the override exists) |
+| Kill-switch state                   | Falls back to in-process cached state from last successful refresh (up to `KILL_SWITCH_REFRESH_INTERVAL_MS`, default 30 seconds) | N/A — in-process cache is the designed fallback                                   |
+| DPoP replay store                   | 403 Forbidden — treats unavailability as a replay                                                                                | No override; fail-closed is intentional                                           |
+| Call counter (`maxCalls` condition) | 503 Service Unavailable — cannot verify quota                                                                                    | N/A                                                                               |
 
-**Operational note:** The kill-switch fallback is the only case where Redis unavailability does not immediately result in a 5xx. A kill switch that was active before Redis went down remains active in the in-process cache. A kill switch activated *after* Redis went down will not propagate until Redis recovers and the periodic refresh runs.
+**Operational note:** The kill-switch fallback is the only case where Redis unavailability does not immediately result in a 5xx. A kill switch that was active before Redis went down remains active in the in-process cache. A kill switch activated _after_ Redis went down will not propagate until Redis recovers and the periodic refresh runs.
 
 **Redis high availability:** Production deployments should use Redis Sentinel or Redis Cluster. The gateway Redis client handles Sentinel failover transparently. The `REDIS_URL` configuration accepts Sentinel-format URIs.
 
@@ -439,6 +441,7 @@ Redis serves four enforcement functions. Each has a distinct failure mode:
 **Observed behavior:** New capability tokens cannot be issued. Agents that already hold a valid, unexpired token continue to have their requests enforced by the gateway normally. The gateway validates tokens against its cached JWKS — it does not call the issuer on every request.
 
 **JWKS cache behavior:** If the issuer's JWKS endpoint is unreachable:
+
 - Cached JWKS is preserved and used for signature verification.
 - If a token presents a `kid` not in the cached JWKS, a re-fetch is attempted. If the re-fetch fails, the token is rejected.
 - A circuit breaker in the JWKS verifier protects against thundering-herd retry storms during issuer outages.
@@ -489,40 +492,40 @@ Redis serves four enforcement functions. Each has a distinct failure mode:
 
 The following fields appear in audit records for every enforcement decision:
 
-| Field | Description | Example value |
-|---|---|---|
-| `id` | Unique audit record ID | `01HWXYZ...` (ULID) |
-| `timestamp` | Event timestamp (microsecond precision) | `2026-05-28T14:32:11.421Z` |
-| `tenant_id` | Tenant scope | `acme-corp` |
-| `event_type` | Event category | `TOOL_CALL_AUTHORIZED`, `TOOL_CALL_DENIED`, `TOKEN_ISSUED`, `TOKEN_REVOKED`, `KILL_SWITCH_ACTIVATED` |
-| `actor_user_id` | Identity of the user who authorized the agent | `user@acme.com` |
-| `actor_tenant_id` | Tenant of the authorizing user | `acme-corp` |
-| `action` | HTTP method or tool operation | `POST`, `read`, `execute` |
-| `resource_uid` | Resource targeted by the tool call | `api://tools/read_file` |
-| `resource_type` | Resource category | `MCP_TOOL` |
-| `outcome` | Enforcement decision | `allow`, `deny` |
-| `detail` | Event-specific JSON | Condition evaluation results, denial reason |
-| `signature` | Cryptographic signature of the record | Base64url-encoded |
-| `algorithm` | Signing algorithm used | `ES256` |
-| `key_id` | Key that produced the signature | `key-2026-05` |
-| `chain_hash` | HMAC-SHA256 chain integrity value | Hex string |
-| `previous_hash` | Chain hash of the prior record | Hex string |
-| `ocsf_event` | Full OCSF 1.1.0 event (class 3003 or 6003) | JSON object |
+| Field             | Description                                   | Example value                                                                                        |
+| ----------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `id`              | Unique audit record ID                        | `01HWXYZ...` (ULID)                                                                                  |
+| `timestamp`       | Event timestamp (microsecond precision)       | `2026-05-28T14:32:11.421Z`                                                                           |
+| `tenant_id`       | Tenant scope                                  | `acme-corp`                                                                                          |
+| `event_type`      | Event category                                | `TOOL_CALL_AUTHORIZED`, `TOOL_CALL_DENIED`, `TOKEN_ISSUED`, `TOKEN_REVOKED`, `KILL_SWITCH_ACTIVATED` |
+| `actor_user_id`   | Identity of the user who authorized the agent | `user@acme.com`                                                                                      |
+| `actor_tenant_id` | Tenant of the authorizing user                | `acme-corp`                                                                                          |
+| `action`          | HTTP method or tool operation                 | `POST`, `read`, `execute`                                                                            |
+| `resource_uid`    | Resource targeted by the tool call            | `api://tools/read_file`                                                                              |
+| `resource_type`   | Resource category                             | `MCP_TOOL`                                                                                           |
+| `outcome`         | Enforcement decision                          | `allow`, `deny`                                                                                      |
+| `detail`          | Event-specific JSON                           | Condition evaluation results, denial reason                                                          |
+| `signature`       | Cryptographic signature of the record         | Base64url-encoded                                                                                    |
+| `algorithm`       | Signing algorithm used                        | `ES256`                                                                                              |
+| `key_id`          | Key that produced the signature               | `key-2026-05`                                                                                        |
+| `chain_hash`      | HMAC-SHA256 chain integrity value             | Hex string                                                                                           |
+| `previous_hash`   | Chain hash of the prior record                | Hex string                                                                                           |
+| `ocsf_event`      | Full OCSF 1.1.0 event (class 3003 or 6003)    | JSON object                                                                                          |
 
 ### 7.2 What eunox never logs
 
 The following data is explicitly excluded from all log outputs:
 
-| Data | Rationale |
-|---|---|
-| Bearer token (JWT) content | Contains sensitive identity claims; logging would enable replay |
-| DPoP proof JWT | Single-use credential; logging increases replay window |
-| Tool call argument values | May contain PII, PHI, credentials, or proprietary data |
-| IdP authentication tokens | Identity credential |
-| KMS signing key material | Never in application memory; only SHA-256 digest crosses KMS boundary |
-| Admin API keys | Operator credential |
-| Database connection strings / passwords | Infrastructure credential |
-| Query parameters containing potential secrets | Conservative: URL tails are logged, full query strings are not |
+| Data                                          | Rationale                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------- |
+| Bearer token (JWT) content                    | Contains sensitive identity claims; logging would enable replay       |
+| DPoP proof JWT                                | Single-use credential; logging increases replay window                |
+| Tool call argument values                     | May contain PII, PHI, credentials, or proprietary data                |
+| IdP authentication tokens                     | Identity credential                                                   |
+| KMS signing key material                      | Never in application memory; only SHA-256 digest crosses KMS boundary |
+| Admin API keys                                | Operator credential                                                   |
+| Database connection strings / passwords       | Infrastructure credential                                             |
+| Query parameters containing potential secrets | Conservative: URL tails are logged, full query strings are not        |
 
 ### 7.3 Configuring argument-level redaction
 
@@ -531,7 +534,7 @@ Tool call arguments are not logged by default. Operators who require selective a
 - The `redactFields` condition on a capability constraint specifies field names that must be redacted (replaced with `[REDACTED]`) before the audit record is written.
 - The condition applies to tool call arguments matching the named fields: `{"type": "redactFields", "fields": ["ssn", "dob", "card_number"]}`.
 
-This enables HIPAA-compliant audit trails that log *that* a tool call occurred without logging *which patient record* was accessed.
+This enables HIPAA-compliant audit trails that log _that_ a tool call occurred without logging _which patient record_ was accessed.
 
 ### 7.4 Data residency
 
@@ -543,13 +546,13 @@ Audit records are written to the PostgreSQL instance specified in `AUDIT_DB_URL`
 
 ### 8.1 Signing algorithms
 
-| Algorithm | Key type | Key size | Use |
-|---|---|---|---|
-| **EdDSA** (Ed25519) | Elliptic curve | 256-bit | Recommended; smallest signature, fastest verification, no parameter choices |
-| **ES256** (ECDSA P-256) | Elliptic curve | 256-bit | Default for software (non-KMS) deployments; FIPS 186-4 compliant |
-| **ES384** (ECDSA P-384) | Elliptic curve | 384-bit | FIPS 140-2 environments requiring P-384 |
-| **RS256** / **RS384** / **RS512** | RSA | 2048-bit minimum | Compatibility with legacy HSMs that do not support EC |
-| **PS256** / **PS384** / **PS512** | RSA-PSS | 2048-bit minimum | RSA with probabilistic padding; preferred over PKCS1v1.5 variants |
+| Algorithm                         | Key type       | Key size         | Use                                                                         |
+| --------------------------------- | -------------- | ---------------- | --------------------------------------------------------------------------- |
+| **EdDSA** (Ed25519)               | Elliptic curve | 256-bit          | Recommended; smallest signature, fastest verification, no parameter choices |
+| **ES256** (ECDSA P-256)           | Elliptic curve | 256-bit          | Default for software (non-KMS) deployments; FIPS 186-4 compliant            |
+| **ES384** (ECDSA P-384)           | Elliptic curve | 384-bit          | FIPS 140-2 environments requiring P-384                                     |
+| **RS256** / **RS384** / **RS512** | RSA            | 2048-bit minimum | Compatibility with legacy HSMs that do not support EC                       |
+| **PS256** / **PS384** / **PS512** | RSA-PSS        | 2048-bit minimum | RSA with probabilistic padding; preferred over PKCS1v1.5 variants           |
 
 The `none` algorithm is unconditionally rejected. There is no configuration to re-enable it.
 
@@ -565,11 +568,11 @@ In production deployments, the signing key never leaves the KMS boundary:
 
 The KMS service identity holds `sign` permission only on issuer keys — separate from the `decrypt` or `admin` permissions held by other service identities. Key access is logged by the cloud provider's KMS audit trail independent of eunox's own audit log.
 
-| Cloud | KMS product | Key alias pattern |
-|---|---|---|
-| Azure | Key Vault | `eunox-issuer-tenant-<tenantId>` |
-| AWS | KMS | `eunox-issuer-tenant-<tenantId>` |
-| GCP | Cloud KMS | `eunox-issuer-tenant-<tenantId>` |
+| Cloud       | KMS product            | Key alias pattern                          |
+| ----------- | ---------------------- | ------------------------------------------ |
+| Azure       | Key Vault              | `eunox-issuer-tenant-<tenantId>`           |
+| AWS         | KMS                    | `eunox-issuer-tenant-<tenantId>`           |
+| GCP         | Cloud KMS              | `eunox-issuer-tenant-<tenantId>`           |
 | Self-hosted | Software (ECDSA P-256) | In-memory; key exported to JWKS at startup |
 
 ### 8.3 Audit chain integrity
@@ -606,12 +609,12 @@ The `chainSecret` is a dedicated secret independent of the signing key (`AUDIT_C
 
 The following findings were identified during internal static analysis (report: `docs/security-audit.md`, 2026-05-27). No external penetration test has been conducted yet (see §10).
 
-| ID | Severity | Title | Status | Target resolution |
-|---|---|---|---|---|
-| F-1 | **Medium** | X-Forwarded-For IP spoofing in enforcement context | Open | Q2 2026 |
-| F-2 | Low | `http.DefaultClient` fallback without timeout in OIDC provider | Open | Q2 2026 |
-| F-3 | Low | `math/rand/v2` used for token refresh jitter | Accepted (not a vulnerability in Go 1.22+) | No action required |
-| F-4 | Low | CORS wildcard allowed in production with warning only | Open | Q3 2026 |
+| ID  | Severity   | Title                                                          | Status                                     | Target resolution  |
+| --- | ---------- | -------------------------------------------------------------- | ------------------------------------------ | ------------------ |
+| F-1 | **Medium** | X-Forwarded-For IP spoofing in enforcement context             | Open                                       | Q2 2026            |
+| F-2 | Low        | `http.DefaultClient` fallback without timeout in OIDC provider | Open                                       | Q2 2026            |
+| F-3 | Low        | `math/rand/v2` used for token refresh jitter                   | Accepted (not a vulnerability in Go 1.22+) | No action required |
+| F-4 | Low        | CORS wildcard allowed in production with warning only          | Open                                       | Q3 2026            |
 
 ### F-1 Detail — X-Forwarded-For IP Spoofing
 
@@ -627,14 +630,14 @@ The `extractClientIP` function in `internal/gateway/handlers.go` unconditionally
 
 ## 10. Third-Party Audit Status
 
-| Engagement | Scope | Status | Expected completion |
-|---|---|---|---|
-| Internal static analysis | Full Go codebase (`cmd/`, `internal/`, `pkg/`) | Complete (2026-05-27) | See §9 |
-| Penetration test — gateway enforcement path | Black-box + gray-box; token forge, bypass, injection | **Planned Q3 2026** | 2026-08 |
-| Penetration test — issuer and minter | OIDC flow, policy manipulation, key exposure | **Planned Q3 2026** | 2026-08 |
-| SOC 2 Type I readiness assessment | Trust Service Criteria: Security, Availability | **Planned Q4 2026** | 2026-10 |
-| SOC 2 Type II audit | 6-month observation period | **Planned H1 2027** | 2027-06 |
-| FIPS 140-2 cryptographic module validation | Signing key operations, key storage | Under evaluation | TBD |
+| Engagement                                  | Scope                                                | Status                | Expected completion |
+| ------------------------------------------- | ---------------------------------------------------- | --------------------- | ------------------- |
+| Internal static analysis                    | Full Go codebase (`cmd/`, `internal/`, `pkg/`)       | Complete (2026-05-27) | See §9              |
+| Penetration test — gateway enforcement path | Black-box + gray-box; token forge, bypass, injection | **Planned Q3 2026**   | 2026-08             |
+| Penetration test — issuer and minter        | OIDC flow, policy manipulation, key exposure         | **Planned Q3 2026**   | 2026-08             |
+| SOC 2 Type I readiness assessment           | Trust Service Criteria: Security, Availability       | **Planned Q4 2026**   | 2026-10             |
+| SOC 2 Type II audit                         | 6-month observation period                           | **Planned H1 2027**   | 2027-06             |
+| FIPS 140-2 cryptographic module validation  | Signing key operations, key storage                  | Under evaluation      | TBD                 |
 
 We are committed to transparency about where we are in this process. The absence of a completed third-party penetration test does not mean eunox is untested — it means the independent validation timeline is honest. Security teams evaluating eunox for deployment before Q3 2026 should conduct their own assessment of the gateway and issuer using the information in this document.
 
@@ -644,10 +647,10 @@ To request the full internal audit report (`docs/security-audit.md`), access to 
 
 ## 11. Change Log
 
-| Version | Date | Author | Changes |
-|---|---|---|---|
-| 1.0 | 2026-05-28 | Eunox Platform Security | Initial publication |
+| Version | Date       | Author                  | Changes             |
+| ------- | ---------- | ----------------------- | ------------------- |
+| 1.0     | 2026-05-28 | Eunox Platform Security | Initial publication |
 
 ---
 
-*Questions or corrections: open a GitHub issue tagged `security`, or email security@eunolabs.com. For active vulnerability reports, use the GitHub private security advisory workflow.*
+_Questions or corrections: open a GitHub issue tagged `security`, or email security@eunolabs.com. For active vulnerability reports, use the GitHub private security advisory workflow._

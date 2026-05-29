@@ -27,15 +27,15 @@ marked `[REQUIRED]` must be completed before the package is considered ready to 
 
 ## Section 1: Customer Overview [REQUIRED]
 
-| Field | Value |
-|-------|-------|
-| Customer name | `<company name>` |
-| Industry | `<industry>` |
-| Compliance frameworks | `<SOC 2 / HIPAA / PCI-DSS / NIST 800-207>` |
-| Production start date | `<YYYY-MM-DD>` |
-| Package preparation date | `<YYYY-MM-DD>` |
-| Eunox version | `<version tag>` |
-| Primary use case | `<description of AI agent workload>` |
+| Field                    | Value                                      |
+| ------------------------ | ------------------------------------------ |
+| Customer name            | `<company name>`                           |
+| Industry                 | `<industry>`                               |
+| Compliance frameworks    | `<SOC 2 / HIPAA / PCI-DSS / NIST 800-207>` |
+| Production start date    | `<YYYY-MM-DD>`                             |
+| Package preparation date | `<YYYY-MM-DD>`                             |
+| Eunox version            | `<version tag>`                            |
+| Primary use case         | `<description of AI agent workload>`       |
 
 ---
 
@@ -43,17 +43,17 @@ marked `[REQUIRED]` must be completed before the package is considered ready to 
 
 ### Infrastructure
 
-| Component | Configuration |
-|-----------|--------------|
-| Cloud provider | `<AWS / GCP / Azure / on-prem>` |
-| Region(s) | `<list of regions>` |
-| Number of AZs | `<count>` |
-| Gateway replicas | `<count>` |
-| Gateway CPU/memory per replica | `<mCPU> / <MiB>` |
-| Redis topology | `<Sentinel 3-node / Cluster 6-node / other>` |
-| Redis instance type | `<instance type>` |
-| PostgreSQL configuration | `<primary + N read replicas / RDS Multi-AZ / etc.>` |
-| Deployment model | `<centralized / sidecar / hybrid>` |
+| Component                      | Configuration                                       |
+| ------------------------------ | --------------------------------------------------- |
+| Cloud provider                 | `<AWS / GCP / Azure / on-prem>`                     |
+| Region(s)                      | `<list of regions>`                                 |
+| Number of AZs                  | `<count>`                                           |
+| Gateway replicas               | `<count>`                                           |
+| Gateway CPU/memory per replica | `<mCPU> / <MiB>`                                    |
+| Redis topology                 | `<Sentinel 3-node / Cluster 6-node / other>`        |
+| Redis instance type            | `<instance type>`                                   |
+| PostgreSQL configuration       | `<primary + N read replicas / RDS Multi-AZ / etc.>` |
+| Deployment model               | `<centralized / sidecar / hybrid>`                  |
 
 ### Network topology diagram
 
@@ -61,17 +61,17 @@ marked `[REQUIRED]` must be completed before the package is considered ready to 
 [Insert ASCII or link to topology diagram]
 ```
 
-*Minimum required: show gateway replicas, Redis nodes, PostgreSQL, and labeled failure domains.*
+_Minimum required: show gateway replicas, Redis nodes, PostgreSQL, and labeled failure domains._
 
 ### Kubernetes configuration
 
-| Setting | Value |
-|---------|-------|
-| Gateway HPA min/max replicas | `<min> / <max>` |
-| PodDisruptionBudget minAvailable | `<count or percentage>` |
-| TopologySpreadConstraints | `<zone spread / host spread>` |
-| Resource requests: CPU / memory | `<mCPU> / <MiB>` |
-| Resource limits: CPU / memory | `<mCPU> / <MiB>` |
+| Setting                          | Value                         |
+| -------------------------------- | ----------------------------- |
+| Gateway HPA min/max replicas     | `<min> / <max>`               |
+| PodDisruptionBudget minAvailable | `<count or percentage>`       |
+| TopologySpreadConstraints        | `<zone spread / host spread>` |
+| Resource requests: CPU / memory  | `<mCPU> / <MiB>`              |
+| Resource limits: CPU / memory    | `<mCPU> / <MiB>`              |
 
 ---
 
@@ -82,30 +82,30 @@ Baseline` and record the results here.
 
 ### Enforcement latency (production, P-percentiles)
 
-| Scenario | P50 | P95 | P99 | P999 |
-|----------|-----|-----|-----|------|
-| Token cache enabled (cache hit) | — | — | — | — |
-| Token cache enabled (cache miss) | — | — | — | — |
-| Token cache disabled (full path) | — | — | — | — |
+| Scenario                         | P50 | P95 | P99 | P999 |
+| -------------------------------- | --- | --- | --- | ---- |
+| Token cache enabled (cache hit)  | —   | —   | —   | —    |
+| Token cache enabled (cache miss) | —   | —   | —   | —    |
+| Token cache disabled (full path) | —   | —   | —   | —    |
 
-*Measurement method: `GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT` + Prometheus histogram
+_Measurement method: `GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT` + Prometheus histogram
 `enforce_duration_seconds`; or `internal/gateway/enforce_benchmark_test.go` run against
-staging with representative token shapes.*
+staging with representative token shapes._
 
 ### Throughput
 
-| Metric | Value |
-|--------|-------|
-| Peak RPS observed in production | `<RPS>` |
-| Sustained RPS (30-min window) | `<RPS>` |
+| Metric                          | Value     |
+| ------------------------------- | --------- |
+| Peak RPS observed in production | `<RPS>`   |
+| Sustained RPS (30-min window)   | `<RPS>`   |
 | Number of active agents at peak | `<count>` |
 
 ### Token cache configuration
 
-| Setting | Value |
-|---------|-------|
-| `GATEWAY_TOKEN_CACHE_TTL_SECONDS` | `<seconds>` |
-| `GATEWAY_TOKEN_CACHE_MAX_SIZE` | `<entries>` |
+| Setting                             | Value          |
+| ----------------------------------- | -------------- |
+| `GATEWAY_TOKEN_CACHE_TTL_SECONDS`   | `<seconds>`    |
+| `GATEWAY_TOKEN_CACHE_MAX_SIZE`      | `<entries>`    |
 | Cache hit rate (production average) | `<percentage>` |
 
 ---
@@ -138,26 +138,26 @@ curl -s -X POST https://<gateway-admin>/admin/v1/kill-switch/agents/<agent-id> \
 
 ### Results
 
-| Test | Expected | Observed | Pass/Fail |
-|------|----------|----------|-----------|
-| Agent kill → first block | < 1 000 ms | `<ms>` | |
-| Global kill → first block | < 1 000 ms | `<ms>` | |
-| Agent revive → first allow | < 1 000 ms | `<ms>` | |
-| Kill-switch state after Redis restart | Fail-closed | `<observed>` | |
-| Kill-switch state after gateway restart | Correct (loaded from Redis) | `<observed>` | |
+| Test                                    | Expected                    | Observed     | Pass/Fail |
+| --------------------------------------- | --------------------------- | ------------ | --------- |
+| Agent kill → first block                | < 1 000 ms                  | `<ms>`       |           |
+| Global kill → first block               | < 1 000 ms                  | `<ms>`       |           |
+| Agent revive → first allow              | < 1 000 ms                  | `<ms>`       |           |
+| Kill-switch state after Redis restart   | Fail-closed                 | `<observed>` |           |
+| Kill-switch state after gateway restart | Correct (loaded from Redis) | `<observed>` |           |
 
 ### Chaos test results
 
 Run `make test` in the `internal/chaos/` package against the staging environment.
 
-| Test suite | Tests passed | Tests failed | Notes |
-|------------|-------------|-------------|-------|
-| Kill-switch resilience | `<count>` / `<total>` | `<count>` | |
-| Revocation resilience | `<count>` / `<total>` | `<count>` | |
-| Circuit breaker scenarios | `<count>` / `<total>` | `<count>` | |
-| Redis failure modes | `<count>` / `<total>` | `<count>` | |
+| Test suite                | Tests passed          | Tests failed | Notes |
+| ------------------------- | --------------------- | ------------ | ----- |
+| Kill-switch resilience    | `<count>` / `<total>` | `<count>`    |       |
+| Revocation resilience     | `<count>` / `<total>` | `<count>`    |       |
+| Circuit breaker scenarios | `<count>` / `<total>` | `<count>`    |       |
+| Redis failure modes       | `<count>` / `<total>` | `<count>`    |       |
 
-*See `docs/chaos-results.md` for the baseline pass matrix (43/43).*
+_See `docs/chaos-results.md` for the baseline pass matrix (43/43)._
 
 ---
 
@@ -165,26 +165,26 @@ Run `make test` in the `internal/chaos/` package against the staging environment
 
 ### Incident log
 
-| Incident ID | Date | Severity | Component | Duration | RTO achieved | Root cause | Resolution |
-|-------------|------|----------|-----------|----------|-------------|-----------|-----------|
-| `<ID>` | `<date>` | `<P1-P4>` | `<gateway/redis/postgres>` | `<minutes>` | `<yes/no>` | `<brief>` | `<brief>` |
+| Incident ID | Date     | Severity  | Component                  | Duration    | RTO achieved | Root cause | Resolution |
+| ----------- | -------- | --------- | -------------------------- | ----------- | ------------ | ---------- | ---------- |
+| `<ID>`      | `<date>` | `<P1-P4>` | `<gateway/redis/postgres>` | `<minutes>` | `<yes/no>`   | `<brief>`  | `<brief>`  |
 
-*Minimum: log all incidents that resulted in enforcement unavailability or
+_Minimum: log all incidents that resulted in enforcement unavailability or
 incorrect enforcement decisions. P1 incidents (enforcement unavailable) and
-P2 incidents (degraded performance > 5 min) are required entries.*
+P2 incidents (degraded performance > 5 min) are required entries._
 
 ### SLA performance
 
-| SLA target | Measurement period | Achieved |
-|------------|-------------------|---------|
-| P99 enforce latency < 50 ms | `<period>` | `<ms>` |
-| 99.9% availability (enforce endpoint) | `<period>` | `<%>` |
-| Kill-switch propagation < 1 s | `<period>` | `<ms P99>` |
+| SLA target                            | Measurement period | Achieved   |
+| ------------------------------------- | ------------------ | ---------- |
+| P99 enforce latency < 50 ms           | `<period>`         | `<ms>`     |
+| 99.9% availability (enforce endpoint) | `<period>`         | `<%>`      |
+| Kill-switch propagation < 1 s         | `<period>`         | `<ms P99>` |
 
 ### Lessons learned
 
-*Fill in after at least one incident or after 6 months of operation. Document
-what the incident revealed about the deployment topology and what was changed.*
+_Fill in after at least one incident or after 6 months of operation. Document
+what the incident revealed about the deployment topology and what was changed._
 
 ---
 
@@ -195,12 +195,12 @@ what the incident revealed about the deployment topology and what was changed.*
 For each framework the customer operates under, confirm that the Eunox controls
 in `docs/compliance-alignment.md` are in place.
 
-| Framework | Status | Evidence location | Auditor-ready |
-|-----------|--------|------------------|--------------|
-| SOC 2 Type II CC6 | `<in place / partial / N/A>` | `<location>` | `<yes/no>` |
-| HIPAA §164.312 | `<in place / partial / N/A>` | `<location>` | `<yes/no>` |
-| NIST 800-207 | `<in place / partial / N/A>` | `<location>` | `<yes/no>` |
-| PCI-DSS 10 | `<in place / partial / N/A>` | `<location>` | `<yes/no>` |
+| Framework         | Status                       | Evidence location | Auditor-ready |
+| ----------------- | ---------------------------- | ----------------- | ------------- |
+| SOC 2 Type II CC6 | `<in place / partial / N/A>` | `<location>`      | `<yes/no>`    |
+| HIPAA §164.312    | `<in place / partial / N/A>` | `<location>`      | `<yes/no>`    |
+| NIST 800-207      | `<in place / partial / N/A>` | `<location>`      | `<yes/no>`    |
+| PCI-DSS 10        | `<in place / partial / N/A>` | `<location>`      | `<yes/no>`    |
 
 ### Audit chain verification
 
@@ -213,6 +213,7 @@ curl -s "https://<gateway>/api/v1/audit/chain-proof?from=<ISO8601>&to=<ISO8601>"
 ```
 
 Expected output:
+
 ```json
 {
   "valid": true,
@@ -223,20 +224,20 @@ Expected output:
 }
 ```
 
-| Verification run date | Record count | `valid` field | Chain hash |
-|-----------------------|-------------|--------------|-----------|
-| `<date>` | `<count>` | `<true/false>` | `<hash>` |
+| Verification run date | Record count | `valid` field  | Chain hash |
+| --------------------- | ------------ | -------------- | ---------- |
+| `<date>`              | `<count>`    | `<true/false>` | `<hash>`   |
 
 ---
 
 ## Section 7: Customer Testimonial [OPTIONAL]
 
-*To be completed only with explicit customer consent and legal review.*
+_To be completed only with explicit customer consent and legal review._
 
 **Quote for use in sales materials:**
 
 > "[Customer quote about Eunox in production — latency, reliability, compliance
-> value, or operational experience.]"
+> > value, or operational experience.]"
 >
 > — [Name, Title, Company]
 

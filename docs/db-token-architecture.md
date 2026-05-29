@@ -26,33 +26,33 @@ and lifecycle models.
 ### 2.1 Component Diagram
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Agent Runtime (Untrusted Zone)                                      │
-│  ├── Holds capability token with db:// claims                        │
-│  └── Calls POST /api/v1/db-tokens                                   │
-└─────────────────────┬────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Agent Runtime (Untrusted Zone)                            │
+│  ├── Holds capability token with db:// claims              │
+│  └── Calls POST /api/v1/db-tokens                          │
+└─────────────────────┬──────────────────────────────────────┘
                       │ HTTPS (Bearer token)
                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  DB Token Service (port 3005) — Trusted Zone                         │
-│                                                                      │
-│  ┌──────────────────┐   ┌──────────────────┐                        │
-│  │  Token Verifier  │   │  Cloud DB        │                        │
-│  │  (JWKS-based)    │   │  Adapter         │                        │
-│  └────────┬─────────┘   └────────┬─────────┘                        │
-│           │                      │                                   │
-│  1. Verify JWT signature         │ 3. Mint credential                │
-│  2. Extract db:// caps           │                                   │
-│  3. Map resource → DB user       │                                   │
-└───────────┼──────────────────────┼───────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  DB Token Service (port 3005) — Trusted Zone               │
+│                                                            │
+│  ┌──────────────────┐   ┌──────────────────┐               │
+│  │  Token Verifier  │   │  Cloud DB        │               │
+│  │  (JWKS-based)    │   │  Adapter         │               │
+│  └────────┬─────────┘   └────────┬─────────┘               │
+│           │                      │                         │
+│  1. Verify JWT signature         │ 3. Mint credential      │
+│  2. Extract db:// caps           │                         │
+│  3. Map resource → DB user       │                         │
+└───────────┼──────────────────────┼─────────────────────────┘
             │                      │
             ▼                      ▼
-┌──────────────────┐   ┌───────────────────────────────────────────────┐
-│  Issuer JWKS     │   │  Cloud Database APIs                          │
-│  Endpoint        │   │  ├── AWS RDS (IAM Authentication)             │
-└──────────────────┘   │  ├── Azure SQL (Azure AD tokens)              │
-                       │  └── GCP Cloud SQL (OAuth2 tokens)            │
-                       └───────────────────────────────────────────────┘
+┌──────────────────┐   ┌─────────────────────────────────────┐
+│  Issuer JWKS     │   │  Cloud Database APIs                │
+│  Endpoint        │   │  ├── AWS RDS (IAM Authentication)   │
+└──────────────────┘   │  ├── Azure SQL (Azure AD tokens)    │
+                       │  └── GCP Cloud SQL (OAuth2 tokens)  │
+                       └─────────────────────────────────────┘
 ```
 
 ### 2.2 Request Flow
@@ -207,13 +207,13 @@ expiry. Mitigation:
 
 ```
   ┌──────────────────────────────────────────────────────┐
-  │         Credential Lifecycle (DB Token)               │
-  │                                                       │
+  │         Credential Lifecycle (DB Token)              │
+  │                                                      │
   │  Issue ──→ Active ──→ Expired                        │
-  │    │          │                                       │
-  │    │          │ (no revocation — TTL only)            │
-  │    │          └──→ (agent must request new token)     │
-  │    │                                                  │
+  │    │          │                                      │
+  │    │          │ (no revocation — TTL only)           │
+  │    │          └──→ (agent must request new token)    │
+  │    │                                                 │
   │    └──→ Denied (token expired, revoked, or killed)   │
   └──────────────────────────────────────────────────────┘
 ```

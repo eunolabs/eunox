@@ -21,16 +21,16 @@ degradation paths work correctly before production deployment.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Injector (internal/chaos/injector.go)           │
-│                                                  │
-│  ├── SetFault(operation, fault)                  │
-│  ├── ClearFault(operation)                       │
-│  ├── MaybeInject(ctx, operation) → error | nil   │
-│  ├── Enable() / Disable()                        │
-│  └── HasFault(operation) → bool                  │
-│                                                  │
-│  Thread-safe (sync.RWMutex)                      │
-│  Probability-based injection (0.0–1.0)           │
+│  Injector (internal/chaos/injector.go)          │
+│                                                 │
+│  ├── SetFault(operation, fault)                 │
+│  ├── ClearFault(operation)                      │
+│  ├── MaybeInject(ctx, operation) → error | nil  │
+│  ├── Enable() / Disable()                       │
+│  └── HasFault(operation) → bool                 │
+│                                                 │
+│  Thread-safe (sync.RWMutex)                     │
+│  Probability-based injection (0.0–1.0)          │
 └─────────────────────────────────────────────────┘
 ```
 

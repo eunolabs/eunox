@@ -14,14 +14,14 @@ The framework is described in [`docs/chaos-testing-strategy.md`](./chaos-testing
 
 ## Summary
 
-| Category | Total | Passed | Failed | Skipped |
-|----------|-------|--------|--------|---------|
-| Injector unit tests | 17 | 17 | 0 | 0 |
-| Scenario tests | 9 | 9 | 0 | 0 |
-| Redis failure mode tests | 4 | 4 | 0 | 0 |
-| Kill-switch resilience tests | 12 | 12 | 0 | 0 |
-| Revocation resilience tests | 4 | 4 | 0 | 0 |
-| **Total** | **46** | **46** | **0** | **0** |
+| Category                     | Total  | Passed | Failed | Skipped |
+| ---------------------------- | ------ | ------ | ------ | ------- |
+| Injector unit tests          | 17     | 17     | 0      | 0       |
+| Scenario tests               | 9      | 9      | 0      | 0       |
+| Redis failure mode tests     | 4      | 4      | 0      | 0       |
+| Kill-switch resilience tests | 12     | 12     | 0      | 0       |
+| Revocation resilience tests  | 4      | 4      | 0      | 0       |
+| **Total**                    | **46** | **46** | **0**  | **0**   |
 
 **Release gate status: ✅ PASS**
 
@@ -29,25 +29,25 @@ The framework is described in [`docs/chaos-testing-strategy.md`](./chaos-testing
 
 ## Injector Unit Tests (`internal/chaos/injector_test.go`)
 
-| Test | Result | Notes |
-|------|--------|-------|
-| `TestInjector_NoFault` | ✅ PASS | No fault injected → operation succeeds |
-| `TestInjector_ErrorFault` | ✅ PASS | Configured error is returned exactly |
-| `TestInjector_ErrorFault_DefaultError` | ✅ PASS | Default `ErrInjected` returned when no custom error set |
-| `TestInjector_TimeoutFault` | ✅ PASS | `ErrTimeout` returned immediately |
-| `TestInjector_PartitionFault` | ✅ PASS | `ErrPartition` returned immediately |
-| `TestInjector_LatencyFault` | ✅ PASS | Configured delay applied; request completes |
-| `TestInjector_LatencyFault_ContextCancelled` | ✅ PASS | Delay respects context cancellation |
-| `TestInjector_Probability_Zero` | ✅ PASS | Zero-probability fault never fires |
-| `TestInjector_ClearFault` | ✅ PASS | Cleared fault no longer fires |
-| `TestInjector_ClearAll` | ✅ PASS | All faults cleared atomically |
-| `TestInjector_Disable` | ✅ PASS | Disabled injector never fires regardless of configured faults |
-| `TestInjector_Enable` | ✅ PASS | Re-enabled injector resumes fault injection |
-| `TestInjector_HasFault` | ✅ PASS | `HasFault` returns false before a fault is set and true after |
-| `TestInjector_ConcurrentAccess` | ✅ PASS | No data races under 50 concurrent goroutines (`-race`) |
-| `TestInjector_ConcurrentSetAndInject` | ✅ PASS | Concurrent `SetFault` + `MaybeInject` produces no races |
-| `TestInjector_UnknownFaultType` | ✅ PASS | Unknown fault type returns error rather than panicking |
-| `TestInjector_DifferentOperations` | ✅ PASS | Independent faults on separate operation names do not cross-contaminate |
+| Test                                         | Result  | Notes                                                                   |
+| -------------------------------------------- | ------- | ----------------------------------------------------------------------- |
+| `TestInjector_NoFault`                       | ✅ PASS | No fault injected → operation succeeds                                  |
+| `TestInjector_ErrorFault`                    | ✅ PASS | Configured error is returned exactly                                    |
+| `TestInjector_ErrorFault_DefaultError`       | ✅ PASS | Default `ErrInjected` returned when no custom error set                 |
+| `TestInjector_TimeoutFault`                  | ✅ PASS | `ErrTimeout` returned immediately                                       |
+| `TestInjector_PartitionFault`                | ✅ PASS | `ErrPartition` returned immediately                                     |
+| `TestInjector_LatencyFault`                  | ✅ PASS | Configured delay applied; request completes                             |
+| `TestInjector_LatencyFault_ContextCancelled` | ✅ PASS | Delay respects context cancellation                                     |
+| `TestInjector_Probability_Zero`              | ✅ PASS | Zero-probability fault never fires                                      |
+| `TestInjector_ClearFault`                    | ✅ PASS | Cleared fault no longer fires                                           |
+| `TestInjector_ClearAll`                      | ✅ PASS | All faults cleared atomically                                           |
+| `TestInjector_Disable`                       | ✅ PASS | Disabled injector never fires regardless of configured faults           |
+| `TestInjector_Enable`                        | ✅ PASS | Re-enabled injector resumes fault injection                             |
+| `TestInjector_HasFault`                      | ✅ PASS | `HasFault` returns false before a fault is set and true after           |
+| `TestInjector_ConcurrentAccess`              | ✅ PASS | No data races under 50 concurrent goroutines (`-race`)                  |
+| `TestInjector_ConcurrentSetAndInject`        | ✅ PASS | Concurrent `SetFault` + `MaybeInject` produces no races                 |
+| `TestInjector_UnknownFaultType`              | ✅ PASS | Unknown fault type returns error rather than panicking                  |
+| `TestInjector_DifferentOperations`           | ✅ PASS | Independent faults on separate operation names do not cross-contaminate |
 
 ---
 
@@ -57,13 +57,13 @@ The framework is described in [`docs/chaos-testing-strategy.md`](./chaos-testing
 
 **`TestScenario_RedisPartition_CircuitBreaker`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Normal operation | None | Requests succeed | ✅ |
-| 3 consecutive Redis errors | `FaultError` on `redis.check` | Circuit opens after threshold | ✅ |
-| Circuit open | `ErrOpen` | Requests rejected fast (no backend call) | ✅ |
-| Wait reset timeout | — | Circuit transitions to half-open | ✅ |
-| Probe succeeds | None | Circuit closes; normal operation resumes | ✅ |
+| Step                       | Injected Fault                | Expected                                 | Result |
+| -------------------------- | ----------------------------- | ---------------------------------------- | ------ |
+| Normal operation           | None                          | Requests succeed                         | ✅     |
+| 3 consecutive Redis errors | `FaultError` on `redis.check` | Circuit opens after threshold            | ✅     |
+| Circuit open               | `ErrOpen`                     | Requests rejected fast (no backend call) | ✅     |
+| Wait reset timeout         | —                             | Circuit transitions to half-open         | ✅     |
+| Probe succeeds             | None                          | Circuit closes; normal operation resumes | ✅     |
 
 **Result: ✅ PASS** — Circuit breaker correctly prevents thundering-herd retries against a
 partitioned Redis and recovers automatically when connectivity restores.
@@ -74,11 +74,11 @@ partitioned Redis and recovers automatically when connectivity restores.
 
 **`TestScenario_ConcurrentKillSwitchActivation`**
 
-| Step | Description | Expected | Result |
-|------|-------------|----------|--------|
-| 100 concurrent goroutines | Read kill-switch while toggle in progress | No panic; no data race | ✅ |
-| Kill-switch toggled mid-flight | `atomic.Bool` toggle | All goroutines see consistent state | ✅ |
-| `-race` detector | — | Zero races detected | ✅ |
+| Step                           | Description                               | Expected                            | Result |
+| ------------------------------ | ----------------------------------------- | ----------------------------------- | ------ |
+| 100 concurrent goroutines      | Read kill-switch while toggle in progress | No panic; no data race              | ✅     |
+| Kill-switch toggled mid-flight | `atomic.Bool` toggle                      | All goroutines see consistent state | ✅     |
+| `-race` detector               | —                                         | Zero races detected                 | ✅     |
 
 **Result: ✅ PASS** — Concurrent kill-switch reads and writes are safe under the `sync.RWMutex`
 locking in `InMemory`.
@@ -89,11 +89,11 @@ locking in `InMemory`.
 
 **`TestScenario_ServiceRestart_GracefulDegradation`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Pre-restart: normal | None | Requests succeed | ✅ |
-| Restart window (30 s) | `FaultPartition` on `backend.call` | All calls return partition error | ✅ |
-| Post-restart: normal | None | Requests succeed again | ✅ |
+| Step                  | Injected Fault                     | Expected                         | Result |
+| --------------------- | ---------------------------------- | -------------------------------- | ------ |
+| Pre-restart: normal   | None                               | Requests succeed                 | ✅     |
+| Restart window (30 s) | `FaultPartition` on `backend.call` | All calls return partition error | ✅     |
+| Post-restart: normal  | None                               | Requests succeed again           | ✅     |
 
 **Result: ✅ PASS** — The enforcement path degrades cleanly when a downstream service
 restarts and recovers without stale state.
@@ -104,12 +104,12 @@ restarts and recovers without stale state.
 
 **`TestScenario_CascadingFailures`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Redis revocation check fails | `FaultError` on `redis.revocation.check` | Revocation returns error | ✅ |
-| Auth check invokes revocation | — | Auth check propagates error | ✅ |
-| Gateway enforcement layer | — | Request denied; enforcement error logged | ✅ |
-| Redis recovers | Clear fault | Normal operation resumes | ✅ |
+| Step                          | Injected Fault                           | Expected                                 | Result |
+| ----------------------------- | ---------------------------------------- | ---------------------------------------- | ------ |
+| Redis revocation check fails  | `FaultError` on `redis.revocation.check` | Revocation returns error                 | ✅     |
+| Auth check invokes revocation | —                                        | Auth check propagates error              | ✅     |
+| Gateway enforcement layer     | —                                        | Request denied; enforcement error logged | ✅     |
+| Redis recovers                | Clear fault                              | Normal operation resumes                 | ✅     |
 
 **Result: ✅ PASS** — Failure cascade from Redis → revocation → auth → enforcement is
 correctly propagated and does not cause a partial-allow state.
@@ -120,12 +120,12 @@ correctly propagated and does not cause a partial-allow state.
 
 **`TestScenario_SplitBrain`**
 
-| Step | Description | Expected | Result |
-|------|-------------|----------|--------|
-| Replica 1 | No fault — state store reachable | Sees current state | ✅ |
-| Replica 2 | `FaultPartition` on state store | Falls back to local cached state | ✅ |
-| Kill-switch activated via Replica 1 | — | Replica 2 cannot see update (partitioned) | ✅ |
-| Replica 2 degraded behavior | Fail-closed: denies unknown state | No split-brain allow | ✅ |
+| Step                                | Description                       | Expected                                  | Result |
+| ----------------------------------- | --------------------------------- | ----------------------------------------- | ------ |
+| Replica 1                           | No fault — state store reachable  | Sees current state                        | ✅     |
+| Replica 2                           | `FaultPartition` on state store   | Falls back to local cached state          | ✅     |
+| Kill-switch activated via Replica 1 | —                                 | Replica 2 cannot see update (partitioned) | ✅     |
+| Replica 2 degraded behavior         | Fail-closed: denies unknown state | No split-brain allow                      | ✅     |
 
 **Result: ✅ PASS** — Under a partition, the replica without state-store access fails
 closed rather than making stale allow decisions.
@@ -136,11 +136,11 @@ closed rather than making stale allow decisions.
 
 **`TestScenario_HighLatency_TimeoutPropagation`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Downstream 500 ms latency | `FaultLatency` (500 ms) on `downstream.call` | Request respects 100 ms deadline | ✅ |
-| Context deadline exceeded | — | `context.DeadlineExceeded` propagated | ✅ |
-| No goroutine leak | — | All goroutines unblock after cancellation | ✅ |
+| Step                      | Injected Fault                               | Expected                                  | Result |
+| ------------------------- | -------------------------------------------- | ----------------------------------------- | ------ |
+| Downstream 500 ms latency | `FaultLatency` (500 ms) on `downstream.call` | Request respects 100 ms deadline          | ✅     |
+| Context deadline exceeded | —                                            | `context.DeadlineExceeded` propagated     | ✅     |
+| No goroutine leak         | —                                            | All goroutines unblock after cancellation | ✅     |
 
 **Result: ✅ PASS** — Latency injection confirms context deadlines are respected through
 all layers; no goroutine leaks detected.
@@ -151,11 +151,11 @@ all layers; no goroutine leaks detected.
 
 **`TestScenario_PartialFailure_MultiStep`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Steps 1–2 of 4 succeed | None | Steps complete normally | ✅ |
-| Step 3 of 4 fails | `FaultError` | Operation returns error at step 3 | ✅ |
-| Step 4 not executed | — | No partial commit beyond failure point | ✅ |
+| Step                   | Injected Fault | Expected                               | Result |
+| ---------------------- | -------------- | -------------------------------------- | ------ |
+| Steps 1–2 of 4 succeed | None           | Steps complete normally                | ✅     |
+| Step 3 of 4 fails      | `FaultError`   | Operation returns error at step 3      | ✅     |
+| Step 4 not executed    | —              | No partial commit beyond failure point | ✅     |
 
 **Result: ✅ PASS** — Multi-step operations fail atomically at the failing step.
 
@@ -165,11 +165,11 @@ all layers; no goroutine leaks detected.
 
 **`TestScenario_RetryWithBackoff`**
 
-| Step | Injected Fault | Expected | Result |
-|------|---------------|----------|--------|
-| Attempts 1–2 fail | `FaultError` (prob=1.0) | Operation fails with retry | ✅ |
-| Attempt 3 succeeds | Clear fault | Operation succeeds | ✅ |
-| Backoff intervals | — | Each retry waits longer than the previous | ✅ |
+| Step               | Injected Fault          | Expected                                  | Result |
+| ------------------ | ----------------------- | ----------------------------------------- | ------ |
+| Attempts 1–2 fail  | `FaultError` (prob=1.0) | Operation fails with retry                | ✅     |
+| Attempt 3 succeeds | Clear fault             | Operation succeeds                        | ✅     |
+| Backoff intervals  | —                       | Each retry waits longer than the previous | ✅     |
 
 **Result: ✅ PASS** — Retry logic with backoff correctly handles transient failures.
 
@@ -179,11 +179,11 @@ all layers; no goroutine leaks detected.
 
 **`TestScenario_RateLimiting_UnderLoad`**
 
-| Step | Description | Expected | Result |
-|------|-------------|----------|--------|
-| 200 concurrent requests | All attempt simultaneously | At most N requests accepted per window | ✅ |
-| Excess requests | Over-limit | Rejected with rate-limit error | ✅ |
-| No requests lost to race | `-race` | Zero races in acceptance counter | ✅ |
+| Step                     | Description                | Expected                               | Result |
+| ------------------------ | -------------------------- | -------------------------------------- | ------ |
+| 200 concurrent requests  | All attempt simultaneously | At most N requests accepted per window | ✅     |
+| Excess requests          | Over-limit                 | Rejected with rate-limit error         | ✅     |
+| No requests lost to race | `-race`                    | Zero races in acceptance counter       | ✅     |
 
 **Result: ✅ PASS** — Rate limiter correctly bounds concurrent acceptance count without races.
 
@@ -191,42 +191,42 @@ all layers; no goroutine leaks detected.
 
 ## Redis Failure Mode Tests (`pkg/revocation/resilient_redis_test.go`)
 
-| Test | Failure Mode Verified | Result |
-|------|----------------------|--------|
-| `TestResilientRedis_FailClosed_UnknownToken` | Unknown token during Redis outage → denied | ✅ PASS |
-| `TestResilientRedis_CacheServesStale` | Cached token served within stale TTL during outage | ✅ PASS |
-| `TestResilientRedis_Revoke_CachesLocally` | Revoke call populates local cache | ✅ PASS |
-| `TestResilientRedis_HealthRecovery` | Redis health reporter transitions degraded → healthy | ✅ PASS |
+| Test                                         | Failure Mode Verified                                | Result  |
+| -------------------------------------------- | ---------------------------------------------------- | ------- |
+| `TestResilientRedis_FailClosed_UnknownToken` | Unknown token during Redis outage → denied           | ✅ PASS |
+| `TestResilientRedis_CacheServesStale`        | Cached token served within stale TTL during outage   | ✅ PASS |
+| `TestResilientRedis_Revoke_CachesLocally`    | Revoke call populates local cache                    | ✅ PASS |
+| `TestResilientRedis_HealthRecovery`          | Redis health reporter transitions degraded → healthy | ✅ PASS |
 
 ---
 
 ## Kill-Switch Resilience Tests (`pkg/killswitch/`)
 
-| Test | Failure Mode Verified | Result |
-|------|----------------------|--------|
-| `TestInMemory_InitiallyNotBlocked` | Initial state is unblocked | ✅ PASS |
-| `TestInMemory_GlobalKillSwitch` | Global activation blocks all subjects | ✅ PASS |
-| `TestInMemory_AgentKillSwitch` | Per-agent kill blocks only that agent | ✅ PASS |
-| `TestInMemory_SessionKillSwitch` | Per-session kill blocks only that session | ✅ PASS |
-| `TestInMemory_Reset` | Reset clears all kill-switch state | ✅ PASS |
-| `TestInMemory_ConcurrentShouldBlock` | No races under concurrent reads | ✅ PASS |
-| `TestInMemory_ConcurrentKillAndRevive` | No races under concurrent kill/revive | ✅ PASS |
-| `TestInMemory_ConcurrentGlobalToggle` | No races under concurrent global toggle | ✅ PASS |
-| `TestRedis_HandlePubSubMessage_GlobalActivate` | Redis pub/sub activates kill switch | ✅ PASS |
-| `TestRedis_HandlePubSubMessage_AgentKill` | Redis pub/sub kills specific agent | ✅ PASS |
-| `TestRedis_Reset_DelError` | `DEL` failure during reset propagates error | ✅ PASS |
-| `TestRedis_WithLogger_LogsRefreshFailure` | Refresh failure is logged, not silent | ✅ PASS |
+| Test                                           | Failure Mode Verified                       | Result  |
+| ---------------------------------------------- | ------------------------------------------- | ------- |
+| `TestInMemory_InitiallyNotBlocked`             | Initial state is unblocked                  | ✅ PASS |
+| `TestInMemory_GlobalKillSwitch`                | Global activation blocks all subjects       | ✅ PASS |
+| `TestInMemory_AgentKillSwitch`                 | Per-agent kill blocks only that agent       | ✅ PASS |
+| `TestInMemory_SessionKillSwitch`               | Per-session kill blocks only that session   | ✅ PASS |
+| `TestInMemory_Reset`                           | Reset clears all kill-switch state          | ✅ PASS |
+| `TestInMemory_ConcurrentShouldBlock`           | No races under concurrent reads             | ✅ PASS |
+| `TestInMemory_ConcurrentKillAndRevive`         | No races under concurrent kill/revive       | ✅ PASS |
+| `TestInMemory_ConcurrentGlobalToggle`          | No races under concurrent global toggle     | ✅ PASS |
+| `TestRedis_HandlePubSubMessage_GlobalActivate` | Redis pub/sub activates kill switch         | ✅ PASS |
+| `TestRedis_HandlePubSubMessage_AgentKill`      | Redis pub/sub kills specific agent          | ✅ PASS |
+| `TestRedis_Reset_DelError`                     | `DEL` failure during reset propagates error | ✅ PASS |
+| `TestRedis_WithLogger_LogsRefreshFailure`      | Refresh failure is logged, not silent       | ✅ PASS |
 
 ---
 
 ## Known Limitations and Gaps
 
-| Gap | Mitigating Control | Planned Resolution |
-|-----|-------------------|--------------------|
+| Gap                                                                 | Mitigating Control                                                                   | Planned Resolution                                                           |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | No real infrastructure chaos (actual Redis failover, not simulated) | `pkg/revocation` testcontainers integration test skipped without `POSTGRES_TEST_DSN` | Deploy Chaos Mesh in staging for pre-release runs; tracked in P1-3 follow-up |
-| No latency benchmark under realistic token shapes | Enforcement path is unit-tested; no load test | Addressed by P2-1 (enforcement hot-path latency measurement) |
-| No cross-AZ partition simulation | HA reference architecture documents expected behavior | Addressed by P1-4 (multi-AZ diagram) and future Chaos Mesh deployment |
-| Single-replica DPoP replay window | Documented in `docs/redis-failure-modes.md §DPoP JTI Store Unavailable` | Use `RedisDPoPStore` in multi-replica deployments |
+| No latency benchmark under realistic token shapes                   | Enforcement path is unit-tested; no load test                                        | Addressed by P2-1 (enforcement hot-path latency measurement)                 |
+| No cross-AZ partition simulation                                    | HA reference architecture documents expected behavior                                | Addressed by P1-4 (multi-AZ diagram) and future Chaos Mesh deployment        |
+| Single-replica DPoP replay window                                   | Documented in `docs/redis-failure-modes.md §DPoP JTI Store Unavailable`              | Use `RedisDPoPStore` in multi-replica deployments                            |
 
 ---
 

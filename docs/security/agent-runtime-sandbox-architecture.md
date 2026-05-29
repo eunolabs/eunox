@@ -44,7 +44,7 @@ this document:
 | Non-root UID           | UID/GID 1000                                                                     | `k8s/agent-runtime.yaml`, `Dockerfile` |
 | Seccomp                | `RuntimeDefault` (Docker's default blocklist)                                    | `k8s/agent-runtime.yaml`               |
 | Soft policy pre-screen | AGT in-process guard — checks tool name against capability manifest              | `internal/agentruntime/runtime.go`     |
-| Hard enforcement       | Tool Gateway — cryptographic token verification, audit chain                     | `internal/gateway/`                   |
+| Hard enforcement       | Tool Gateway — cryptographic token verification, audit chain                     | `internal/gateway/`                    |
 | DPoP (optional)        | Sender-constrained tokens — stolen bearer is unusable without the private key    | `internal/agentruntime/dpop.go`        |
 
 ---

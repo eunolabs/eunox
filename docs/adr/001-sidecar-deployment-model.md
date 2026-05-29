@@ -34,29 +34,30 @@ The sidecar mode is enabled by setting `GATEWAY_SIDECAR_MODE=true` and
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Kubernetes Pod                                                   │
-│                                                                   │
+│  Kubernetes Pod                                                  │
+│                                                                  │
 │  ┌─────────────────┐        ┌─────────────────────────────────┐  │
 │  │  Agent Container│──────► │  Gateway Sidecar Container      │  │
 │  │                 │        │  GATEWAY_SIDECAR_MODE=true      │  │
 │  │  agent-id: acme │        │  GATEWAY_SIDECAR_AGENT_ID=acme  │  │
 │  └─────────────────┘        └────────────┬────────────────────┘  │
-│                                          │                        │
-└──────────────────────────────────────────┼────────────────────────┘
+│                                          │                       │
+└──────────────────────────────────────────┼───────────────────────┘
                                            │
                               ┌────────────┼────────────────────┐
-                              │            ▼                     │
-                              │   ┌─────────────────┐           │
-                              │   │  Redis           │           │
-                              │   │  (Sentinel/Cluster)         │
-                              │   └─────────────────┘           │
-                              │                                  │
-                              │   Shared infrastructure          │
-                              │   (Redis, PostgreSQL, Issuer)    │
-                              └──────────────────────────────────┘
+                              │            ▼                    │
+                              │   ┌─────────────────────┐       │
+                              │   │  Redis              │       │
+                              │   │  (Sentinel/Cluster) |       │
+                              │   └─────────────────────┘       │
+                              │                                 │
+                              │   Shared infrastructure         │
+                              │   (Redis, PostgreSQL, Issuer)   │
+                              └─────────────────────────────────┘
 ```
 
 In sidecar mode:
+
 - The gateway listens on `127.0.0.1:3002` (loopback only, unreachable from outside the pod)
 - The agent is configured to send all tool calls to `http://127.0.0.1:3002/api/v1/enforce`
   (use `127.0.0.1` explicitly, not `localhost`, to avoid DNS resolution to `::1` in IPv6-first environments)
@@ -77,11 +78,11 @@ fan-out latency (typically < 5 ms in the same region).
 In the sidecar model, each agent pod has an independent sidecar with its own Redis
 connection and pub/sub subscription. For N agents:
 
-| N agents | Redis connections (centralized) | Redis connections (sidecar) |
-|----------|--------------------------------|------------------------------|
-| 10       | 2–5 (one per replica)          | 10–20 (one per sidecar + spare) |
-| 100      | 2–5                             | 100–200                       |
-| 1 000    | 2–5                             | 1 000–2 000                   |
+| N agents | Redis connections (centralized) | Redis connections (sidecar)     |
+| -------- | ------------------------------- | ------------------------------- |
+| 10       | 2–5 (one per replica)           | 10–20 (one per sidecar + spare) |
+| 100      | 2–5                             | 100–200                         |
+| 1 000    | 2–5                             | 1 000–2 000                     |
 
 **Implication.** Redis Cluster and Redis Sentinel both support tens of thousands of
 concurrent connections. Connection count is not a limiting factor up to ~1 000 agents on
@@ -95,6 +96,7 @@ There is no broadcast fan-out delay because Redis delivers messages to all subsc
 concurrently; N sidecars each receive the event in the same wall-clock time as 1 replica.
 
 **Failure isolation.** If one sidecar's Redis connection is interrupted:
+
 - That sidecar's kill-switch becomes stale (fail-closed after TTL; see P3-4)
 - All other sidecars are unaffected
 - Compare with centralized: if the shared subscription fails, all agents are potentially
@@ -110,6 +112,7 @@ requests with an empty local cache, it is momentarily fail-open (treating un-rev
 all tokens).
 
 **Mitigation implemented.**
+
 1. On startup, the sidecar performs a synchronous state refresh from Redis before the
    HTTP listener binds. If the refresh fails, the sidecar exits rather than starting
    fail-open (configurable via `GATEWAY_FAIL_OPEN_ON_STARTUP=false`, default `false`).
@@ -135,6 +138,7 @@ independently as each pod's `PolicyReloader` fires its hot-reload tick.
 different agents may evaluate requests against different policy versions.
 
 **Acceptable conditions:**
+
 - Policy updates are additive (granting new permissions) or restrictive (revoking).
 - Additive updates: brief window where some agents lack the new permission. Acceptable.
 - Restrictive updates: brief window where some agents retain a revoked permission.
@@ -152,12 +156,14 @@ one (or a small fleet of) gateway replicas. In the sidecar model, each sidecar
 produces an independent audit chain for its agent.
 
 **For compliance purposes:**
+
 - Each sidecar's audit chain is complete and tamper-evident for its agent's traffic
 - The HMAC chain guarantees completeness within a sidecar
 - Across sidecars, an operator must aggregate chains and verify no gaps exist for
   any agent that should have been active
 
 **Aggregation approach:**
+
 1. All sidecars write to the same PostgreSQL audit database (shared backend)
 2. Audit records carry `agent_id` and `sidecar_id` fields (set from `GATEWAY_SIDECAR_AGENT_ID`)
 3. Completeness query: `SELECT agent_id, COUNT(*) FROM audit_records GROUP BY agent_id`
@@ -174,13 +180,13 @@ once per active sidecar. `docs/runbooks/audit-aggregation.md` documents this pro
 
 **SOC 2 CC6.1–CC6.8 (Logical Access Controls)**
 
-| Control | Centralized | Sidecar |
-|---------|-------------|---------|
-| CC6.1: Access control decision point | Single gateway, auditors inspect one system | Per-pod gateway; auditors must enumerate all pods |
-| CC6.2: Authentication | Identical (shared issuer JWKS) | Identical |
-| CC6.3: Authorization records | One audit chain per cluster | N audit chains; aggregation required |
-| CC6.6: Restrict access by network | Gateway is the single ingress | Each pod has a sidecar; network policy must block pod-to-pod enforcement bypass |
-| CC6.8: Detection controls | One log stream | N log streams; must route to shared SIEM |
+| Control                              | Centralized                                 | Sidecar                                                                         |
+| ------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------- |
+| CC6.1: Access control decision point | Single gateway, auditors inspect one system | Per-pod gateway; auditors must enumerate all pods                               |
+| CC6.2: Authentication                | Identical (shared issuer JWKS)              | Identical                                                                       |
+| CC6.3: Authorization records         | One audit chain per cluster                 | N audit chains; aggregation required                                            |
+| CC6.6: Restrict access by network    | Gateway is the single ingress               | Each pod has a sidecar; network policy must block pod-to-pod enforcement bypass |
+| CC6.8: Detection controls            | One log stream                              | N log streams; must route to shared SIEM                                        |
 
 **HIPAA §164.312(a)(1) — Access Control**
 Both models satisfy the access control requirement. The sidecar model adds the
@@ -220,6 +226,7 @@ The initial implementation (P3-2) is scoped to:
    - Sidecar startup resilience: sidecar starts fail-closed when Redis is unavailable
 
 **Out of scope (future):**
+
 - Multi-agent sidecar (shared sidecar for a small pod group)
 - Sidecar-to-centralized migration path
 - Helm chart sidecar injection template (tracked separately)
@@ -229,12 +236,14 @@ The initial implementation (P3-2) is scoped to:
 ## Consequences
 
 **Positive:**
+
 - Blast radius of a single gateway failure is one agent, not all agents
 - Independent Redis subscriptions provide genuine failure domain isolation
 - Aligns with Kubernetes sidecar pattern; no changes to agent containers
 - Existing enforcement engine, policy engine, and audit code are unchanged
 
 **Negative:**
+
 - N sidecars require N Redis connections (acceptable up to ~1 000 agents per Redis node)
 - Policy drift window of up to one reload interval (mitigated: use kill-switch for
   immediate security-critical revocations)
@@ -243,6 +252,7 @@ The initial implementation (P3-2) is scoped to:
 - Kubernetes resource overhead: one gateway pod per agent pod (~50 MB RAM, ~0.1 CPU)
 
 **Neutral:**
+
 - Centralized model continues to be the default and the recommendation for regulated
   enterprises requiring a single audit chain
 - Both models share identical enforcement semantics, JWKS verification, and DPoP logic

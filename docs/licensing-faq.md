@@ -13,12 +13,12 @@ Eunox uses a **dual-license model**. The quick answer for most people:
 
 ## Quick Reference
 
-| Component | License | Use freely | Embed in your product | Host as a service for third parties |
-|---|---|---|---|---|
-| `cmd/mcp/` (`eunox-mcp` binary) | Apache 2.0 | ✅ | ✅ | ✅ |
-| Gateway, Issuer, Minter, DB Token Svc, Storage Grant Svc | BUSL-1.1 | ✅ | ✅ (internal use) | ❌ requires commercial licence |
-| `pkg/` and `internal/` | BUSL-1.1 | ✅ | ✅ (internal use) | ❌ requires commercial licence |
-| `eunox-python` (planned) | Apache 2.0 | ✅ | ✅ | ✅ |
+| Component                                                | License    | Use freely | Embed in your product | Host as a service for third parties |
+| -------------------------------------------------------- | ---------- | ---------- | --------------------- | ----------------------------------- |
+| `cmd/mcp/` (`eunox-mcp` binary)                          | Apache 2.0 | ✅         | ✅                    | ✅                                  |
+| Gateway, Issuer, Minter, DB Token Svc, Storage Grant Svc | BUSL-1.1   | ✅         | ✅ (internal use)     | ❌ requires commercial licence      |
+| `pkg/` and `internal/`                                   | BUSL-1.1   | ✅         | ✅ (internal use)     | ❌ requires commercial licence      |
+| `eunox-python` (planned)                                 | Apache 2.0 | ✅         | ✅                    | ✅                                  |
 
 All BUSL-licensed components **automatically convert to Apache 2.0** four years
 after the official project launch date. The conversion is permanent and irrevocable.
@@ -141,7 +141,7 @@ Use**. For eunox, competing use means:
 > pay for or derive commercial value from access to that service.
 
 Running eunox to protect your own AI agents is **not** competing use.
-Building a product where *your customers* use the hosted eunox platform is.
+Building a product where _your customers_ use the hosted eunox platform is.
 
 ---
 

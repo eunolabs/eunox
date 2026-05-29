@@ -23,21 +23,21 @@ root cause. Refer to `docs/redis-failure-modes.md` and
 
 ## Quick-Reference: Symptom → Probable Cause
 
-| HTTP Status | Error Message | Probable Cause | Section |
-|-------------|--------------|----------------|---------|
-| 401 | `token verification failed` | JWKS endpoint down or cache expired | [§1](#all-enforcement-calls-return-401) |
-| 401 | `JWT missing required kid header` | Token minted without `kid` claim | [§1](#all-enforcement-calls-return-401) |
-| 401 | `JWKS fetch blocked by circuit breaker` | Issuer persistently unreachable | [§1](#all-enforcement-calls-return-401) |
-| 401 | `token has expired` | Token TTL exceeded; agent must renew | [§1](#all-enforcement-calls-return-401) |
-| 503 | `kill switch check unavailable` | Redis (kill-switch) unreachable | [§2](#all-enforcement-calls-return-503) |
-| 503 | `revocation check unavailable` | Redis (revocation) unreachable + cache miss | [§2](#all-enforcement-calls-return-503) |
-| 403 | `kill switch active` | Kill switch intentionally or accidentally activated | [§3](#all-enforcement-calls-return-403) |
-| 403 | `token revoked` | Token explicitly revoked | [§3](#all-enforcement-calls-return-403) |
-| 403 | `capability condition not met` | Time window / IP range / max-calls constraint violated | [§3](#all-enforcement-calls-return-403) |
-| 403 | `action not permitted` | Token does not grant the requested tool/action | [§3](#all-enforcement-calls-return-403) |
-| 502 | `no backend configured` | `GATEWAY_BACKEND_SERVICE_URL` missing | [§4](#requests-pass-enforcement-but-backend-calls-fail-502) |
-| 502 | (upstream error) | Backend service down | [§4](#requests-pass-enforcement-but-backend-calls-fail-502) |
-| 429 | `rate limit exceeded` | Request rate above configured limit | [§5](#requests-are-being-rate-limited-429) |
+| HTTP Status | Error Message                           | Probable Cause                                         | Section                                                     |
+| ----------- | --------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------- |
+| 401         | `token verification failed`             | JWKS endpoint down or cache expired                    | [§1](#all-enforcement-calls-return-401)                     |
+| 401         | `JWT missing required kid header`       | Token minted without `kid` claim                       | [§1](#all-enforcement-calls-return-401)                     |
+| 401         | `JWKS fetch blocked by circuit breaker` | Issuer persistently unreachable                        | [§1](#all-enforcement-calls-return-401)                     |
+| 401         | `token has expired`                     | Token TTL exceeded; agent must renew                   | [§1](#all-enforcement-calls-return-401)                     |
+| 503         | `kill switch check unavailable`         | Redis (kill-switch) unreachable                        | [§2](#all-enforcement-calls-return-503)                     |
+| 503         | `revocation check unavailable`          | Redis (revocation) unreachable + cache miss            | [§2](#all-enforcement-calls-return-503)                     |
+| 403         | `kill switch active`                    | Kill switch intentionally or accidentally activated    | [§3](#all-enforcement-calls-return-403)                     |
+| 403         | `token revoked`                         | Token explicitly revoked                               | [§3](#all-enforcement-calls-return-403)                     |
+| 403         | `capability condition not met`          | Time window / IP range / max-calls constraint violated | [§3](#all-enforcement-calls-return-403)                     |
+| 403         | `action not permitted`                  | Token does not grant the requested tool/action         | [§3](#all-enforcement-calls-return-403)                     |
+| 502         | `no backend configured`                 | `GATEWAY_BACKEND_SERVICE_URL` missing                  | [§4](#requests-pass-enforcement-but-backend-calls-fail-502) |
+| 502         | (upstream error)                        | Backend service down                                   | [§4](#requests-pass-enforcement-but-backend-calls-fail-502) |
+| 429         | `rate limit exceeded`                   | Request rate above configured limit                    | [§5](#requests-are-being-rate-limited-429)                  |
 
 ---
 
@@ -45,30 +45,33 @@ root cause. Refer to `docs/redis-failure-modes.md` and
 
 Every gateway log entry is structured JSON. Key fields for triage:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `request_id` | string | Unique ID; correlate with client `X-Request-Id` header |
-| `agent_did` | string | Subject DID from the capability token |
-| `decision` | string | `allow`, `deny`, or `error` |
-| `reason` | string | Human-readable denial reason |
-| `error_code` | string | Machine-readable error code (e.g., `authorization_failed`) |
-| `component` | string | `killswitch`, `revocation`, `enforcement`, `proxy`, etc. |
-| `duration_ms` | number | Total request duration in milliseconds |
-| `redis_health_state` | string | `healthy` or `degraded` (when logged on degradation) |
+| Field                | Type   | Description                                                |
+| -------------------- | ------ | ---------------------------------------------------------- |
+| `request_id`         | string | Unique ID; correlate with client `X-Request-Id` header     |
+| `agent_did`          | string | Subject DID from the capability token                      |
+| `decision`           | string | `allow`, `deny`, or `error`                                |
+| `reason`             | string | Human-readable denial reason                               |
+| `error_code`         | string | Machine-readable error code (e.g., `authorization_failed`) |
+| `component`          | string | `killswitch`, `revocation`, `enforcement`, `proxy`, etc.   |
+| `duration_ms`        | number | Total request duration in milliseconds                     |
+| `redis_health_state` | string | `healthy` or `degraded` (when logged on degradation)       |
 
 **Filter by agent DID:**
+
 ```bash
 kubectl logs -n eunox-system deployment/gateway | \
   jq 'select(.agent_did == "did:web:example.com:agents:triage-123")'
 ```
 
 **Filter by request ID:**
+
 ```bash
 kubectl logs -n eunox-system deployment/gateway | \
   jq 'select(.request_id == "a1b2c3d4-...")'
 ```
 
 **Count denials by reason in the last 5 minutes:**
+
 ```bash
 kubectl logs -n eunox-system deployment/gateway --since=5m | \
   jq -r 'select(.decision == "deny") | .reason' | sort | uniq -c | sort -rn
@@ -345,13 +348,13 @@ misconfigured.
 
 ## Escalation
 
-| Symptom | On-Call Tier | SLA to Escalate |
-|---------|-------------|-----------------|
-| 503 (Redis down, P1) | Platform → Redis | Immediately |
-| 401 (JWKS expired) | Platform → Issuer | < 5 min |
-| 403 (kill switch active, unplanned) | Platform → Security | Immediately |
-| 502 (backend down) | Platform → Backend service owner | < 10 min |
-| 429 (unexpected global) | Platform | < 15 min |
+| Symptom                             | On-Call Tier                     | SLA to Escalate |
+| ----------------------------------- | -------------------------------- | --------------- |
+| 503 (Redis down, P1)                | Platform → Redis                 | Immediately     |
+| 401 (JWKS expired)                  | Platform → Issuer                | < 5 min         |
+| 403 (kill switch active, unplanned) | Platform → Security              | Immediately     |
+| 502 (backend down)                  | Platform → Backend service owner | < 10 min        |
+| 429 (unexpected global)             | Platform                         | < 15 min        |
 
 **Post-incident:** File an incident report and run the chaos suite against
 the failure scenario. If a gap exists in `docs/chaos-results.md`, add a test

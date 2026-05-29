@@ -329,15 +329,15 @@ curl "https://gateway:3002/api/v1/audit/export?tenant_id=$TENANT_ID" -H "Authori
 
 ## Backup Verification Schedule
 
-| Check | Frequency | Automation |
-|-------|-----------|------------|
-| WAL archival lag | Continuous | CloudWatch/Stackdriver alarm |
-| Base backup success | Daily | Backup job exit code monitoring |
-| Restore test (full) | Monthly | Scheduled restore to test instance |
-| Audit chain integrity | Hourly | Automated chain-proof endpoint check |
-| DR region health | Every 5 min | Health check probes from primary |
-| Secret manager access | Daily | Automated secret retrieval test |
-| Helm values in git | On commit | CI validation |
+| Check                 | Frequency   | Automation                           |
+| --------------------- | ----------- | ------------------------------------ |
+| WAL archival lag      | Continuous  | CloudWatch/Stackdriver alarm         |
+| Base backup success   | Daily       | Backup job exit code monitoring      |
+| Restore test (full)   | Monthly     | Scheduled restore to test instance   |
+| Audit chain integrity | Hourly      | Automated chain-proof endpoint check |
+| DR region health      | Every 5 min | Health check probes from primary     |
+| Secret manager access | Daily       | Automated secret retrieval test      |
+| Helm values in git    | On commit   | CI validation                        |
 
 ---
 

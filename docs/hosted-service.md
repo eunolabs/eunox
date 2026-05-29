@@ -70,35 +70,35 @@ issuance, and administrative operations. It is not in the critical enforcement
 path and can tolerate higher latency than the data plane.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Control plane                              │
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │  Console UI  │  │  Admin API   │  │  Provisioning API    │   │
-│  │  (web app)   │  │  (REST)      │  │  (tenant onboarding) │   │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘   │
-│         │                 │                       │               │
-│  ┌──────▼─────────────────▼───────────────────────▼───────────┐  │
-│  │              Capability Issuer (cmd/issuer)                 │  │
-│  │  • OIDC token exchange → capability JWT                     │  │
-│  │  • Per-tenant signing key (KMS-backed)                      │  │
-│  │  • Policy / manifest store (Postgres)                       │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │          API-Key Minter (cmd/minter)                      │    │
-│  │  • Issues sk-<prefix>.<secret> keys → JWT exchange        │    │
-│  │  • Per-tenant key policies in Postgres                    │    │
-│  │  • Admin JWT auth (X-Admin-Api-Key deprecated)            │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │          Billing Service (new — see §4)                   │    │
-│  │  • Consumes metering events from gateway                  │    │
-│  │  • Syncs with payment processor (Stripe)                  │    │
-│  │  • Enforces subscription entitlements                     │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Control plane                           │
+│                                                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │  Console UI  │  │  Admin API   │  │  Provisioning API    │  │
+│  │  (web app)   │  │  (REST)      │  │  (tenant onboarding) │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
+│         │                 │                     │              │
+│  ┌──────▼─────────────────▼─────────────────────▼───────────┐  │
+│  │              Capability Issuer (cmd/issuer)              │  │
+│  │  • OIDC token exchange → capability JWT                  │  │
+│  │  • Per-tenant signing key (KMS-backed)                   │  │
+│  │  • Policy / manifest store (Postgres)                    │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │          API-Key Minter (cmd/minter)                     │  │
+│  │  • Issues sk-<prefix>.<secret> keys → JWT exchange       │  │
+│  │  • Per-tenant key policies in Postgres                   │  │
+│  │  • Admin JWT auth (X-Admin-Api-Key deprecated)           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │          Billing Service (new — see §4)                  │  │
+│  │  • Consumes metering events from gateway                 │  │
+│  │  • Syncs with payment processor (Stripe)                 │  │
+│  │  • Enforces subscription entitlements                    │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Data plane
@@ -108,32 +108,32 @@ through here. It must be stateless, horizontally scalable, and isolated from
 any billing or provisioning operations.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Data plane                                │
-│                                                                   │
-│   AI Agent ──────────► Tool Gateway (cmd/gateway)                │
-│                         │                                         │
-│                    ┌────▼──────────────────┐                     │
-│                    │  Enforcement Engine   │                     │
-│                    │  • JWT verify (JWKS)  │                     │
-│                    │  • Condition eval     │                     │
-│                    │  • Kill-switch check  │                     │
-│                    │  • DPoP replay guard  │                     │
-│                    └────┬──────────────────┘                     │
-│                         │                                         │
-│          ┌──────────────┼──────────────────┐                     │
-│          │              │                  │                      │
-│   ┌──────▼──────┐  ┌────▼──────┐  ┌───────▼────────┐           │
-│   │ Redis HA    │  │ Postgres  │  │ KMS Evidence   │           │
-│   │ kill-switch │  │ audit     │  │ Signer         │           │
-│   │ call-ctr    │  │ ledger    │  │ (per-region)   │           │
-│   │ revocation  │  │           │  └────────────────┘           │
-│   └─────────────┘  └───────────┘                                │
-│                                                                   │
-│   ────────────────────────────────────────────────────────       │
-│   Metering events (async, non-blocking)                          │
-│   └──► Metering queue → Billing service (control plane)          │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                         Data plane                         │
+│                                                            │
+│   AI Agent ──────────► Tool Gateway (cmd/gateway)          │
+│                         │                                  │
+│                    ┌────▼──────────────────┐               │
+│                    │  Enforcement Engine   │               │
+│                    │  • JWT verify (JWKS)  │               │
+│                    │  • Condition eval     │               │
+│                    │  • Kill-switch check  │               │
+│                    │  • DPoP replay guard  │               │
+│                    └────┬──────────────────┘               │
+│                         │                                  │
+│          ┌──────────────┼──────────────────┐               │
+│          │              │                  │               │
+│   ┌──────▼──────┐  ┌────▼──────┐  ┌───────▼────────┐       │
+│   │ Redis HA    │  │ Postgres  │  │ KMS Evidence   │       │
+│   │ kill-switch │  │ audit     │  │ Signer         │       │
+│   │ call-ctr    │  │ ledger    │  │ (per-region)   │       │
+│   │ revocation  │  │           │  └────────────────┘       │
+│   └─────────────┘  └───────────┘                           │
+│                                                            │
+│   ──────────────────────────────────────────────────────   │
+│   Metering events (async, non-blocking)                    │
+│   └──► Metering queue → Billing service (control plane)    │
+└────────────────────────────────────────────────────────────┘
 ```
 
 Key invariant: metering events are written to a queue **after** the enforcement
@@ -161,25 +161,25 @@ For initial launch, a single primary region suffices. The target steady-state
 topology is:
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│  Region: us-east-1 (primary)                                        │
-│                                                                     │
-│  Control plane (single-region):                                     │
-│    issuer  ·  minter  ·  billing-service  ·  console API            │
-│    Postgres (primary) with PITR snapshots                           │
-│                                                                     │
-│  Data plane (multi-AZ):                                             │
-│    gateway × N pods  ·  Redis HA (Sentinel or Cluster mode)         │
-│    Postgres (replica for audit reads)                               │
-│    KMS (regional endpoint)                                          │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────── ─┐
+│  Region: us-east-1 (primary)                                   │
+│                                                                │
+│  Control plane (single-region):                                │
+│    issuer  ·  minter  ·  billing-service  ·  console API       │
+│    Postgres (primary) with PITR snapshots                      │
+│                                                                │
+│  Data plane (multi-AZ):                                        │
+│    gateway × N pods  ·  Redis HA (Sentinel or Cluster mode)    │
+│    Postgres (replica for audit reads)                          │
+│    KMS (regional endpoint)                                     │
+└────────────────────────────────────────────────────────────── ─┘
 
-┌────────────────────────────────────────────────────────────────────┐
-│  Region: eu-west-1 (Phase 3 — data residency)                       │
-│    Full stack replica for GDPR data-residency requirements          │
-│    Independent Postgres (no cross-region audit data transfer)       │
-│    Independent KMS                                                  │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────── ─┐
+│  Region: eu-west-1 (Phase 3 — data residency)                  │
+│    Full stack replica for GDPR data-residency requirements     │
+│    Independent Postgres (no cross-region audit data transfer)  │
+│    Independent KMS                                             │
+└────────────────────────────────────────────────────────────── ─┘
 ```
 
 Multi-region routing uses DNS-based geolocation to direct enforcement traffic

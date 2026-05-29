@@ -78,7 +78,7 @@ Note: Other call sites in the same file (lines 88, 168) correctly create timeout
 - **Location:** `internal/gateway/app.go:170-177`
 - **Severity:** Low (configuration-dependent)
 - **What:** The gateway allows `*` in `AllowedOrigins` for production, only emitting a warning log.
-- **Why it matters:** If an operator configures `AllowedOrigins: ["*"]` in production and the API sets `Access-Control-Allow-Credentials: true`, browsers will reject the response (CORS spec disallows wildcard + credentials). However, if credentials are not included, the wildcard allows any origin to make cross-origin requests, which could enable CSRF-like attacks on state-changing endpoints if the API relies solely on cookies (it doesn't — it uses ****** auth). Given Bearer-token auth, the real risk is minimal.
+- **Why it matters:** If an operator configures `AllowedOrigins: ["*"]` in production and the API sets `Access-Control-Allow-Credentials: true`, browsers will reject the response (CORS spec disallows wildcard + credentials). However, if credentials are not included, the wildcard allows any origin to make cross-origin requests, which could enable CSRF-like attacks on state-changing endpoints if the API relies solely on cookies (it doesn't — it uses **\*\*** auth). Given Bearer-token auth, the real risk is minimal.
 - **Fix:** Consider rejecting wildcard in production at startup (fail-closed) rather than warning:
 
 ```go
@@ -95,43 +95,44 @@ if app.config.Environment == "production" {
 
 ## Areas Reviewed — No Findings
 
-| Category | Status | Notes |
-|----------|--------|-------|
-| SQL Injection | ✅ Safe | All queries use positional parameters (`$1`, `$2`, etc.) via `ExecContext`/`QueryContext` |
-| Command Injection | ✅ Safe | No `exec.Command` usage in codebase |
-| Path Traversal | ✅ Safe | `os.ReadFile` only used with operator-configured paths (policy files, CA certs) |
-| SSRF | ✅ Safe | No user-controlled URLs passed to HTTP clients; all URLs from config |
-| Template Injection | ✅ Safe | No HTML/text template rendering; JSON-only API |
-| Hardcoded Secrets | ✅ Safe | All secrets loaded from environment; test constants in `_test.go` only |
-| JWT Implementation | ✅ Strong | go-jose/v4, multi-algorithm support, JWKS rotation, DPoP binding |
-| Auth Middleware | ✅ Complete | All non-health endpoints require authentication |
-| Constant-time Comparison | ✅ Used | `subtle.ConstantTimeCompare` for static admin key validation |
-| Cryptographic Algorithms | ✅ Modern | Ed25519, ECDSA P-256, RSA-2048+; no MD5/SHA1 for security |
-| Random Number Generation | ✅ Safe | `crypto/rand.Reader` for all key material and secrets |
-| TLS Configuration | ✅ Strong | TLS 1.2 minimum, no `InsecureSkipVerify`, cert rotation support |
-| Race Conditions | ✅ Protected | All shared state guarded by `sync.Mutex` or `sync.RWMutex` |
-| Goroutine Lifecycle | ✅ Managed | All goroutines have cancellation via context or stop channels |
-| Defer in Loops | ✅ None | No resource-leaking defer patterns |
-| Request Size Limits | ✅ Enforced | 1MB default on all endpoints via `LimitReader`/`MaxBytesReader` |
-| HTTP Timeouts | ✅ Configured | All servers: Read/Write/Idle; All clients: explicit Timeout |
-| Error Disclosure | ✅ Sanitized | Generic error messages to clients; details logged server-side |
-| Sensitive Data Logging | ✅ Clean | No tokens, keys, or PII in log output |
-| pprof/expvar | ✅ Not exposed | No debug endpoints in production code |
-| Panic Safety | ✅ Recovered | `chi.Recoverer` middleware + panics only from internal invariant violations |
-| Dependencies | ✅ Modern | go-jose/v4, golang.org/x/crypto; no abandoned packages |
+| Category                 | Status         | Notes                                                                                     |
+| ------------------------ | -------------- | ----------------------------------------------------------------------------------------- |
+| SQL Injection            | ✅ Safe        | All queries use positional parameters (`$1`, `$2`, etc.) via `ExecContext`/`QueryContext` |
+| Command Injection        | ✅ Safe        | No `exec.Command` usage in codebase                                                       |
+| Path Traversal           | ✅ Safe        | `os.ReadFile` only used with operator-configured paths (policy files, CA certs)           |
+| SSRF                     | ✅ Safe        | No user-controlled URLs passed to HTTP clients; all URLs from config                      |
+| Template Injection       | ✅ Safe        | No HTML/text template rendering; JSON-only API                                            |
+| Hardcoded Secrets        | ✅ Safe        | All secrets loaded from environment; test constants in `_test.go` only                    |
+| JWT Implementation       | ✅ Strong      | go-jose/v4, multi-algorithm support, JWKS rotation, DPoP binding                          |
+| Auth Middleware          | ✅ Complete    | All non-health endpoints require authentication                                           |
+| Constant-time Comparison | ✅ Used        | `subtle.ConstantTimeCompare` for static admin key validation                              |
+| Cryptographic Algorithms | ✅ Modern      | Ed25519, ECDSA P-256, RSA-2048+; no MD5/SHA1 for security                                 |
+| Random Number Generation | ✅ Safe        | `crypto/rand.Reader` for all key material and secrets                                     |
+| TLS Configuration        | ✅ Strong      | TLS 1.2 minimum, no `InsecureSkipVerify`, cert rotation support                           |
+| Race Conditions          | ✅ Protected   | All shared state guarded by `sync.Mutex` or `sync.RWMutex`                                |
+| Goroutine Lifecycle      | ✅ Managed     | All goroutines have cancellation via context or stop channels                             |
+| Defer in Loops           | ✅ None        | No resource-leaking defer patterns                                                        |
+| Request Size Limits      | ✅ Enforced    | 1MB default on all endpoints via `LimitReader`/`MaxBytesReader`                           |
+| HTTP Timeouts            | ✅ Configured  | All servers: Read/Write/Idle; All clients: explicit Timeout                               |
+| Error Disclosure         | ✅ Sanitized   | Generic error messages to clients; details logged server-side                             |
+| Sensitive Data Logging   | ✅ Clean       | No tokens, keys, or PII in log output                                                     |
+| pprof/expvar             | ✅ Not exposed | No debug endpoints in production code                                                     |
+| Panic Safety             | ✅ Recovered   | `chi.Recoverer` middleware + panics only from internal invariant violations               |
+| Dependencies             | ✅ Modern      | go-jose/v4, golang.org/x/crypto; no abandoned packages                                    |
 
 ---
 
 ## Execution Plan (Priority Order)
 
-| Priority | Finding | Effort | Dependency |
-|----------|---------|--------|------------|
-| 1 | Fix X-Forwarded-For IP spoofing (#1) | Medium | Requires config schema change + tests |
-| 2 | Fix `http.DefaultClient` fallback (#2) | Trivial | None — one-line change |
-| 3 | Reject CORS wildcard in production (#4) | Low | May require operator communication for breaking change |
-| 4 | Document `math/rand/v2` jitter intent (#3) | Trivial | None |
+| Priority | Finding                                    | Effort  | Dependency                                             |
+| -------- | ------------------------------------------ | ------- | ------------------------------------------------------ |
+| 1        | Fix X-Forwarded-For IP spoofing (#1)       | Medium  | Requires config schema change + tests                  |
+| 2        | Fix `http.DefaultClient` fallback (#2)     | Trivial | None — one-line change                                 |
+| 3        | Reject CORS wildcard in production (#4)    | Low     | May require operator communication for breaking change |
+| 4        | Document `math/rand/v2` jitter intent (#3) | Trivial | None                                                   |
 
 **Dependency graph:**
+
 - Finding #1 should be addressed before any IP-based enforcement policies are deployed to production.
 - Finding #2 is independent and can be fixed immediately.
 - Finding #4 is a policy decision that may need operator buy-in.
