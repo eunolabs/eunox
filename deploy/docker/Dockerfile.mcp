@@ -1,5 +1,5 @@
 # Copyright 2026 Eunox Authors
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: Apache-2.0
 #
 # Multi-stage Dockerfile for the eunox-mcp proxy (Linux).
 # Produces a distroless image for linux/amd64 and linux/arm64.
@@ -42,7 +42,7 @@ COPY --from=builder /out/mcp /usr/local/bin/mcp
 USER 65534:65534
 
 LABEL org.opencontainers.image.source="https://github.com/eunolabs/eunox"
-LABEL org.opencontainers.image.licenses="BUSL-1.1"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.vendor="Eunox"
 LABEL org.opencontainers.image.description="Eunox MCP capability enforcement proxy"
 

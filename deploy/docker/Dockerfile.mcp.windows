@@ -1,6 +1,6 @@
 # escape=`
 # Copyright 2026 Eunox Authors
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: Apache-2.0
 #
 # Multi-stage Dockerfile for the eunox-mcp proxy (Windows/amd64).
 # Windows containers require a Windows host — use the docker-windows CI job
@@ -44,7 +44,7 @@ FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
 COPY --from=builder C:/out/mcp.exe C:/app/mcp.exe
 
 LABEL org.opencontainers.image.source="https://github.com/eunolabs/eunox"
-LABEL org.opencontainers.image.licenses="BUSL-1.1"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.vendor="Eunox"
 LABEL org.opencontainers.image.description="Eunox MCP capability enforcement proxy (Windows)"
 
