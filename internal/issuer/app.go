@@ -77,6 +77,11 @@ type Dependencies struct {
 	Revocation revocation.Store
 	Logger     *slog.Logger
 	Metrics    *observability.MetricsRegistry
+	// SCIMStore is the backing store for SCIM 2.0 provisioning.
+	// When nil, an in-memory SCIMStore is used (suitable for single-replica
+	// development deployments only — data is lost on restart).
+	// Use NewPostgresSCIMRepository for production multi-replica deployments.
+	SCIMStore SCIMRepository
 }
 
 // App is the issuer HTTP application.
@@ -91,10 +96,14 @@ type App struct {
 
 // New creates a new issuer App with the given configuration and dependencies.
 func New(cfg *Config, deps *Dependencies) *App {
+	scimStore := deps.SCIMStore
+	if scimStore == nil {
+		scimStore = NewSCIMStore()
+	}
 	app := &App{
 		config:    *cfg,
 		deps:      *deps,
-		scimStore: NewSCIMStore(),
+		scimStore: scimStore,
 	}
 	app.router = app.buildRouter()
 	return app
