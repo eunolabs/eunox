@@ -7,8 +7,10 @@ package main
 import (
 	"context"
 	stdcrypto "crypto"
+	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,10 +18,15 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/eunolabs/eunox/internal/issuer"
 	"github.com/eunolabs/eunox/internal/issuer/policy"
+	"github.com/eunolabs/eunox/internal/migrate"
+	"github.com/eunolabs/eunox/migrations"
 	"github.com/eunolabs/eunox/pkg/config"
 	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/database"
 	"github.com/eunolabs/eunox/pkg/did"
 	"github.com/eunolabs/eunox/pkg/identity"
 	"github.com/eunolabs/eunox/pkg/observability"
@@ -138,6 +145,30 @@ func run() error {
 		keyStore = issuer.NewSingleKeyStore(signer)
 	}
 
+	// Build SCIM store: PostgreSQL when ISSUER_SCIM_DB_URL is set (production /
+	// multi-replica); in-memory fallback for development / single-replica.
+	var scimStore issuer.SCIMRepository
+	var scimReadinessCheck func(context.Context) error
+	if cfg.SCIMDatabaseURL != "" {
+		scimDB, err := database.OpenPool("pgx", cfg.SCIMDatabaseURL, &cfg.DBPool)
+		if err != nil {
+			return fmt.Errorf("open SCIM database pool: %w", err)
+		}
+		defer func() { _ = scimDB.Close() }()
+		if err := runMigrations(ctx, scimDB, "issuer", migrations.Issuer(), logger); err != nil {
+			return fmt.Errorf("issuer SCIM database migration: %w", err)
+		}
+		scimStore = issuer.NewPostgresSCIMRepository(scimDB)
+		scimReadinessCheck = func(ctx context.Context) error { return scimDB.PingContext(ctx) }
+		logger.Info("using PostgreSQL SCIM store")
+	} else {
+		if cfg.NodeEnv == config.EnvProduction {
+			return fmt.Errorf("ISSUER_SCIM_DB_URL is required in production; " +
+				"the in-memory SCIM store does not survive pod restarts")
+		}
+		logger.Warn("using in-memory SCIM store (development only — data is not persisted)")
+	}
+
 	// Build metrics
 	metrics := observability.NewMetricsRegistry("issuer", "http")
 
@@ -145,6 +176,12 @@ func run() error {
 	issuerURL := cfg.IssuerURL
 	if issuerURL == "" {
 		issuerURL = fmt.Sprintf("http://localhost:%d", cfg.Port)
+	}
+
+	// Build readiness checks.
+	var readinessChecks []func(context.Context) error
+	if scimReadinessCheck != nil {
+		readinessChecks = append(readinessChecks, scimReadinessCheck)
 	}
 
 	// Build app config
@@ -155,7 +192,7 @@ func run() error {
 		MaxTokenTTL:        cfg.MaxTokenTTL,
 		Audience:           cfg.Audience,
 		AdminAPIKey:        cfg.AdminAPIKey,
-		ReadinessChecks:    nil, // Add a DB ping here when issuer policy state moves into a database.
+		ReadinessChecks:    readinessChecks,
 		MaxRequestBodySize: int64(cfg.MaxRequestBodySize),
 	}
 
@@ -169,6 +206,7 @@ func run() error {
 		Revocation:   revStore,
 		Logger:       logger,
 		Metrics:      metrics,
+		SCIMStore:    scimStore, // nil → New() falls back to in-memory SCIMStore
 	}
 
 	app := issuer.New(&appCfg, &deps)
@@ -210,6 +248,35 @@ func run() error {
 
 	policyEngine.Stop()
 	logger.Info("shutdown complete")
+	return nil
+}
+
+// runMigrations applies all pending up migrations for the given schema against db.
+// It is safe to call on every startup: already-applied migrations are detected via
+// the schema_migrations tracking table and skipped.
+func runMigrations(ctx context.Context, db *sql.DB, schema string, source fs.FS, logger *slog.Logger) error {
+	runner, err := migrate.NewRunner(&migrate.Config{
+		Source:   source,
+		Store:    migrate.NewPostgresStateStore(db, schema),
+		Executor: migrate.NewPostgresSQLExecutor(db),
+		Locker:   migrate.NewPostgresAdvisoryLocker(db, schema),
+		Logger:   logger,
+	})
+	if err != nil {
+		return err
+	}
+	applied, err := runner.MigrateUp(ctx)
+	if err != nil {
+		return err
+	}
+	if applied > 0 {
+		logger.Info("database migrations applied",
+			slog.String("schema", schema),
+			slog.Int("count", applied),
+		)
+	} else {
+		logger.Info("database schema is up to date", slog.String("schema", schema))
+	}
 	return nil
 }
 

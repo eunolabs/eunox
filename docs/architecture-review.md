@@ -294,7 +294,7 @@ fields, and return that from the Get methods.
 **LOCATION:** `internal/issuer/scim.go:28-44` (`SCIMStore`)  
 **CATEGORY:** Architecture  
 **SEVERITY:** High  
-**STATUS:** ✅ Fixed (interface + compile check) — 2026-05-28; Postgres persistence tracked separately
+**STATUS:** ✅ Fixed — 2026-05-29 (Postgres persistence fully implemented)
 
 **PROBLEM:** `SCIMStore` is a plain in-memory map. Restarts, deployments, and
 crashes wipe all SCIM-provisioned users and groups.
@@ -310,15 +310,24 @@ to an external identity store. The in-memory implementation is acceptable only a
 test double behind an interface.
 
 **IMPLEMENTATION:**
-- `internal/issuer/scim.go` — `SCIMRepository` interface extracted, covering all
-  CRUD operations for users and groups. `var _ SCIMRepository = (*SCIMStore)(nil)`
-  compile-time guard added to keep `SCIMStore` in sync with the interface.
-- `internal/issuer/app.go` — `App.scimStore` field type changed from `*SCIMStore`
-  to `SCIMRepository`, enabling injection of any conforming implementation (e.g., a
-  future Postgres-backed store) without touching the handler layer.
-- Postgres persistence is intentionally deferred: the interface boundary is in place;
-  a `pgSCIMRepository` implementation can be added independently once the schema
-  migrations are authored.
+- `internal/issuer/scim.go` — `SCIMRepository` interface updated to accept
+  `context.Context` and return `error` on all methods, enabling proper Postgres
+  error propagation. `SCIMStore` updated to match; all 17 SCIM handler call sites
+  updated to pass `r.Context()` and return HTTP 500 on store errors.
+- `internal/issuer/scim_postgres.go` — `pgSCIMRepository` implemented: JSONB-backed
+  storage with top-level columns for efficient filtering; group-member sync via
+  transactional JSONB UPDATE queries; `NewPostgresSCIMRepository(*sql.DB)` constructor.
+- `migrations/issuer/001_create_scim_tables.up.sql` — `scim_users` and `scim_groups`
+  tables with indexed `username`, `display_name`, and `external_id` columns.
+- `migrations/migrations.go` — `Issuer()` function added; embed directive updated
+  to include `issuer/` directory.
+- `internal/issuer/app.go` — `Dependencies.SCIMStore SCIMRepository` field added;
+  `New()` falls back to `NewSCIMStore()` when the field is nil.
+- `pkg/config/issuer.go` — `SCIMDatabaseURL` (`ISSUER_SCIM_DB_URL`) field added;
+  marked `production:"required"` so the in-memory fallback is rejected in production.
+- `cmd/issuer/main.go` — when `ISSUER_SCIM_DB_URL` is set: opens a connection pool,
+  runs schema migrations, and injects `pgSCIMRepository`; otherwise warns and falls
+  back to the in-memory store (rejected in production).
 
 ---
 
@@ -628,7 +637,7 @@ pre-registered set of agent IDs at startup and reject unknowns.
 **LOCATION:** `internal/issuer/app.go:89-106`  
 **CATEGORY:** Architecture  
 **SEVERITY:** Medium  
-**STATUS:** ✅ Fixed (interface + compile check) — 2026-05-28; Postgres persistence tracked separately
+**STATUS:** ✅ Fixed — 2026-05-29 (Postgres persistence fully implemented)
 
 **PROBLEM:** `App.scimStore` is initialized in `New()` as an in-process singleton.
 If the issuer is scaled horizontally, each replica has its own independent SCIM
@@ -638,12 +647,9 @@ state. This is the architectural root of H-5.
 The current in-memory implementation satisfies the interface for single-instance
 deploys. A Postgres-backed implementation satisfies it for multi-replica.
 
-**IMPLEMENTATION:**
-- `internal/issuer/scim.go` — `SCIMRepository` interface extracted (H-5 fix);
-  `var _ SCIMRepository = (*SCIMStore)(nil)` compile-time guard added.
-- `internal/issuer/app.go` — `App.scimStore` field typed as `SCIMRepository` so any
-  conforming implementation (e.g. a Postgres-backed store) can be injected without
-  touching the handler layer.
+**IMPLEMENTATION:** See H-5 — `SCIMRepository` interface extracted, `pgSCIMRepository`
+implemented, `ISSUER_SCIM_DB_URL` environment variable wires the Postgres store in
+`cmd/issuer/main.go`. `Dependencies.SCIMStore` accepts any conforming implementation.
 
 ---
 
@@ -930,4 +936,4 @@ in distributed traces.
 ---
 
 _End of review — 21 findings total: 3 Critical, 6 High, 7 Medium (logic/impl), 5 Architecture/Design._
-_All findings resolved as of 2026-05-29._
+_All findings fully resolved as of 2026-05-29. H-5/A-4 Postgres persistence completed 2026-05-29._

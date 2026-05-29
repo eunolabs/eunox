@@ -58,6 +58,14 @@ type IssuerConfig struct {
 	// GCP Identity
 	GCPIdentityAudience string `env:"GCP_IDENTITY_AUDIENCE"`
 
+	// SCIM persistence — when set, SCIM users and groups are stored in PostgreSQL
+	// instead of in-memory.  Required for multi-replica deployments so that IdP
+	// provisioning is visible to all issuer pods after a restart.
+	SCIMDatabaseURL string `env:"ISSUER_SCIM_DB_URL" production:"required"`
+
+	// Database connection pool settings (shared by SCIMDatabaseURL if set).
+	DBPool DatabasePoolConfig
+
 	// Request body limits
 	MaxRequestBodySize int `env:"MAX_REQUEST_BODY_SIZE" default:"1048576" min:"1024" max:"104857600"`
 }

@@ -4,6 +4,7 @@
 package issuer
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -138,22 +139,24 @@ const (
 
 // SCIMRepository defines the storage contract for SCIM 2.0 resources.
 //
-// H-5 fix: abstracting the store behind this interface decouples the HTTP
+// H-5/A-4 fix: abstracting the store behind this interface decouples the HTTP
 // handlers from the in-memory implementation and allows a Postgres-backed
-// implementation to be substituted for multi-replica deployments without
-// changing any handler code.
+// implementation (pgSCIMRepository) to be substituted for multi-replica
+// deployments without changing any handler code.  All methods accept a
+// context.Context so that Postgres implementations can honour deadlines and
+// propagate traces; the in-memory implementation ignores the context.
 type SCIMRepository interface {
-	CreateUser(user *SCIMUser)
-	GetUser(id string) (*SCIMUser, bool)
-	ListUsers(filter string) []*SCIMUser
-	UpdateUser(user *SCIMUser)
-	DeleteUser(id string) bool
+	CreateUser(ctx context.Context, user *SCIMUser) error
+	GetUser(ctx context.Context, id string) (*SCIMUser, bool, error)
+	ListUsers(ctx context.Context, filter string) ([]*SCIMUser, error)
+	UpdateUser(ctx context.Context, user *SCIMUser) error
+	DeleteUser(ctx context.Context, id string) (bool, error)
 
-	CreateGroup(group *SCIMGroup)
-	GetGroup(id string) (*SCIMGroup, bool)
-	ListGroups(filter string) []*SCIMGroup
-	UpdateGroup(group *SCIMGroup)
-	DeleteGroup(id string) bool
+	CreateGroup(ctx context.Context, group *SCIMGroup) error
+	GetGroup(ctx context.Context, id string) (*SCIMGroup, bool, error)
+	ListGroups(ctx context.Context, filter string) ([]*SCIMGroup, error)
+	UpdateGroup(ctx context.Context, group *SCIMGroup) error
+	DeleteGroup(ctx context.Context, id string) (bool, error)
 }
 
 // Ensure SCIMStore satisfies SCIMRepository at compile time.
@@ -205,25 +208,26 @@ func (g *SCIMGroup) Clone() *SCIMGroup {
 // --- Store Methods ---
 
 // CreateUser adds a user to the store.
-func (s *SCIMStore) CreateUser(user *SCIMUser) {
+func (s *SCIMStore) CreateUser(_ context.Context, user *SCIMUser) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.users[user.ID] = user
+	return nil
 }
 
 // GetUser retrieves a user by ID.
 // H-4 fix: returns a deep copy so callers can mutate the struct (e.g., during
 // PATCH) without holding the store lock, eliminating the data race between
 // concurrent PATCH requests that obtained the same map pointer.
-func (s *SCIMStore) GetUser(id string) (*SCIMUser, bool) {
+func (s *SCIMStore) GetUser(_ context.Context, id string) (*SCIMUser, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	u, ok := s.users[id]
-	return u.Clone(), ok
+	return u.Clone(), ok, nil
 }
 
 // ListUsers returns all users, optionally filtered by SCIM filter expression.
-func (s *SCIMStore) ListUsers(filter string) []*SCIMUser {
+func (s *SCIMStore) ListUsers(_ context.Context, filter string) ([]*SCIMUser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*SCIMUser, 0, len(s.users))
@@ -233,46 +237,48 @@ func (s *SCIMStore) ListUsers(filter string) []*SCIMUser {
 		}
 		result = append(result, u)
 	}
-	return result
+	return result, nil
 }
 
 // UpdateUser replaces user attributes.
-func (s *SCIMStore) UpdateUser(user *SCIMUser) {
+func (s *SCIMStore) UpdateUser(_ context.Context, user *SCIMUser) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.users[user.ID] = user
+	return nil
 }
 
 // DeleteUser removes a user by ID.
-func (s *SCIMStore) DeleteUser(id string) bool {
+func (s *SCIMStore) DeleteUser(_ context.Context, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.users[id]; !ok {
-		return false
+		return false, nil
 	}
 	delete(s.users, id)
-	return true
+	return true, nil
 }
 
 // CreateGroup adds a group to the store and synchronizes user.groups.
-func (s *SCIMStore) CreateGroup(group *SCIMGroup) {
+func (s *SCIMStore) CreateGroup(_ context.Context, group *SCIMGroup) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groups[group.ID] = group
 	s.syncUserGroupsForGroup(group.ID)
+	return nil
 }
 
 // GetGroup retrieves a group by ID.
 // H-4 fix: returns a deep copy for the same reason as GetUser.
-func (s *SCIMStore) GetGroup(id string) (*SCIMGroup, bool) {
+func (s *SCIMStore) GetGroup(_ context.Context, id string) (*SCIMGroup, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	g, ok := s.groups[id]
-	return g.Clone(), ok
+	return g.Clone(), ok, nil
 }
 
 // ListGroups returns all groups, optionally filtered by SCIM filter expression.
-func (s *SCIMStore) ListGroups(filter string) []*SCIMGroup {
+func (s *SCIMStore) ListGroups(_ context.Context, filter string) ([]*SCIMGroup, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*SCIMGroup, 0, len(s.groups))
@@ -282,27 +288,28 @@ func (s *SCIMStore) ListGroups(filter string) []*SCIMGroup {
 		}
 		result = append(result, g)
 	}
-	return result
+	return result, nil
 }
 
 // UpdateGroup replaces group attributes and synchronizes user.groups.
-func (s *SCIMStore) UpdateGroup(group *SCIMGroup) {
+func (s *SCIMStore) UpdateGroup(_ context.Context, group *SCIMGroup) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groups[group.ID] = group
 	s.syncUserGroupsForGroup(group.ID)
+	return nil
 }
 
 // DeleteGroup removes a group by ID and clears user.groups references.
-func (s *SCIMStore) DeleteGroup(id string) bool {
+func (s *SCIMStore) DeleteGroup(_ context.Context, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.groups[id]; !ok {
-		return false
+		return false, nil
 	}
 	delete(s.groups, id)
 	s.removeGroupFromAllUsers(id)
-	return true
+	return true, nil
 }
 
 // syncUserGroupsForGroup updates the groups field on all users referenced by this group.
@@ -504,7 +511,10 @@ func (app *App) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	app.scimStore.CreateUser(user)
+	if err := app.scimStore.CreateUser(r.Context(), user); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to create user", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusCreated)
@@ -513,7 +523,11 @@ func (app *App) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMListUsers(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
-	users := app.scimStore.ListUsers(filter)
+	users, err := app.scimStore.ListUsers(r.Context(), filter)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to list users", "")
+		return
+	}
 
 	// Stable sort: by Meta.Created ASC, then ID ASC as tiebreaker.
 	sort.Slice(users, func(i, j int) bool {
@@ -556,7 +570,11 @@ func (app *App) handleSCIMListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMGetUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	user, ok := app.scimStore.GetUser(id)
+	user, ok, err := app.scimStore.GetUser(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get user", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("user %q not found", id), "")
 		return
@@ -569,7 +587,11 @@ func (app *App) handleSCIMGetUser(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	user, ok := app.scimStore.GetUser(id)
+	user, ok, err := app.scimStore.GetUser(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get user", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("user %q not found", id), "")
 		return
@@ -587,7 +609,10 @@ func (app *App) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user.Meta.LastModified = time.Now().UTC().Format(time.RFC3339)
-	app.scimStore.UpdateUser(user)
+	if err := app.scimStore.UpdateUser(r.Context(), user); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to update user", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusOK)
@@ -596,7 +621,11 @@ func (app *App) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMReplaceUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	existing, ok := app.scimStore.GetUser(id)
+	existing, ok, err := app.scimStore.GetUser(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get user", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("user %q not found", id), "")
 		return
@@ -638,7 +667,10 @@ func (app *App) handleSCIMReplaceUser(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	app.scimStore.UpdateUser(user)
+	if err := app.scimStore.UpdateUser(r.Context(), user); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to update user", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusOK)
@@ -647,7 +679,12 @@ func (app *App) handleSCIMReplaceUser(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if !app.scimStore.DeleteUser(id) {
+	deleted, err := app.scimStore.DeleteUser(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to delete user", "")
+		return
+	}
+	if !deleted {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("user %q not found", id), "")
 		return
 	}
@@ -688,7 +725,10 @@ func (app *App) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	app.scimStore.CreateGroup(group)
+	if err := app.scimStore.CreateGroup(r.Context(), group); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to create group", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusCreated)
@@ -697,7 +737,11 @@ func (app *App) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
-	groups := app.scimStore.ListGroups(filter)
+	groups, err := app.scimStore.ListGroups(r.Context(), filter)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to list groups", "")
+		return
+	}
 
 	// Stable sort: by Meta.Created ASC, then ID ASC as tiebreaker.
 	sort.Slice(groups, func(i, j int) bool {
@@ -739,7 +783,11 @@ func (app *App) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMGetGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	group, ok := app.scimStore.GetGroup(id)
+	group, ok, err := app.scimStore.GetGroup(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get group", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", id), "")
 		return
@@ -752,7 +800,11 @@ func (app *App) handleSCIMGetGroup(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	group, ok := app.scimStore.GetGroup(id)
+	group, ok, err := app.scimStore.GetGroup(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get group", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", id), "")
 		return
@@ -770,7 +822,10 @@ func (app *App) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	group.Meta.LastModified = time.Now().UTC().Format(time.RFC3339)
-	app.scimStore.UpdateGroup(group)
+	if err := app.scimStore.UpdateGroup(r.Context(), group); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to update group", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusOK)
@@ -779,7 +834,11 @@ func (app *App) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	existing, ok := app.scimStore.GetGroup(id)
+	existing, ok, err := app.scimStore.GetGroup(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to get group", "")
+		return
+	}
 	if !ok {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", id), "")
 		return
@@ -816,7 +875,10 @@ func (app *App) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	app.scimStore.UpdateGroup(group)
+	if err := app.scimStore.UpdateGroup(r.Context(), group); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to update group", "")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(http.StatusOK)
@@ -825,7 +887,12 @@ func (app *App) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) handleSCIMDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if !app.scimStore.DeleteGroup(id) {
+	deleted, err := app.scimStore.DeleteGroup(r.Context(), id)
+	if err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "failed to delete group", "")
+		return
+	}
+	if !deleted {
 		writeSCIMError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", id), "")
 		return
 	}

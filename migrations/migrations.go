@@ -12,7 +12,7 @@ import (
 	"io/fs"
 )
 
-//go:embed minter audit
+//go:embed minter audit issuer
 var fsys embed.FS
 
 // Minter returns an fs.FS rooted at the minter migration directory.
@@ -33,6 +33,16 @@ func Audit() fs.FS {
 	sub, err := fs.Sub(fsys, "audit")
 	if err != nil {
 		panic("migrations: sub audit: " + err.Error())
+	}
+	return sub
+}
+
+// Issuer returns an fs.FS rooted at the issuer migration directory.
+// The files it contains define the scim_users and scim_groups schema.
+func Issuer() fs.FS {
+	sub, err := fs.Sub(fsys, "issuer")
+	if err != nil {
+		panic("migrations: sub issuer: " + err.Error())
 	}
 	return sub
 }
