@@ -122,6 +122,10 @@ func TestNewRunner_EmptyDir(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoMigrations)
 }
 
+// TestNewRunner_InvalidFilename verifies the I-2 fix: a file whose name has the
+// .up.sql extension but an invalid version string is now skipped with a warning
+// rather than causing a hard ErrInvalidVersion error.  When the FS contains only
+// such files, NewRunner still fails — but with ErrNoMigrations, not ErrInvalidVersion.
 func TestNewRunner_InvalidFilename(t *testing.T) {
 	badFS := fstest.MapFS{
 		"abc_bad.up.sql": {Data: []byte("SELECT 1;")},
@@ -131,9 +135,13 @@ func TestNewRunner_InvalidFilename(t *testing.T) {
 		Store:    NewMemoryStateStore(),
 		Executor: NewMemoryExecutor(),
 	})
-	assert.ErrorIs(t, err, ErrInvalidVersion)
+	// I-2 fix: the bad file is skipped; no valid migrations → ErrNoMigrations.
+	assert.ErrorIs(t, err, ErrNoMigrations)
+	assert.NotErrorIs(t, err, ErrInvalidVersion)
 }
 
+// TestNewRunner_ZeroVersion mirrors TestNewRunner_InvalidFilename for version "000",
+// which is also rejected by parseFilename (must be a positive integer).
 func TestNewRunner_ZeroVersion(t *testing.T) {
 	badFS := fstest.MapFS{
 		"000_bad.up.sql": {Data: []byte("SELECT 1;")},
@@ -143,7 +151,9 @@ func TestNewRunner_ZeroVersion(t *testing.T) {
 		Store:    NewMemoryStateStore(),
 		Executor: NewMemoryExecutor(),
 	})
-	assert.ErrorIs(t, err, ErrInvalidVersion)
+	// I-2 fix: the bad file is skipped; no valid migrations → ErrNoMigrations.
+	assert.ErrorIs(t, err, ErrNoMigrations)
+	assert.NotErrorIs(t, err, ErrInvalidVersion)
 }
 
 // --- ValidateRollbackSafety tests ---

@@ -928,7 +928,11 @@ func TestPipeline_FullChainVerification(t *testing.T) {
 	}
 }
 
-func TestPipeline_BackendErrorRollsBackSequence(t *testing.T) {
+// TestPipeline_BackendErrorLeavesSequenceGap verifies the M-1 fix: when the
+// backend returns an error the sequence number is NOT rolled back.  Accepting a
+// gap (…1, 2, 4…) is safer than reusing a number that may have been partially
+// committed — a collision at N would be undetectable without a full hash scan.
+func TestPipeline_BackendErrorLeavesSequenceGap(t *testing.T) {
 	t.Parallel()
 
 	signer := NewEvidenceSigner(&mockSigner{algorithm: crypto.ES256, keyID: "test-key"})
@@ -947,24 +951,26 @@ func TestPipeline_BackendErrorRollsBackSequence(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First two should succeed.
+	// First two should succeed (seq 1, seq 2).
 	for i := 0; i < 2; i++ {
 		entry := &LogEntry{EventType: "test", Action: "action", Outcome: "success"}
 		require.NoError(t, pipeline.Append(ctx, entry))
 	}
 
-	// Third should fail.
+	// Third fails (seq 3 is consumed but never persisted).
 	entry := &LogEntry{EventType: "test", Action: "action", Outcome: "success"}
 	err = pipeline.Append(ctx, entry)
 	assert.Error(t, err)
 
-	// Verify sequence was rolled back - next successful append gets seq 3.
+	// M-1 fix: seq 3 is NOT rolled back; the next successful append gets seq 4,
+	// leaving a deliberate gap (1, 2, 4) in the persisted chain.
 	*backend.failAfter = 100 // Stop failing.
 	entry = &LogEntry{EventType: "test", Action: "action", Outcome: "success"}
 	require.NoError(t, pipeline.Append(ctx, entry))
 
 	records := backend.inner.Records()
-	assert.Equal(t, int64(3), records[len(records)-1].SequenceNum)
+	require.Len(t, records, 3) // seq 1, seq 2, seq 4 — seq 3 was the failed attempt
+	assert.Equal(t, int64(4), records[len(records)-1].SequenceNum)
 }
 
 type failingBackend struct {

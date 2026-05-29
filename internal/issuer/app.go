@@ -741,7 +741,7 @@ func (app *App) signToken(_ context.Context, payload *capability.TokenPayload) (
 			Algorithm: jose.SignatureAlgorithm(signer.Algorithm()),
 			Key:       pkp.PrivateKey(),
 		},
-		(&jose.SignerOptions{}).WithHeader(jose.HeaderKey("kid"), signer.KeyID()),
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), signer.KeyID()),
 	)
 	if err != nil {
 		return "", fmt.Errorf("create JWT signer: %w", err)
