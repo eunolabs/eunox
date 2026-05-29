@@ -6,7 +6,12 @@ GO ?= go
 GOFLAGS ?= -race
 GOLANGCI_LINT_VERSION ?= v2.12.2
 
-.PHONY: all build test lint generate clean coverage check-license vet
+IMAGE_REPO    ?= eunolabs/eunox-mcp
+DOCKERFILE_MCP     := deploy/docker/Dockerfile.mcp
+DOCKERFILE_MCP_WIN := deploy/docker/Dockerfile.mcp.windows
+
+.PHONY: all build test lint generate clean coverage check-license vet \
+        docker-build-mcp docker-build-mcp-multi docker-push-mcp
 
 all: lint test build
 
@@ -68,6 +73,34 @@ check-license:
 	done; \
 	if [ $$fail -eq 1 ]; then exit 1; fi
 	@echo "All files have correct license headers."
+
+## Build the eunox-mcp Docker image for the local platform (fast, no QEMU).
+docker-build-mcp:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		-f $(DOCKERFILE_MCP) \
+		-t $(IMAGE_REPO):$(VERSION) \
+		-t $(IMAGE_REPO):latest \
+		.
+
+## Build the eunox-mcp Docker image for linux/amd64 + linux/arm64 using buildx.
+## Requires: docker buildx, QEMU (docker run --rm --privileged tonistiigi/binfmt --install all).
+## Loads the result into the local image store (--load pushes only one platform at a time;
+## omit --load and add --push to publish directly to Docker Hub instead).
+docker-build-mcp-multi:
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--build-arg VERSION=$(VERSION) \
+		-f $(DOCKERFILE_MCP) \
+		-t $(IMAGE_REPO):$(VERSION) \
+		-t $(IMAGE_REPO):latest \
+		.
+
+## Push the locally built eunox-mcp image to Docker Hub.
+## Run docker-build-mcp (or docker-build-mcp-multi --push) before this target.
+docker-push-mcp:
+	docker push $(IMAGE_REPO):$(VERSION)
+	docker push $(IMAGE_REPO):latest
 
 ## Remove build artifacts
 clean:
