@@ -69,7 +69,7 @@ func (r *pgSCIMRepository) ListUsers(ctx context.Context, filter string) ([]*SCI
 	if err != nil {
 		return nil, fmt.Errorf("scim postgres: list users: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanSCIMUsers(rows)
 }
 
@@ -127,7 +127,7 @@ func (r *pgSCIMRepository) ListGroups(ctx context.Context, filter string) ([]*SC
 	if err != nil {
 		return nil, fmt.Errorf("scim postgres: list groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanSCIMGroups(rows)
 }
 
@@ -269,7 +269,7 @@ func addGroupRefToUserInTx(ctx context.Context, tx *sql.Tx, userID string, ref S
 // buildUserListQuery constructs a SELECT query with an optional WHERE clause
 // derived from the SCIM filter string.  The filter syntax supported here matches
 // matchesUserFilter in scim.go (attr eq "value").
-func buildUserListQuery(filter string) (string, []interface{}) {
+func buildUserListQuery(filter string) (query string, args []interface{}) {
 	base := `SELECT data FROM scim_users`
 	if filter == "" {
 		return base + ` ORDER BY created_at, id`, nil
@@ -297,7 +297,7 @@ func buildUserListQuery(filter string) (string, []interface{}) {
 
 // buildGroupListQuery constructs a SELECT query with an optional WHERE clause
 // derived from the SCIM filter string.
-func buildGroupListQuery(filter string) (string, []interface{}) {
+func buildGroupListQuery(filter string) (query string, args []interface{}) {
 	base := `SELECT data FROM scim_groups`
 	if filter == "" {
 		return base + ` ORDER BY created_at, id`, nil

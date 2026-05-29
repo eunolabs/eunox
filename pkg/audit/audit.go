@@ -34,11 +34,11 @@ var (
 	ErrLockContention = errors.New("audit: advisory lock contention")
 )
 
-// LogEntry, SignedAuditEvidence, Pipeline, and LedgerBackend are defined in
-// pkg/audit/contract and re-exported here as type aliases so that existing
-// callers (e.g. internal/gateway) continue to compile without modification.
-// D-1 fix: moving the canonical definitions to the contract sub-package
-// decouples interface consumers from the implementation package.
+// LogEntry is a type alias for contract.LogEntry, re-exported so that existing
+// callers compile without modification. D-1 fix: canonical definition lives in
+// pkg/audit/contract to decouple consumers from the implementation package.
+//
+// SignedAuditEvidence, Pipeline, and LedgerBackend are aliased for the same reason.
 type (
 	LogEntry            = contract.LogEntry
 	SignedAuditEvidence = contract.SignedAuditEvidence

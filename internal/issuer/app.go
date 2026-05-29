@@ -55,14 +55,15 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string) (bool, error)
 }
 
-// KeyStore and PublicKeyInfo are defined in pkg/crypto and re-exported here
-// as type aliases for backward compatibility. D-2 fix: moved to pkg/crypto so
-// that keystore implementations (SingleKeyStore, RotatingKeyStore) and the
-// issuer share the same definition without risking import cycles.
-type (
-	KeyStore      = crypto.KeyStore
-	PublicKeyInfo = crypto.PublicKeyInfo
-)
+// KeyStore is re-exported from pkg/crypto as a type alias for backward
+// compatibility. D-2 fix: canonical definition lives in pkg/crypto so that
+// keystore implementations (SingleKeyStore, RotatingKeyStore) and the issuer
+// share it without risking import cycles.
+type KeyStore = crypto.KeyStore
+
+// PublicKeyInfo is re-exported from pkg/crypto as a type alias for backward
+// compatibility. See KeyStore for the rationale.
+type PublicKeyInfo = crypto.PublicKeyInfo
 
 // Dependencies holds the injected backends for the issuer.
 type Dependencies struct {
