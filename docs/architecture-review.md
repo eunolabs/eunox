@@ -17,7 +17,8 @@ and line(s) that contain the problem, verified against the current source tree.
 
 **LOCATION:** `pkg/identity/did.go:71`  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** Critical
+**SEVERITY:** Critical  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** `parsed.Claims(header.JSONWebKey.Key, ...)` trusts the JWK embedded
 in the token's JOSE header to verify the signature without resolving the issuer's
@@ -36,13 +37,26 @@ configured resolver) and verify that `header.JSONWebKey` matches one of the
 JWK is not anchored to the published DID document. The current `trustedDIDs`
 allowlist provides no protection without this step.
 
+**IMPLEMENTATION:**
+- `pkg/identity/did.go` — `DIDConfig` now requires a `did.Resolver`; `VerifyToken`
+  resolves the issuer's DID document and verifies the signature against each
+  `verificationMethod` key. The JOSE header's embedded JWK is never consulted.
+  `NewDIDProvider` returns an error if no resolver is supplied.
+- `cmd/issuer/main.go` — the `"did"` provider case now constructs a
+  `did.CachingResolver` wrapping a `did.MultiResolver` (web + ion + key methods)
+  and passes it to `DIDConfig.Resolver`.
+- `pkg/identity/identity_test.go` and `identity_extended_test.go` — updated with a
+  `testDIDResolver` stub; existing DID tests updated to the resolver-based flow;
+  `TestDIDProvider_EmbeddedJWKBypassRejected` added as a dedicated regression test.
+
 ---
 
 ### CR-2 — Cross-org attenuation treats empty parent `Actions` as wildcard
 
 **LOCATION:** `pkg/federation/attenuation.go:88-109` (`isSubsetOf`)  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** Critical
+**SEVERITY:** Critical  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** The action-subset check is guarded by `if len(parent.Actions) > 0`.
 When a parent token has an empty `Actions` field, the entire action check is skipped
@@ -63,13 +77,21 @@ if len(parent.Actions) == 0 {
 }
 ```
 
+**IMPLEMENTATION:**
+- `pkg/federation/attenuation.go` — `isSubsetOf` now returns `false` immediately
+  when `len(parent.Actions) == 0`, making the semantics explicit: empty = no grant.
+- `pkg/federation/federation_test.go` — `TestAttenuate_EmptyParentActions_Denied`
+  added as a regression test confirming that `["admin:delete"]` is denied against an
+  empty-action parent.
+
 ---
 
 ### CR-3 — Cross-org attenuation checks condition type presence, not value restrictiveness
 
 **LOCATION:** `pkg/federation/attenuation.go:113-147` (`containsAllConditionTypes`, `isSubsetOf`)  
 **CATEGORY:** Logic Bug  
-**SEVERITY:** Critical
+**SEVERITY:** Critical  
+**STATUS:** ✅ Fixed — 2026-05-28
 
 **PROBLEM:** `containsAllConditionTypes` verifies that the child's conditions include
 every condition _type_ found in the parent, but not that the child's condition
@@ -91,6 +113,19 @@ that the child is at least as restrictive:
 - `TimeWindowCondition`: child range ⊆ parent range
 - `IPRangeCondition`: child CIDRs ⊆ parent CIDRs (every child CIDR must be
   contained within a parent CIDR)
+
+**IMPLEMENTATION:**
+- `pkg/federation/attenuation.go` — `containsAllConditionTypes` replaced by
+  `conditionsAreAtLeastAsRestrictive` which performs full per-type value comparison
+  via `conditionIsAtLeastAsRestrictive`. All 9 concrete condition types are handled
+  explicitly; unknown/opaque types fall back to JSON-digest equality. Helpers added:
+  `timeWindowIsAtLeastAsRestrictive`, `ipRangesAreAtLeastAsRestrictive`,
+  `networkContains`, `allowedTablesIsAtLeastAsRestrictive`,
+  `stringSliceIsSubset`, `allowedValuesIsSubset`, `conditionDigest`.
+- `pkg/federation/federation_test.go` — regression tests added:
+  `TestAttenuate_MaxCallsEscalation_Denied`, `TestAttenuate_MaxCallsMoreRestrictive_Allowed`,
+  `TestAttenuate_TimeWindowEscalation_Denied`, `TestAttenuate_IPRangeEscalation_Denied`,
+  `TestAttenuate_IPRangeNarrower_Allowed`.
 
 ---
 

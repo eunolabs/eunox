@@ -451,6 +451,184 @@ func TestAttenuate_ConditionEnforcement(t *testing.T) {
 	})
 }
 
+// --- Attenuation Security Regression Tests (CR-2, CR-3) ---
+
+// TestAttenuate_EmptyParentActions_Denied is the CR-2 regression test.
+//
+// A parent token with an empty Actions slice must deny ALL child action
+// requests. Previously, the `if len(parent.Actions) > 0` guard skipped the
+// action check entirely, making empty parent Actions act as a wildcard grant.
+func TestAttenuate_EmptyParentActions_Denied(t *testing.T) {
+	_, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{Resource: "tool:x", Actions: []string{}}, // empty — grants nothing
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{Resource: "tool:x", Actions: []string{"admin:delete"}},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	assert.ErrorIs(t, err, ErrSubsetViolation,
+		"empty parent Actions must not grant any child actions (CR-2)")
+}
+
+// TestAttenuate_MaxCallsEscalation_Denied is a CR-3 regression test.
+//
+// A child token requesting more calls than the parent permits must be denied.
+// Previously, condition-type presence was the only check; a child with
+// maxCalls:10_000_000 satisfied a parent with maxCalls:5.
+func TestAttenuate_MaxCallsEscalation_Denied(t *testing.T) {
+	_, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.MaxCallsCondition{Count: 5, WindowSeconds: 60},
+				},
+			},
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.MaxCallsCondition{Count: 10_000_000, WindowSeconds: 60},
+				},
+			},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	assert.ErrorIs(t, err, ErrSubsetViolation,
+		"child maxCalls exceeding parent limit must be denied (CR-3)")
+}
+
+// TestAttenuate_MaxCallsMoreRestrictive_Allowed verifies the positive case:
+// a child with a tighter call quota than the parent is correctly permitted.
+func TestAttenuate_MaxCallsMoreRestrictive_Allowed(t *testing.T) {
+	result, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.MaxCallsCondition{Count: 100, WindowSeconds: 60},
+				},
+			},
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					// 5 calls per 5-minute window — strictly tighter than 100/min.
+					&capability.MaxCallsCondition{Count: 5, WindowSeconds: 300},
+				},
+			},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	require.NoError(t, err, "tighter maxCalls condition must be allowed")
+	assert.Len(t, result.Capabilities, 1)
+}
+
+// TestAttenuate_TimeWindowEscalation_Denied is a CR-3 regression test.
+// A child with a wider time window than the parent must be denied.
+func TestAttenuate_TimeWindowEscalation_Denied(t *testing.T) {
+	_, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.TimeWindowCondition{
+						NotBefore: "2026-06-01T00:00:00Z",
+						NotAfter:  "2026-06-30T23:59:59Z",
+					},
+				},
+			},
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.TimeWindowCondition{
+						NotBefore: "2026-05-01T00:00:00Z", // earlier start — less restrictive
+						NotAfter:  "2026-06-30T23:59:59Z",
+					},
+				},
+			},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	assert.ErrorIs(t, err, ErrSubsetViolation,
+		"child time window starting before parent must be denied (CR-3)")
+}
+
+// TestAttenuate_IPRangeEscalation_Denied is a CR-3 regression test.
+// A child token requesting a broader IP range than the parent must be denied.
+func TestAttenuate_IPRangeEscalation_Denied(t *testing.T) {
+	_, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.IPRangeCondition{CIDRs: []string{"10.0.0.0/16"}},
+				},
+			},
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.IPRangeCondition{CIDRs: []string{"0.0.0.0/0"}}, // all traffic
+				},
+			},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	assert.ErrorIs(t, err, ErrSubsetViolation,
+		"child IP range broader than parent must be denied (CR-3)")
+}
+
+// TestAttenuate_IPRangeNarrower_Allowed verifies the positive case:
+// a child whose CIDR is a strict subnet of the parent CIDR is permitted.
+func TestAttenuate_IPRangeNarrower_Allowed(t *testing.T) {
+	result, err := Attenuate(AttenuationRequest{
+		ParentCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					&capability.IPRangeCondition{CIDRs: []string{"10.0.0.0/8"}},
+				},
+			},
+		},
+		RequestedCapabilities: []capability.Constraint{
+			{
+				Resource: "tool:x",
+				Actions:  []string{"read"},
+				Conditions: []capability.Condition{
+					// 10.10.0.0/16 ⊂ 10.0.0.0/8
+					&capability.IPRangeCondition{CIDRs: []string{"10.10.0.0/16"}},
+				},
+			},
+		},
+		ParentDID:     "did:web:partner.com",
+		AllowCrossOrg: true,
+	})
+	require.NoError(t, err, "child IP range fully within parent must be allowed")
+	assert.Len(t, result.Capabilities, 1)
+}
+
 // --- Metrics Tests ---
 
 func TestMetrics_Registration(t *testing.T) {

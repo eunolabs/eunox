@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,8 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/eunolabs/eunox/pkg/did"
 )
 
 func TestOIDCProviderVerifyToken(t *testing.T) {
@@ -160,22 +163,33 @@ func TestGCPClaimMapping(t *testing.T) {
 
 func TestDIDProviderVerifyToken(t *testing.T) {
 	privateKey, publicJWK := mustRSAJWK(t, "did-key")
-	provider, err := NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:123"}})
+	const issuerDID = "did:example:123"
+
+	// CR-1 fix: resolver supplies the authoritative public key; no embedded JWK is trusted.
+	doc := mustDIDDocFromJWK(t, issuerDID, publicJWK)
+	provider, err := NewDIDProvider(DIDConfig{
+		TrustedDIDs: []string{issuerDID},
+		Resolver:    &testDIDResolver{doc: doc},
+	})
 	require.NoError(t, err)
 
-	token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("jwk"), publicJWK.Public()), &jwt.Claims{
-		Issuer:   "did:example:123",
-		Subject:  "did:example:123",
-		Audience: jwt.Audience{"did:example:verifier"},
-		IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
-		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}, map[string]interface{}{
-		"name": "DID User",
-	})
+	// Token is signed without embedding a JWK in the header — the new secure flow.
+	token := mustSignedToken(t,
+		jose.SigningKey{Algorithm: jose.RS256, Key: privateKey},
+		(&jose.SignerOptions{}).WithType("JWT"),
+		&jwt.Claims{
+			Issuer:   issuerDID,
+			Subject:  issuerDID,
+			Audience: jwt.Audience{"did:example:verifier"},
+			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		}, map[string]interface{}{
+			"name": "DID User",
+		})
 
 	user, err := provider.VerifyToken(context.Background(), token)
 	require.NoError(t, err)
-	assert.Equal(t, "did:example:123", user.Subject)
+	assert.Equal(t, issuerDID, user.Subject)
 	assert.Equal(t, string(ProviderTypeDID), user.Provider)
 }
 
@@ -242,19 +256,25 @@ func TestProviderErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "required scopes")
 	})
 
-	t.Run("did missing embedded key", func(t *testing.T) {
-		didProvider, err := NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:123"}})
+	t.Run("did resolver failure causes verification error", func(t *testing.T) {
+		// CR-1: verification now depends on the resolver; a resolver error must propagate.
+		failResolver := &testDIDResolver{err: errors.New("network timeout")}
+		didProvider, err := NewDIDProvider(DIDConfig{
+			TrustedDIDs: []string{"did:example:123"},
+			Resolver:    failResolver,
+		})
 		require.NoError(t, err)
-		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT"), &jwt.Claims{
-			Issuer:   "did:example:123",
-			Subject:  "did:example:123",
-			Audience: jwt.Audience{"did:example:verifier"},
-			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
-			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		}, nil)
+		token := mustSignedToken(t, jose.SigningKey{Algorithm: jose.RS256, Key: privateKey},
+			(&jose.SignerOptions{}).WithType("JWT"), &jwt.Claims{
+				Issuer:   "did:example:123",
+				Subject:  "did:example:123",
+				Audience: jwt.Audience{"did:example:verifier"},
+				IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+				Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			}, nil)
 		_, err = didProvider.VerifyToken(context.Background(), token)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "embedded JWK")
+		assert.Contains(t, err.Error(), "resolve DID document")
 	})
 }
 
@@ -272,6 +292,10 @@ func TestConstructorsValidateConfig(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = NewDIDProvider(DIDConfig{})
+	require.Error(t, err)
+
+	// Resolver is required — trusted DIDs alone are not sufficient.
+	_, err = NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:123"}})
 	require.Error(t, err)
 }
 
@@ -355,6 +379,46 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return t.base.RoundTrip(clone)
 }
 
+// ─── DID test helpers ───────────────────────────────────────────────────────
+
+// testDIDResolver is a minimal did.Resolver stub for unit tests.
+type testDIDResolver struct {
+	doc *did.Document
+	err error
+}
+
+func (r *testDIDResolver) Resolve(_ context.Context, _ string) (*did.Document, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.doc, nil
+}
+
+// mustDIDDocFromJWK builds a did.Document whose single verification method
+// carries the public part of the supplied jose.JSONWebKey. This lets tests
+// construct DID documents backed by RSA (or any other jose-supported) keys
+// without manually encoding the key material.
+func mustDIDDocFromJWK(t *testing.T, issuerDID string, jwk jose.JSONWebKey) *did.Document {
+	t.Helper()
+	// Marshal the public JWK to JSON and round-trip it through did.JWK so that
+	// extractDIDVerificationKey can deserialise it back via go-jose.
+	b, err := json.Marshal(jwk.Public())
+	require.NoError(t, err)
+	var didJWK did.JWK
+	require.NoError(t, json.Unmarshal(b, &didJWK))
+	return &did.Document{
+		ID: issuerDID,
+		VerificationMethod: []did.VerificationMethod{
+			{
+				ID:           issuerDID + "#key-1",
+				Type:         "JsonWebKey2020",
+				Controller:   issuerDID,
+				PublicKeyJwk: &didJWK,
+			},
+		},
+	}
+}
+
 // ─── Finding 2: http.DefaultClient replaced with timeout-configured client ───
 
 // TestNewHTTPJWKSClient_NilClientUsesTimeout verifies that passing a nil
@@ -377,6 +441,50 @@ func TestNewHTTPJWKSClient_ExplicitClientPreserved(t *testing.T) {
 	require.NotNil(t, jwksClient)
 	assert.Equal(t, 42*time.Second, jwksClient.httpClient.Timeout,
 		"caller-supplied client timeout must not be overridden")
+}
+
+// TestDIDProvider_EmbeddedJWKBypassRejected is the CR-1 regression test.
+//
+// An attacker generates an arbitrary keypair, embeds the public half in the
+// token's JOSE "jwk" header, signs the payload with the matching private key,
+// and sets iss to a DID that appears in the trusted-DID allowlist. Under the
+// old code, parsed.Claims(header.JSONWebKey.Key, …) would accept the token
+// because the signature is valid — the key pair is self-consistent. Under the
+// fixed code, the resolver is consulted and the attacker's key is NOT in the
+// DID document, so verification must fail.
+func TestDIDProvider_EmbeddedJWKBypassRejected(t *testing.T) {
+	_, legitimateJWK := mustRSAJWK(t, "legitimate-key")
+	attackerKey, attackerJWK := mustRSAJWK(t, "attacker-key")
+
+	const victimDID = "did:example:victim"
+
+	// DID document contains only the legitimate key — NOT the attacker's key.
+	doc := mustDIDDocFromJWK(t, victimDID, legitimateJWK)
+	provider, err := NewDIDProvider(DIDConfig{
+		TrustedDIDs: []string{victimDID},
+		Resolver:    &testDIDResolver{doc: doc},
+	})
+	require.NoError(t, err)
+
+	// Attacker crafts a token: signed with their own private key and the matching
+	// public key embedded in the JOSE header as "jwk" — the classic CR-1 exploit.
+	attackerToken := mustSignedToken(t,
+		jose.SigningKey{Algorithm: jose.RS256, Key: attackerKey},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("jwk"), attackerJWK.Public()),
+		&jwt.Claims{
+			Issuer:   victimDID, // claims to be the trusted org
+			Subject:  victimDID,
+			Audience: jwt.Audience{"did:example:verifier"},
+			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		}, map[string]interface{}{"roles": []string{"admin"}})
+
+	// The resolver returns the legitimate key; the attacker's embedded JWK is
+	// never consulted. The signature does not verify against any key in the
+	// document → the token is rejected.
+	_, err = provider.VerifyToken(context.Background(), attackerToken)
+	require.Error(t, err, "attacker-signed token must be rejected (CR-1 closed)")
+	assert.Contains(t, err.Error(), "signature does not match")
 }
 
 // TestNewOIDCProvider_NilClientUsesDefaultTimeout verifies that NewOIDCProvider

@@ -20,6 +20,7 @@ import (
 	"github.com/eunolabs/eunox/internal/issuer/policy"
 	"github.com/eunolabs/eunox/pkg/config"
 	"github.com/eunolabs/eunox/pkg/crypto"
+	"github.com/eunolabs/eunox/pkg/did"
 	"github.com/eunolabs/eunox/pkg/identity"
 	"github.com/eunolabs/eunox/pkg/observability"
 	"github.com/eunolabs/eunox/pkg/ratelimit"
@@ -360,7 +361,21 @@ func buildIdentityVerifier(cfg *config.IssuerConfig, logger *slog.Logger) (ident
 		if cfg.IssuerDID != "" {
 			trustedDIDs = append(trustedDIDs, cfg.IssuerDID)
 		}
-		return identity.NewDIDProvider(identity.DIDConfig{TrustedDIDs: trustedDIDs})
+		// CR-1 fix: resolve DID documents from authoritative sources rather than
+		// trusting the self-asserted JWK embedded in the token's JOSE header.
+		didResolver := did.NewCachingResolver(
+			did.NewMultiResolver(map[string]did.Resolver{
+				"web": did.NewWebResolver(),
+				"ion": did.NewIONResolver(),
+				"key": did.NewKeyResolver(),
+			}),
+			did.WithCacheTTL(5*time.Minute),
+			did.WithStaleWindow(time.Minute),
+		)
+		return identity.NewDIDProvider(identity.DIDConfig{
+			TrustedDIDs: trustedDIDs,
+			Resolver:    didResolver,
+		})
 	default:
 		logger.Warn("unknown identity provider, using OIDC",
 			slog.String("provider", string(cfg.IdentityProvider)),

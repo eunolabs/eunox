@@ -6,6 +6,7 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -512,7 +513,12 @@ func TestDIDProvider_UntrustedDID(t *testing.T) {
 	t.Parallel()
 
 	privateKey, publicJWK := mustRSAJWK(t, "did-untrusted-key")
-	provider, err := NewDIDProvider(DIDConfig{TrustedDIDs: []string{"did:example:trusted"}})
+	// CR-1 fix: Resolver is now required. The resolver is never called for
+	// untrusted DIDs (the allowlist check fires first), so a no-op stub suffices.
+	provider, err := NewDIDProvider(DIDConfig{
+		TrustedDIDs: []string{"did:example:trusted"},
+		Resolver:    &testDIDResolver{err: errors.New("should not be called")},
+	})
 	require.NoError(t, err)
 
 	token := mustSignedToken(t,
