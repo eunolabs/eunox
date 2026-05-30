@@ -38,11 +38,15 @@ import (
 )
 
 const (
-	proxyName    = "eunox-mcp-proxy"
-	proxyVersion = "0.1.0"
+	proxyName = "eunox-mcp-proxy"
 
 	mcpProtocolVersion = "2025-11-25"
 )
+
+// proxyVersion is the version string reported in MCP initialize responses.
+// It is kept in sync with the top-level version var (set via ldflags at build
+// time) via the package init function in main.go.
+var proxyVersion = "dev"
 
 // StdioProxy proxies MCP messages between the host (stdin/stdout) and an
 // upstream MCP server subprocess, applying PDP enforcement to tools/call.

@@ -13,6 +13,7 @@
 //	kill           Send a kill-switch signal to a running HTTP proxy.
 //	validate-token Verify HMAC signatures in the audit log.
 //	stats          Print a denial histogram from the audit log.
+//	version        Print the binary version and exit.
 
 package main
 
@@ -38,6 +39,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// REL-03: version is set at build time via -ldflags "-X main.version=<tag>".
+// The default "dev" value is used for local / CI builds without a tag.
+// goreleaser injects the semver tag automatically via its ldflags stanza.
+var version = "dev"
+
+func init() {
+	// Keep proxyVersion (reported in MCP initialize responses) in sync with the
+	// build-time version injected by -ldflags.
+	proxyVersion = version
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -56,6 +68,8 @@ func main() {
 		cmdStats()
 	case "profiles":
 		cmdProfiles()
+	case "version", "--version", "-version":
+		cmdVersion()
 	case "--help", "-h", "help":
 		printUsage()
 	default:
@@ -64,8 +78,13 @@ func main() {
 	}
 }
 
+// cmdVersion prints the build version and exits.
+func cmdVersion() {
+	fmt.Printf("eunox-mcp version %s\n", version)
+}
+
 func printUsage() {
-	fmt.Fprint(os.Stderr, `eunox-mcp — MCP policy-enforcement proxy
+	fmt.Fprintf(os.Stderr, `eunox-mcp — MCP policy-enforcement proxy (%s)
 
 Usage:
   eunox-mcp proxy   [flags] -- <command> [args...]        local subprocess upstream
@@ -75,6 +94,7 @@ Usage:
   eunox-mcp validate-token [flags]
   eunox-mcp stats   [flags]
   eunox-mcp profiles [<name>]
+  eunox-mcp version
 
 Subcommands:
   proxy           Start the proxy (default: stdio transport).
@@ -83,9 +103,10 @@ Subcommands:
   validate-token  Verify HMAC signatures in the local audit log.
   stats           Print a denial count histogram from the audit log.
   profiles        List built-in server profiles (or show tools for one profile).
+  version         Print the binary version and exit.
 
 Run 'eunox-mcp <subcommand> --help' for per-command flags.
-`)
+`, version)
 }
 
 // -----------------------------------------------------------------
@@ -116,6 +137,7 @@ Flags:
 	unsafeBindAll := fs.Bool("unsafe-bind-all", false, "Allow binding to all interfaces (HTTP transport only).")
 	policyFiles := stringSliceFlag(fs, "policy", "Path to a capability manifest YAML/JSON file (repeatable).")
 	auditLog := fs.String("audit-log", "", "Path to the OCSF audit JSONL file (default: ~/.eunox/audit.jsonl).")
+	auditKeyPath := fs.String("audit-key-path", "", "Path to the HMAC signing key for the audit log (default: ~/.eunox/audit.key).\nOverrides EUNOX_AUDIT_KEY_PATH environment variable.")
 	auditRotateSize := fs.Int64("audit-rotate-size", 0, "Rotate the audit log when it reaches this size in bytes (default: 100 MiB).")
 	sessionID := fs.String("session-id", "", "Session ID to use (default: random UUID).")
 	shutdownTimeout := fs.Int("shutdown-timeout", 5000, "Milliseconds to wait for graceful upstream shutdown before SIGKILL.")
@@ -242,6 +264,16 @@ Flags:
 		ks = ksRedis
 	}
 
+	// SEC-05: warn loudly when no policy is configured so operators are not
+	// accidentally running in allow-all mode without knowing it.
+	if len(*policyFiles) == 0 && *jwksURI == "" {
+		fmt.Fprintf(os.Stderr,
+			"[eunox-mcp] WARNING: no --policy or --jwks-uri configured — "+
+				"ALL tool calls will be ALLOWED without policy enforcement. "+
+				"Pass --policy <manifest.yaml> to enable enforcement.\n",
+		)
+	}
+
 	// Load manifest(s).
 	var pdp PolicyDecisionPoint
 	if len(*policyFiles) > 0 {
@@ -276,7 +308,7 @@ Flags:
 	var sink *auditSink
 	if *auditLog != "" || true { // always open audit sink (uses default path if empty)
 		var err error
-		sink, err = openAuditSink(*auditLog, *auditRotateSize)
+		sink, err = openAuditSink(*auditLog, *auditKeyPath, *auditRotateSize)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Warning: could not open audit log: %v\n", err)
 			sink = nil
@@ -478,6 +510,7 @@ Flags:
 		fs.PrintDefaults()
 	}
 	auditLogPath := fs.String("audit-log", "", "Path to the audit JSONL log (default: ~/.eunox/audit.jsonl).")
+	auditKeyPath := fs.String("audit-key-path", "", "Path to the HMAC signing key for the audit log (default: ~/.eunox/audit.key).\nOverrides EUNOX_AUDIT_KEY_PATH environment variable.")
 	requestID := fs.String("request-id", "", "Verify only the record with this request ID.")
 	since := fs.String("since", "", "Verify only records after this RFC3339 timestamp.")
 
@@ -491,8 +524,16 @@ Flags:
 	}
 	logPath = expandHome(logPath)
 
-	keyPath := expandHome(defaultAuditKeyPath)
-	key, err := loadOrCreateAuditKey(keyPath)
+	// REL-04: resolve key path from flag > env var > default.
+	keyPath := *auditKeyPath
+	if keyPath == "" {
+		if env := os.Getenv("EUNOX_AUDIT_KEY_PATH"); env != "" {
+			keyPath = env
+		} else {
+			keyPath = defaultAuditKeyPath
+		}
+	}
+	key, err := loadOrCreateAuditKey(expandHome(keyPath))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eunox-mcp validate-token: loading audit key: %v\n", err)
 		os.Exit(1)
