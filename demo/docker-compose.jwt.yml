@@ -21,7 +21,7 @@ services:
       - --policy=/demo/manifest.yaml
       - --audit-log=/audit/audit.jsonl
       - --jwks-uri=http://keycloak:8080/realms/eunox-demo/protocol/openid-connect/certs
-      - --jwt-issuer=http://keycloak:8080/realms/eunox-demo
+      - --jwt-issuer=http://localhost:8081/realms/eunox-demo
       - --jwt-audience=eunox
     depends_on:
       keycloak:
