@@ -17,7 +17,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /opa-cmp-server \
     ./demo/opa-comparison/server/
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.21
+# Add a non-root user so we don't run as root in the container.
+RUN addgroup -S nonroot && adduser -S -G nonroot nonroot
 COPY --from=builder /opa-cmp-server /opa-cmp-server
+USER nonroot
 EXPOSE 9090
 ENTRYPOINT ["/opa-cmp-server"]

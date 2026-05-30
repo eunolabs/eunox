@@ -43,7 +43,7 @@ services:
   #   curl -s http://localhost:8181/v1/data/scenario1/allow \
   #     -d '{"input":{"tool":"read_credentials"}}' -H 'Content-Type: application/json'
   opa:
-    image: openpolicyagent/opa:0.70.0-static
+    image: openpolicyagent/opa:0.70.0-debug
     command:
       - run
       - --server
