@@ -1,0 +1,30 @@
+server: git
+description: "@modelcontextprotocol/server-git — local Git repository operations"
+tools:
+  # Read-only
+  git_status: read
+  git_log: read
+  git_show: read
+  git_diff: read
+  git_diff_unstaged: read
+  git_diff_staged: read
+  git_fetch: read
+  git_describe: read
+  # Write (index / history mutations)
+  git_add: write
+  git_commit: write
+  git_reset: write
+  git_stash: write
+  git_stash_pop: write
+  git_merge: write
+  git_rebase: write
+  git_cherry_pick: write
+  git_pull: write
+  git_push: write
+  git_tag: write
+  git_create_branch: write
+  git_delete_branch: delete
+  git_init: write
+  git_clone: write
+  # Execute (changes HEAD / working directory state)
+  git_checkout: execute

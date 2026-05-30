@@ -1,0 +1,36 @@
+server: linear
+description: "Linear — project and issue tracking (linear-mcp-server)"
+tools:
+  # Issues
+  get_issue: read
+  list_issues: read
+  search_issues: read
+  create_issue: write
+  update_issue: write
+  delete_issue: delete
+  assign_issue: write
+  # Comments
+  list_comments: read
+  create_comment: write
+  update_comment: write
+  delete_comment: delete
+  # Projects
+  list_projects: read
+  get_project: read
+  create_project: write
+  update_project: write
+  archive_project: write
+  # Teams
+  list_teams: read
+  get_team: read
+  # Cycles (sprints)
+  list_cycles: read
+  get_cycle: read
+  # Labels
+  list_labels: read
+  create_label: write
+  # Users
+  list_users: read
+  get_user: read
+  # Workflow states
+  list_workflow_states: read

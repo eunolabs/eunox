@@ -1,0 +1,42 @@
+server: jira
+description: "Jira — issue tracking and project management (Atlassian MCP)"
+tools:
+  # Issues
+  get_issue: read
+  search_issues: read
+  list_issues: read
+  create_issue: write
+  update_issue: write
+  delete_issue: delete
+  assign_issue: write
+  transition_issue: write
+  # Comments
+  list_comments: read
+  add_comment: write
+  update_comment: write
+  delete_comment: delete
+  # Attachments
+  list_attachments: read
+  add_attachment: write
+  delete_attachment: delete
+  # Projects
+  list_projects: read
+  get_project: read
+  create_project: write
+  update_project: write
+  # Boards and sprints
+  list_boards: read
+  get_board: read
+  list_sprints: read
+  get_sprint: read
+  create_sprint: write
+  update_sprint: write
+  start_sprint: write
+  close_sprint: write
+  # Users
+  list_users: read
+  get_user: read
+  search_users: read
+  # Labels / components
+  list_labels: read
+  list_components: read

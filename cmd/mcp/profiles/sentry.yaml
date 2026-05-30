@@ -1,0 +1,35 @@
+server: sentry
+description: "Sentry — error monitoring and issue triage (Sentry MCP)"
+tools:
+  # Issues
+  get_issue: read
+  list_issues: read
+  search_issues: read
+  update_issue: write
+  resolve_issue: write
+  ignore_issue: write
+  assign_issue: write
+  delete_issue: delete
+  # Events
+  get_event: read
+  list_events: read
+  get_latest_event: read
+  # Organizations and projects
+  get_organization: read
+  list_organizations: read
+  list_projects: read
+  get_project: read
+  list_teams: read
+  # Stats and metrics
+  get_error_counts: read
+  get_project_stats: read
+  # Releases
+  list_releases: read
+  get_release: read
+  create_release: write
+  # Alerts
+  list_alert_rules: read
+  get_alert_rule: read
+  create_alert_rule: write
+  update_alert_rule: write
+  delete_alert_rule: delete

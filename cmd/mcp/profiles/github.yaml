@@ -1,0 +1,39 @@
+server: github
+description: "@modelcontextprotocol/server-github — GitHub repository and issue management"
+tools:
+  # Repository
+  search_repositories: read
+  get_file_contents: read
+  create_repository: write
+  fork_repository: write
+  # File management
+  create_or_update_file: write
+  push_files: write
+  delete_file: delete
+  # Branches and commits
+  list_branches: read
+  create_branch: write
+  list_commits: read
+  get_commit: read
+  list_tags: read
+  # Issues
+  get_issue: read
+  list_issues: read
+  search_issues: read
+  create_issue: write
+  update_issue: write
+  add_issue_comment: write
+  # Pull requests
+  get_pull_request: read
+  list_pull_requests: read
+  create_pull_request: write
+  merge_pull_request: write
+  update_pull_request: write
+  # Code search
+  search_code: read
+  # Release management
+  create_release: write
+  list_releases: read
+  # Actions / workflow (read)
+  list_workflow_runs: read
+  get_workflow_run: read

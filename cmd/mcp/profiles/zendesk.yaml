@@ -1,0 +1,45 @@
+server: zendesk
+description: "Zendesk — customer support ticket management (Zendesk MCP)"
+tools:
+  # Tickets
+  list_tickets: read
+  get_ticket: read
+  search_tickets: read
+  create_ticket: write
+  update_ticket: write
+  delete_ticket: delete
+  # Comments
+  list_ticket_comments: read
+  add_ticket_comment: write
+  # Users
+  list_users: read
+  get_user: read
+  search_users: read
+  create_user: write
+  update_user: write
+  delete_user: delete
+  # Organizations
+  list_organizations: read
+  get_organization: read
+  create_organization: write
+  update_organization: write
+  delete_organization: delete
+  # Groups
+  list_groups: read
+  get_group: read
+  create_group: write
+  update_group: write
+  delete_group: delete
+  # Macros and triggers (admin)
+  list_macros: read
+  get_macro: read
+  create_macro: admin
+  update_macro: admin
+  delete_macro: admin
+  list_triggers: read
+  # Views
+  list_views: read
+  get_view: read
+  execute_view: read
+  # Satisfaction ratings
+  list_satisfaction_ratings: read
