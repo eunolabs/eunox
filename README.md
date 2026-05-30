@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/eunolabs/eunox/blob/main/site/public/eunolabs.png?raw=true" alt="eunox" height="160">
+  <img src="https://github.com/eunolabs/eunox/blob/main/site/img/eunolabs.png?raw=true" alt="eunox" height="160">
 </p>
 
 <h1 align="center">eunox-mcp</h1>
@@ -104,15 +104,16 @@ capabilities:
     conditions:
       - type: allowedValues
         field: path
-        values: ["/reports/*"]   # deny read_file outside /reports/
+        values: ["/reports/*"] # deny read_file outside /reports/
 
   - resource: query_db
     actions: [call]
     conditions:
       - type: maxCalls
-        limit: 5                 # at most 5 calls per session
+        limit: 5 # at most 5 calls per session
       - type: allowedOperations
-        operations: [SELECT]     # no INSERT / UPDATE / DELETE
+        operations: [SELECT] # no INSERT / UPDATE / DELETE
+
 
   # write_file intentionally absent → denied by default
 ```
@@ -131,11 +132,11 @@ See [`docs/capability-manifest-guide.md`](./docs/capability-manifest-guide.md) f
 
 OPA and Envoy enforce access control at the HTTP layer — they see the HTTP request but have no concept of the session, what the agent has already done this session, or what individual tool arguments mean. Three failure modes they cannot address:
 
-| Scenario | OPA / Envoy | eunox-mcp |
-|---|---|---|
-| **Sequential credential exfiltration** — agent calls `read_credentials` then `write_to_external`. Each call is individually permitted; together they exfiltrate secrets. | Both calls pass — no session context | Second call blocked by session-aware policy |
+| Scenario                                                                                                                                                                   | OPA / Envoy                           | eunox-mcp                                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| **Sequential credential exfiltration** — agent calls `read_credentials` then `write_to_external`. Each call is individually permitted; together they exfiltrate secrets.   | Both calls pass — no session context  | Second call blocked by session-aware policy                                  |
 | **Parameter-dependent authorization at scale** — `read_file` allowed for `/reports/*`, blocked for `/internal/*`. Must be expressed per-parameter across every tool shape. | Complex Rego; rules multiply per tool | `allowedValues` condition: 3 lines per tool, all enforced by the same engine |
-| **Task-lifecycle credential scope** — AWS STS minimum session is 15 minutes. A credential-reading tool should be callable once per task, not for the full token lifetime. | Time-based expiry only (15 min floor) | `maxCalls: 1` blocks after the first use, regardless of token TTL |
+| **Task-lifecycle credential scope** — AWS STS minimum session is 15 minutes. A credential-reading tool should be callable once per task, not for the full token lifetime.  | Time-based expiry only (15 min floor) | `maxCalls: 1` blocks after the first use, regardless of token TTL            |
 
 Runnable demos for all three scenarios: `demo/opa-comparison/` (coming in T-08).
 
@@ -143,15 +144,15 @@ Runnable demos for all three scenarios: `demo/opa-comparison/` (coming in T-08).
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `eunox-mcp proxy --policy <file> -- <cmd> [args...]` | Start the proxy wrapping a local subprocess (stdio) |
-| `eunox-mcp proxy --transport http --upstream-url <url> --policy <file>` | Start the proxy forwarding to a remote MCP server |
-| `eunox-mcp validate <manifest.yaml>` | Validate a capability manifest without running |
-| `eunox-mcp kill --session <id>` | Immediately revoke an active session |
-| `eunox-mcp stats` | Print per-tool call counts from the audit log |
-| `eunox-mcp validate-token` | Verify HMAC-SHA256 signatures in the audit log |
-| `eunox-mcp profiles` | List built-in server profiles (GitHub, Slack, filesystem, …) |
+| Command                                                                 | Description                                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `eunox-mcp proxy --policy <file> -- <cmd> [args...]`                    | Start the proxy wrapping a local subprocess (stdio)          |
+| `eunox-mcp proxy --transport http --upstream-url <url> --policy <file>` | Start the proxy forwarding to a remote MCP server            |
+| `eunox-mcp validate <manifest.yaml>`                                    | Validate a capability manifest without running               |
+| `eunox-mcp kill --session <id>`                                         | Immediately revoke an active session                         |
+| `eunox-mcp stats`                                                       | Print per-tool call counts from the audit log                |
+| `eunox-mcp validate-token`                                              | Verify HMAC-SHA256 signatures in the audit log               |
+| `eunox-mcp profiles`                                                    | List built-in server profiles (GitHub, Slack, filesystem, …) |
 
 ---
 
@@ -166,9 +167,13 @@ Add this to your `claude_desktop_config.json`:
       "command": "eunox-mcp",
       "args": [
         "proxy",
-        "--policy", "/path/to/manifest.yaml",
+        "--policy",
+        "/path/to/manifest.yaml",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/data"
       ]
     }
   }
