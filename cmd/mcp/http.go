@@ -45,7 +45,8 @@ const (
 )
 
 // HTTPProxy implements the MCP Streamable HTTP transport.
-// Each client session gets its own upstream subprocess.
+// Each client session gets its own upstream subprocess (local mode) or connects
+// to a remote MCP HTTP server (remote mode, enabled by UpstreamURL).
 type HTTPProxy struct {
 	command        string
 	args           []string
@@ -58,6 +59,11 @@ type HTTPProxy struct {
 	trustFwdFor    bool
 	bind           string
 	port           int
+
+	// Remote upstream fields (set when UpstreamURL is non-empty).
+	upstreamURL           string
+	upstreamAuthHeader    string
+	upstreamTLSSkipVerify bool
 
 	mu       sync.Mutex
 	sessions map[string]*httpSession
@@ -76,6 +82,12 @@ type HTTPProxyOptions struct {
 	TrustFwdFor    bool
 	Port           int
 	Bind           string
+
+	// Remote upstream options. When UpstreamURL is non-empty the proxy routes
+	// requests to the named HTTP MCP server instead of spawning a subprocess.
+	UpstreamURL           string // base URL of remote MCP server, e.g. https://mcp.stripe.com
+	UpstreamAuthHeader    string // header line forwarded to upstream, e.g. "Authorization: Bearer sk-..."
+	UpstreamTLSSkipVerify bool   // skip TLS verification (dev only; logs a loud warning)
 }
 
 // NewHTTPProxy creates an HTTPProxy ready to call Serve.
@@ -96,30 +108,40 @@ func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy { //nolint:gocritic // hugeP
 		opts.Port = 3000
 	}
 	return &HTTPProxy{
-		command:        opts.Command,
-		args:           opts.Args,
-		pdp:            opts.PDP,
-		sink:           opts.Sink,
-		ks:             opts.KS,
-		shutdownMs:     opts.ShutdownMs,
-		upstreamTimeMs: opts.UpstreamTimeMs,
-		authToken:      opts.AuthToken,
-		trustFwdFor:    opts.TrustFwdFor,
-		bind:           opts.Bind,
-		port:           opts.Port,
-		sessions:       make(map[string]*httpSession),
+		command:               opts.Command,
+		args:                  opts.Args,
+		pdp:                   opts.PDP,
+		sink:                  opts.Sink,
+		ks:                    opts.KS,
+		shutdownMs:            opts.ShutdownMs,
+		upstreamTimeMs:        opts.UpstreamTimeMs,
+		authToken:             opts.AuthToken,
+		trustFwdFor:           opts.TrustFwdFor,
+		bind:                  opts.Bind,
+		port:                  opts.Port,
+		upstreamURL:           opts.UpstreamURL,
+		upstreamAuthHeader:    opts.UpstreamAuthHeader,
+		upstreamTLSSkipVerify: opts.UpstreamTLSSkipVerify,
+		sessions:              make(map[string]*httpSession),
 	}
 }
 
-// httpSession is one client session with its own upstream subprocess.
+// httpSession is one client session.  In local mode it owns an upstream
+// subprocess; in remote mode it communicates with a remote MCP HTTP server.
 type httpSession struct {
 	id    string
 	proxy *HTTPProxy
 
+	// Local subprocess fields (nil in remote mode).
 	upCmd    *exec.Cmd
 	upIn     io.WriteCloser
 	upWriter *msgWriter
 	upReader *msgReader
+
+	// Remote HTTP upstream fields (nil in local mode).
+	upHTTPClient   *http.Client
+	upstreamURL    string // copy of proxy.upstreamURL; non-empty ⟹ remote mode
+	upstreamSessID string // Mcp-Session-Id returned by the remote upstream
 
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcMsg
@@ -131,7 +153,10 @@ type httpSession struct {
 	notifSubs []chan rpcMsg
 
 	closeOnce sync.Once
-	done      chan struct{} // closed by readUpstream when the upstream exits
+	// done is closed when the session ends.
+	// Local mode: closed by readUpstream() when the subprocess exits.
+	// Remote mode: closed by close().
+	done chan struct{}
 }
 
 // Serve starts the HTTP server and blocks until ctx is cancelled or a fatal
@@ -225,7 +250,15 @@ func (p *HTTPProxy) handleMCPPost(w http.ResponseWriter, r *http.Request) {
 
 	// An initialize request with no session ID creates a new session.
 	if msg.Method == "initialize" && sessionID == "" {
-		sess, err := p.newSession()
+		var (
+			sess *httpSession
+			err  error
+		)
+		if p.upstreamURL != "" {
+			sess, err = p.newRemoteSession(r.Context())
+		} else {
+			sess, err = p.newSession()
+		}
 		if err != nil {
 			http.Error(w, "failed to start upstream: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -250,7 +283,7 @@ func (p *HTTPProxy) handleMCPPost(w http.ResponseWriter, r *http.Request) {
 	// Host notifications are forwarded verbatim (except notifications/initialized).
 	if msg.isNotification() {
 		if msg.Method != "notifications/initialized" {
-			_ = sess.upWriter.Write(msg)
+			sess.forwardNotification(r.Context(), msg)
 		}
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -608,9 +641,19 @@ func (s *httpSession) readUpstream() {
 	}
 }
 
-// callUpstream registers a pending entry, sends msg to the upstream, and waits
-// for the matching response.
+// callUpstream sends msg to the upstream and waits for the response.
+// In remote mode it delegates to callRemoteUpstream; in local (subprocess)
+// mode it uses the stdio framed-JSON pipe.
 func (s *httpSession) callUpstream(ctx context.Context, msg rpcMsg) (rpcMsg, error) { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
+	if s.upstreamURL != "" {
+		return s.callRemoteUpstream(ctx, msg)
+	}
+	return s.callSubprocessUpstream(ctx, msg)
+}
+
+// callSubprocessUpstream registers a pending entry, sends msg to the upstream
+// subprocess via the stdio pipe, and waits for the matching response.
+func (s *httpSession) callSubprocessUpstream(ctx context.Context, msg rpcMsg) (rpcMsg, error) { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
 	key := msgKey(msg.ID)
 	ch := make(chan rpcMsg, 1)
 
@@ -638,14 +681,32 @@ func (s *httpSession) callUpstream(ctx context.Context, msg rpcMsg) (rpcMsg, err
 	}
 }
 
-// close shuts down the upstream subprocess for this session.
+// forwardNotification sends a notification to the upstream.
+// Remote mode: HTTP POST. Local mode: stdio write.
+func (s *httpSession) forwardNotification(ctx context.Context, msg rpcMsg) { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
+	if s.upstreamURL != "" {
+		_, _ = s.callRemoteUpstream(ctx, msg)
+		return
+	}
+	_ = s.upWriter.Write(msg)
+}
+
+// close shuts down the session.
+// Remote mode: signals the done channel directly (no subprocess).
+// Local mode: closes the subprocess stdin pipe and waits for it to exit,
+// sending SIGKILL after shutdownMs milliseconds if it has not.
 func (s *httpSession) close(shutdownMs int) {
 	s.closeOnce.Do(func() {
+		if s.upstreamURL != "" {
+			// Remote mode: no subprocess to kill.
+			close(s.done)
+			return
+		}
 		_ = s.upIn.Close()
 		select {
 		case <-s.done:
 		case <-time.After(time.Duration(shutdownMs) * time.Millisecond):
-			if s.upCmd.Process != nil {
+			if s.upCmd != nil && s.upCmd.Process != nil {
 				_ = s.upCmd.Process.Kill()
 			}
 			<-s.done

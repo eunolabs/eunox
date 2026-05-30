@@ -68,7 +68,8 @@ func printUsage() {
 	fmt.Fprint(os.Stderr, `eunox-mcp — MCP policy-enforcement proxy
 
 Usage:
-  eunox-mcp proxy   [flags] -- <command> [args...]
+  eunox-mcp proxy   [flags] -- <command> [args...]        local subprocess upstream
+  eunox-mcp proxy   --transport http --upstream-url <url> remote MCP server
   eunox-mcp validate <manifest.yaml> [...]
   eunox-mcp kill    [--port N] [--host H] <session-id|all>
   eunox-mcp validate-token [flags]
@@ -94,10 +95,15 @@ Run 'eunox-mcp <subcommand> --help' for per-command flags.
 func cmdProxy() {
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: eunox-mcp proxy [flags] -- <command> [args...]
+		fmt.Fprint(os.Stderr, `Usage:
+  eunox-mcp proxy [flags] -- <command> [args...]   local subprocess upstream
+  eunox-mcp proxy [flags] --upstream-url <url>      remote HTTP upstream
 
-Start the MCP policy-enforcement proxy.  The upstream MCP server is launched as
-a subprocess; its command and arguments follow the '--' separator.
+Start the MCP policy-enforcement proxy.
+
+Upstream modes (exactly one required):
+  Local:  pass the upstream command after '--'. The proxy spawns it as a subprocess.
+  Remote: pass --upstream-url pointing at a running MCP HTTP server. No subprocess.
 
 Flags:
 `)
@@ -119,7 +125,12 @@ Flags:
 	serverProfile := fs.String("server", "", fmt.Sprintf("Built-in server profile for semantic action resolution (e.g. github, slack, filesystem).\nAvailable: %s", strings.Join(ListBuiltinProfiles(), ", ")))
 	actionMapFile := fs.String("action-map", "", "Path to a YAML/JSON file mapping tool names to action categories (read/write/delete/execute/admin).\nTakes priority over --server when both are supplied.")
 
-	// Find the '--' separator to split proxy flags from the upstream command.
+	// Remote upstream flags (HTTP transport only).
+	upstreamURL := fs.String("upstream-url", "", "Base URL of a remote MCP HTTP server (e.g. https://mcp.stripe.com).\nWhen set, the proxy forwards requests to this server instead of spawning a subprocess.\nRequires --transport http. Mutually exclusive with '-- <command>'.")
+	upstreamAuthHeader := fs.String("upstream-auth-header", "", `Header forwarded to the remote upstream on every request, in "Name: Value" format.\nExample: --upstream-auth-header "Authorization: Bearer sk-..."`)
+	upstreamTLSSkipVerify := fs.Bool("upstream-tls-skip-verify", false, "Skip TLS certificate verification for the remote upstream (development only).")
+
+	// Find the optional '--' separator between proxy flags and the upstream command.
 	allArgs := os.Args[2:]
 	ddIdx := -1
 	for i, a := range allArgs {
@@ -128,20 +139,43 @@ Flags:
 			break
 		}
 	}
-	if ddIdx < 0 {
-		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: missing '--' separator before upstream command\n\nUsage: eunox-mcp proxy [flags] -- <command> [args...]\n")
+
+	var flagArgs, upstreamAll []string
+	if ddIdx >= 0 {
+		flagArgs = allArgs[:ddIdx]
+		upstreamAll = allArgs[ddIdx+1:]
+	} else {
+		flagArgs = allArgs
+	}
+
+	if err := fs.Parse(flagArgs); err != nil {
 		os.Exit(1)
 	}
-	upstreamAll := allArgs[ddIdx+1:]
-	if len(upstreamAll) == 0 {
+
+	// Determine upstream mode and validate flags.
+	hasRemoteURL := *upstreamURL != ""
+	hasLocalCmd := len(upstreamAll) > 0
+
+	switch {
+	case hasRemoteURL && hasLocalCmd:
+		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: --upstream-url and '-- <command>' are mutually exclusive\n")
+		os.Exit(1)
+	case !hasRemoteURL && !hasLocalCmd:
+		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: upstream is required: either --upstream-url or '-- <command>'\n\nUsage: eunox-mcp proxy [flags] -- <command> [args...]\n       eunox-mcp proxy --transport http --upstream-url <url> [flags]\n")
+		os.Exit(1)
+	case hasRemoteURL && *transport != "http":
+		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: --upstream-url requires --transport http\n")
+		os.Exit(1)
+	case hasLocalCmd && len(upstreamAll) == 0:
 		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: no upstream command after '--'\n")
 		os.Exit(1)
 	}
-	upstreamCmd := upstreamAll[0]
-	upstreamArgs := upstreamAll[1:]
 
-	if err := fs.Parse(allArgs[:ddIdx]); err != nil {
-		os.Exit(1)
+	var upstreamCmd string
+	var upstreamArgs []string
+	if hasLocalCmd {
+		upstreamCmd = upstreamAll[0]
+		upstreamArgs = upstreamAll[1:]
 	}
 
 	// Validate transport.
@@ -248,6 +282,9 @@ Flags:
 		if *trustFwdFor {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] WARNING: --trust-forwarded-for is enabled; only use when a trusted reverse proxy sets X-Forwarded-For.\n")
 		}
+		if *upstreamTLSSkipVerify {
+			fmt.Fprintf(os.Stderr, "[eunox-mcp] WARNING: --upstream-tls-skip-verify is enabled. TLS certificate verification is DISABLED. Do NOT use in production.\n")
+		}
 		var ks killswitch.Manager
 		if mp, ok := pdp.(*ManifestPDP); ok {
 			ks = mp.ks
@@ -255,17 +292,20 @@ Flags:
 			ks = killswitch.NewInMemory()
 		}
 		proxy := NewHTTPProxy(HTTPProxyOptions{
-			Command:        upstreamCmd,
-			Args:           upstreamArgs,
-			PDP:            pdp,
-			Sink:           sink,
-			KS:             ks,
-			ShutdownMs:     *shutdownTimeout,
-			UpstreamTimeMs: *upstreamTimeout,
-			AuthToken:      *authToken,
-			TrustFwdFor:    *trustFwdFor,
-			Port:           *port,
-			Bind:           *bind,
+			Command:               upstreamCmd,
+			Args:                  upstreamArgs,
+			PDP:                   pdp,
+			Sink:                  sink,
+			KS:                    ks,
+			ShutdownMs:            *shutdownTimeout,
+			UpstreamTimeMs:        *upstreamTimeout,
+			AuthToken:             *authToken,
+			TrustFwdFor:           *trustFwdFor,
+			Port:                  *port,
+			Bind:                  *bind,
+			UpstreamURL:           *upstreamURL,
+			UpstreamAuthHeader:    *upstreamAuthHeader,
+			UpstreamTLSSkipVerify: *upstreamTLSSkipVerify,
 		})
 		if err := proxy.Serve(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
