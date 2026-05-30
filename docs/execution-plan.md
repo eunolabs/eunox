@@ -276,7 +276,7 @@ Currently `cmd/mcp/` is listed sixth in the services table below five BUSL-licen
 ---
 
 ### T-07 · Threat model document
-**Effort:** 2 days · **Priority:** P0 · **Depends on:** nothing (write in parallel)
+**Effort:** 2 days · **Priority:** P0 · **Depends on:** nothing (write in parallel) · **Status: ✅ DONE**
 
 Without this, security review at any enterprise stalls before it reaches an architect. This document unblocks the entire enterprise sales motion.
 
@@ -303,6 +303,8 @@ Without this, security review at any enterprise stalls before it reaches an arch
 5. **Data handling:** what appears in audit records (tool name, arguments, decision, session ID), what redaction covers (`RedactFields` condition), what never leaves the local machine in default config
 
 6. **Current state:** no third-party security audit yet. Planned post-Stage 2. Be honest.
+
+**Verified:** All six required sections implemented in `docs/threat-model-mcp.md`. Trust boundaries grounded in JWKS validation code (`cmd/mcp/pdp_jwt.go`), audit HMAC implementation (`cmd/mcp/audit.go`), and enforcement engine integration (`cmd/mcp/pdp.go`). Failure modes document the explicit audit-log-failure-continues tradeoff. Known limitations table is honest about session binding gap and X-Forwarded-For trust flag.
 
 ---
 
@@ -370,7 +372,7 @@ All of the following must be true before Stage 2 begins:
 - [x] Dry-run mode exposed as `--dry-run` CLI flag
 - [x] Demo setup completes in under 10 minutes on a cold machine, validated by someone other than the author
 - [ ] OPA/Envoy failure demo is publicly runnable
-- [ ] Threat model published at `docs/threat-model.md`
+- [x] Threat model published at `docs/threat-model-mcp.md`
 - [ ] Audit log schema has not changed for 2 consecutive weeks
 - [ ] 3 production or active staging deployments running
 - [ ] At least one capability claim pattern or policy condition discovered from real traffic that wasn't anticipated at design time
