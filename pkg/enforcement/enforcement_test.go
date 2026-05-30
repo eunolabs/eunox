@@ -1111,6 +1111,37 @@ func TestEngine_AllowedValues_Allow(t *testing.T) {
 			values:   []interface{}{nil, "all"},
 			args:     map[string]interface{}{"filter": nil},
 		},
+		// Glob patterns — path.Match semantics.
+		{
+			name:     "glob slash-star matches file under directory",
+			argument: "path",
+			values:   []interface{}{"/reports/*"},
+			args:     map[string]interface{}{"path": "/reports/q3.pdf"},
+		},
+		{
+			name:     "glob star-dot-ext matches extension",
+			argument: "path",
+			values:   []interface{}{"*.pdf"},
+			args:     map[string]interface{}{"path": "report.pdf"},
+		},
+		{
+			name:     "glob question-mark matches single char",
+			argument: "env",
+			values:   []interface{}{"prod-?"},
+			args:     map[string]interface{}{"env": "prod-1"},
+		},
+		{
+			name:     "glob mixed with exact: exact value wins before reaching glob",
+			argument: "path",
+			values:   []interface{}{"/reports/q3.pdf", "/reports/*"},
+			args:     map[string]interface{}{"path": "/reports/q3.pdf"},
+		},
+		{
+			name:     "glob with prefix wildcard",
+			argument: "service",
+			values:   []interface{}{"aws-*"},
+			args:     map[string]interface{}{"service": "aws-prod"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1163,6 +1194,90 @@ func TestEngine_AllowedValues_Deny(t *testing.T) {
 	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 	require.NotNil(t, resp.Denial)
 	assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedValues_GlobDeny(t *testing.T) {
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		argument string
+		values   []interface{}
+		args     map[string]interface{}
+	}{
+		{
+			name:     "glob no match: path outside directory",
+			argument: "path",
+			values:   []interface{}{"/reports/*"},
+			args:     map[string]interface{}{"path": "/internal/secret.txt"},
+		},
+		{
+			name:     "glob no match: subdirectory not matched by single star",
+			argument: "path",
+			values:   []interface{}{"/reports/*"},
+			args:     map[string]interface{}{"path": "/reports/sub/file.txt"},
+		},
+		{
+			name:     "glob no match: extension mismatch",
+			argument: "path",
+			values:   []interface{}{"*.pdf"},
+			args:     map[string]interface{}{"path": "report.csv"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := capability.EnforceRequest{
+				SessionID: "sess-1",
+				ToolName:  "tool",
+				Arguments: tt.args,
+			}
+			resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+				{
+					Resource: "tool",
+					Actions:  []string{"*"},
+					Conditions: []capability.Condition{
+						&capability.AllowedValuesCondition{
+							Argument: tt.argument,
+							Values:   tt.values,
+						},
+					},
+				},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, capability.DecisionDeny, resp.Decision, tt.name)
+			require.NotNil(t, resp.Denial)
+			assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
+		})
+	}
+}
+
+func TestEngine_AllowedValues_MalformedGlobFallsThrough(t *testing.T) {
+	// A malformed glob pattern (path.ErrBadPattern) must not cause an error —
+	// it should fall through to the next value and ultimately deny.
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Arguments: map[string]interface{}{"path": "/reports/q3.pdf"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{
+					Argument: "path",
+					Values:   []interface{}{"[bad-pattern"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 }
 
 // path.Match glob semantics tests.
