@@ -164,19 +164,41 @@ eunox-mcp proxy --dry-run --policy manifest.yaml -- node ./server.js
 ---
 
 ### T-04 · Redis-backed session state (optional upgrade)
-**Effort:** 2–3 days · **Priority:** P1 · **Depends on:** T-01
+**Effort:** 2–3 days · **Priority:** P1 · **Depends on:** T-01 · **Status: ✅ DONE**
 
 In-memory state means session context is lost on restart and doesn't survive across multiple proxy instances. For single-instance local deployments this is fine. For anything that needs persistence or horizontal scale it isn't.
 
-The interfaces are already correct — `callcounter.Store` and `killswitch.Manager` are both interface-driven. The gateway already has Redis implementations. Extract them.
+The interfaces are already correct — `callcounter.Store` and `killswitch.Manager` are both interface-driven. The gateway already has Redis implementations in `pkg/callcounter/redis.go` and `pkg/killswitch/redis.go` — task was purely wiring them into `cmd/mcp/main.go`.
 
 **Steps:**
-1. Extract `RedisCallCounter` from `cmd/gateway/` into `pkg/callcounter/redis.go`
-2. Extract `RedisKillSwitch` from `cmd/gateway/` or `internal/` into `pkg/killswitch/redis.go`
-3. In `cmdProxy()`: when `--redis-addr` is set, wire Redis implementations; when absent, fall back to current in-memory implementations (existing behavior, no breaking change)
-4. Add optional `--redis-addr`, `--redis-password`, `--redis-tls` flags
+1. ✅ `pkg/callcounter/redis.go` and `pkg/killswitch/redis.go` already existed fully implemented
+2. ✅ Add `cmd/mcp/redis.go` — `buildRedisClient` (host:port params) and `pingRedis` with startup error messaging
+3. ✅ In `cmdProxy()`: pre-create `counter` and `ks` before manifest loading; when `--redis-addr` is set, replace defaults with Redis implementations; `ksRedis.Start(ctx)` called after signal setup
+4. ✅ Add optional `--redis-addr`, `--redis-password`, `--redis-tls` flags
 
-**This is optional at MVP** — the proxy works without it. Document the limitation clearly: "In-memory state resets on restart. Use `--redis-addr` for persistent session context."
+**This is optional at MVP** — the proxy works without it. In-memory state resets on restart. Use `--redis-addr` for persistent session context.
+
+**Implementation notes:**
+- `cmd/mcp/redis.go` — `buildRedisClient` (single-node, host:port), `pingRedis`; URL-based factory not used (simpler for proxy MVP)
+- Counter and kill-switch pre-created before manifest loading; fixes prior bug where JWT PDP wrapping ManifestPDP caused HTTP case to fall back to a fresh in-memory kill-switch
+- `ksRedis.Start(ctx)` starts pub/sub goroutine for real-time state propagation; `ks = ksRedis` satisfies `killswitch.Manager` for both ManifestPDP and HTTPProxy
+
+**Invocation:**
+```bash
+# In-memory (default — no Redis required)
+eunox-mcp proxy --transport http --policy manifest.yaml --upstream-url https://mcp.example.com
+
+# Redis-backed (persistent, multi-instance)
+eunox-mcp proxy \
+  --transport http \
+  --policy manifest.yaml \
+  --upstream-url https://mcp.example.com \
+  --redis-addr localhost:6379 \
+  --redis-password secret \
+  --redis-tls
+```
+
+**Verified:** 8 tests in `cmd/mcp/redis_test.go` covering: empty-addr error, successful client construction, TLS config set, password set, ping success/failure, call-counter increment via miniredis, kill-switch session kill and global activate via miniredis. All pass with `-race`.
 
 ---
 
