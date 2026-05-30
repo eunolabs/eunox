@@ -80,7 +80,7 @@ func makeIDPToken(t *testing.T, key testKey, caps []string, iss, aud, sub string
 		Expiry:   jwt.NewNumericDate(exp),
 	}
 	payload := idpJWTPayload{
-		Capabilities: caps,
+		Eunox: eunoxClaimSet{Capabilities: caps},
 	}
 	token, err := jwt.Signed(sig).Claims(stdClaims).Claims(payload).Serialize()
 	if err != nil {
