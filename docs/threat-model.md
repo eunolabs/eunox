@@ -7,6 +7,8 @@
 **Authors:** Eunox Platform Security  
 **Reviewers:** Pending external audit (see §8)
 
+> This document covers the **full eunox enterprise platform** (Capability Issuer, Tool Gateway, control plane, and supporting services). If you are evaluating the **`eunox-mcp` proxy binary** specifically (`cmd/mcp/`), see [threat-model-mcp.md](./threat-model-mcp.md) — it is the primary security reference for that component.
+
 > This document is intended for enterprise security teams, CISOs, and compliance reviewers evaluating eunox for production deployment. It covers trust boundaries, attack classes in and out of scope, failure modes, data sensitivity, and cryptographic design. If you have questions not answered here, open a GitHub issue tagged `security` or email security@eunolabs.com.
 
 ---
