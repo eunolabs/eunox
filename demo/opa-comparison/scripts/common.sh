@@ -13,13 +13,19 @@ OPA_HOST="${OPA_HOST:-http://localhost:8181}"
 # ── colour / formatting ───────────────────────────────────────────────────────
 # Use $'...' ANSI-C quoting so the variables hold the actual ESC byte.
 # Plain `echo` (no -e flag) then renders them correctly in any bash version.
-RED=$'\033[0;31m'
-GRN=$'\033[0;32m'
-YLW=$'\033[0;33m'
-BLU=$'\033[0;34m'
-CYN=$'\033[0;36m'
-BOLD=$'\033[1m'
-RST=$'\033[0m'
+# Colours are suppressed in CI (GitHub Actions sets CI=true), when stdout is
+# not a terminal, or when TERM=dumb.
+if [[ -z "${CI:-}" && -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+  RED=$'\033[0;31m'
+  GRN=$'\033[0;32m'
+  YLW=$'\033[0;33m'
+  BLU=$'\033[0;34m'
+  CYN=$'\033[0;36m'
+  BOLD=$'\033[1m'
+  RST=$'\033[0m'
+else
+  RED='' GRN='' YLW='' BLU='' CYN='' BOLD='' RST=''
+fi
 
 print_header() {
   local title="$1"
