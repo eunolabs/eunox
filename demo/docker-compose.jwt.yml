@@ -1,0 +1,30 @@
+# demo/docker-compose.jwt.yml — overlay that switches eunox-mcp from manifest-only
+# mode into JWT + manifest intersection mode.
+#
+# Usage:
+#   make -C demo up-jwt      (equivalent to docker compose -f docker-compose.yml -f docker-compose.jwt.yml up)
+#
+# In this mode every request to eunox-mcp must carry a Bearer JWT signed by
+# Keycloak.  The JWT's eunox.capabilities claims are intersected with the
+# manifest: the JWT can only restrict, never expand what the manifest allows.
+#
+# Get a test JWT:  make -C demo jwt
+
+services:
+  eunox-mcp:
+    command:
+      - proxy
+      - --transport=http
+      - --bind=0.0.0.0
+      - --unsafe-bind-all
+      - --upstream-url=http://mock-mcp-server:8080
+      - --policy=/demo/manifest.yaml
+      - --audit-log=/audit/audit.jsonl
+      - --jwks-uri=http://keycloak:8080/realms/eunox-demo/protocol/openid-connect/certs
+      - --jwt-issuer=http://keycloak:8080/realms/eunox-demo
+      - --jwt-audience=eunox
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      mock-mcp-server:
+        condition: service_healthy

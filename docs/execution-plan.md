@@ -142,7 +142,7 @@ The interfaces are already correct — `callcounter.Store` and `killswitch.Manag
 ## Sprint 2 — Demo and Developer Experience (Weeks 2–3)
 
 ### T-05 · `demo/` directory — single-command setup
-**Effort:** 3–4 days · **Priority:** P0 · **Depends on:** T-01, T-02
+**Effort:** 3–4 days · **Priority:** P0 · **Depends on:** T-01, T-02 · **Status: ✅ DONE**
 
 The existing `infra/docker-compose.yml` spins up the full 6-service enterprise stack. That's wrong for a first evaluation. Someone cloning the repo for the first time needs to see enforcement working in under 10 minutes.
 
@@ -297,9 +297,9 @@ Run with `k6` or `wrk`. Publish the benchmark script and raw results in `docs/be
 All of the following must be true before Stage 2 begins:
 
 - [x] `--upstream-url` flag ships and is tested against at least one real remote MCP server (Stripe or GitHub MCP)
-- [ ] JWT PDP mode works with Auth0 and Keycloak
-- [ ] Dry-run mode exposed as `--dry-run` CLI flag
-- [ ] Demo setup completes in under 10 minutes on a cold machine, validated by someone other than the author
+- [x] JWT PDP mode works with Auth0 and Keycloak
+- [x] Dry-run mode exposed as `--dry-run` CLI flag
+- [x] Demo setup completes in under 10 minutes on a cold machine, validated by someone other than the author
 - [ ] OPA/Envoy failure demo is publicly runnable
 - [ ] Threat model published at `docs/threat-model.md`
 - [ ] Audit log schema has not changed for 2 consecutive weeks
