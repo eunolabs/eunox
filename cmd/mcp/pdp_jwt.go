@@ -8,12 +8,14 @@
 // claims are translated into capability.Constraint values and evaluated by the
 // enforcement engine on each tools/call.
 //
-// Claim schema:
+// Claim schema (Keycloak and most IdPs nest on dots in claim names):
 //
 //	{
-//	  "eunox.capabilities": ["read_file:/reports/*", "query_db:SELECT"],
-//	  "eunox.task_id":       "task-abc123",
-//	  "eunox.agent_id":      "agent-xyz"
+//	  "eunox": {
+//	    "capabilities": ["read_file:/reports/*", "query_db:SELECT"],
+//	    "task_id":       "task-abc123",
+//	    "agent_id":      "agent-xyz"
+//	  }
 //	}
 //
 // Claim shorthand format:  "<tool>[:<condition>]"
@@ -67,13 +69,24 @@ func jwtClaimsFromContext(ctx context.Context) (*JWTClaims, bool) {
 	return c, ok && c != nil
 }
 
+// eunoxClaimSet holds the eunox-specific fields nested under the "eunox" key.
+// Keycloak's oidc-hardcoded-claim-mapper (and most IdPs) treat dots in a
+// claim.name as path separators, so "eunox.capabilities" is emitted as:
+//
+//	{"eunox": {"capabilities": [...], "task_id": "...", "agent_id": "..."}}
+//
+// rather than as a flat key with a literal dot.
+type eunoxClaimSet struct {
+	Capabilities []string `json:"capabilities"`
+	TaskID       string   `json:"task_id"`
+	AgentID      string   `json:"agent_id"`
+}
+
 // idpJWTPayload is the subset of IdP JWT claims relevant to eunox enforcement.
 // Standard JWT fields (iss, sub, exp, iat, aud) are parsed separately by
 // jwt.Claims; this struct handles only the eunox-specific custom claims.
 type idpJWTPayload struct {
-	Capabilities []string `json:"eunox.capabilities"`
-	TaskID       string   `json:"eunox.task_id"`
-	AgentID      string   `json:"eunox.agent_id"`
+	Eunox eunoxClaimSet `json:"eunox"`
 }
 
 // jwksAlgorithmsIDP lists the algorithms accepted for IdP JWTs.
@@ -310,9 +323,9 @@ func (p *JWTPDP) ValidateToken(ctx context.Context, authHeader string) (context.
 		}
 
 		claims := &JWTClaims{
-			Capabilities: payload.Capabilities,
-			TaskID:       payload.TaskID,
-			AgentID:      payload.AgentID,
+			Capabilities: payload.Eunox.Capabilities,
+			TaskID:       payload.Eunox.TaskID,
+			AgentID:      payload.Eunox.AgentID,
 			Subject:      stdClaims.Subject,
 			Issuer:       stdClaims.Issuer,
 		}
