@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
 	"github.com/eunolabs/eunox/pkg/killswitch"
 	"github.com/google/uuid"
 )
@@ -66,6 +67,8 @@ type HTTPProxy struct {
 	upstreamAuthHeader    string
 	upstreamTLSSkipVerify bool
 
+	dryRun bool // evaluate policies but never block tool calls
+
 	mu       sync.Mutex
 	sessions map[string]*httpSession
 }
@@ -90,6 +93,8 @@ type HTTPProxyOptions struct {
 	UpstreamURL           string // base URL of remote MCP server, e.g. https://mcp.stripe.com
 	UpstreamAuthHeader    string // header line forwarded to upstream, e.g. "Authorization: Bearer sk-..."
 	UpstreamTLSSkipVerify bool   // skip TLS verification (dev only; logs a loud warning)
+
+	DryRun bool // evaluate policies but never block tool calls
 }
 
 // NewHTTPProxy creates an HTTPProxy ready to call Serve.
@@ -125,6 +130,7 @@ func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy { //nolint:gocritic // hugeP
 		upstreamURL:           opts.UpstreamURL,
 		upstreamAuthHeader:    opts.UpstreamAuthHeader,
 		upstreamTLSSkipVerify: opts.UpstreamTLSSkipVerify,
+		dryRun:                opts.DryRun,
 		sessions:              make(map[string]*httpSession),
 	}
 }
@@ -231,11 +237,12 @@ func (p *HTTPProxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	// JWT pre-validation: validate the Bearer token and attach claims to ctx.
 	// Must happen before routing so that all subsequent handlers see the claims.
+	// JWT validation is authentication, not policy — 401 is returned even in dry-run.
 	if p.jwtPDP != nil {
 		ctx, err := p.jwtPDP.ValidateToken(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
 			if p.sink != nil {
-				p.sink.Record("", "", "deny", "JWT_INVALID", "jwt", map[string]interface{}{"error": err.Error()}, nil)
+				p.sink.Record("", "", "deny", "JWT_INVALID", "jwt", map[string]interface{}{"error": err.Error()}, nil, false)
 			}
 			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 			return
@@ -363,13 +370,25 @@ func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, 
 		params.Arguments = map[string]interface{}{}
 	}
 
-	dec := p.pdp.Decide(ctx, sess.id, params.Name, params.Arguments, sourceIP)
+	// In dry-run mode, pass enforcement.WithDryRun so MaxCalls is not counted.
+	decCtx := ctx
+	if p.dryRun {
+		decCtx = enforcement.WithDryRun(ctx)
+	}
+	dec := p.pdp.Decide(decCtx, sess.id, params.Name, params.Arguments, sourceIP)
 	if dec.Decision == capability.DecisionDeny {
 		denial := dec.Denial
 		if p.sink != nil {
-			p.sink.Record(sess.id, params.Name, "deny", denial.Code, denial.ConditionType, denial.Details, nil)
+			p.sink.Record(sess.id, params.Name, "deny", denial.Code, denial.ConditionType, denial.Details, nil, p.dryRun)
 		}
-		return denialResult(msg.ID, params.Name, denial.Code, denial.Message, denial.Details)
+		if !p.dryRun {
+			return denialResult(msg.ID, params.Name, denial.Code, denial.Message, denial.Details)
+		}
+		// Dry-run: log to stderr but do not block.
+		fmt.Fprintf(os.Stderr,
+			"[eunox-mcp] DRY-RUN WARN: tool %q would be denied (%s) — forwarding anyway\n",
+			params.Name, denial.Code,
+		)
 	}
 
 	var (
@@ -393,7 +412,7 @@ func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, 
 			reason = fmt.Sprintf("upstream did not respond within %d ms", p.upstreamTimeMs)
 		}
 		if p.sink != nil {
-			p.sink.Record(sess.id, params.Name, "deny", code, "", nil, nil)
+			p.sink.Record(sess.id, params.Name, "deny", code, "", nil, nil, p.dryRun)
 		}
 		return denialResult(msg.ID, params.Name, code, reason, nil)
 	}
@@ -406,7 +425,7 @@ func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, 
 		oblNames = append(oblNames, ob.Type)
 	}
 	if p.sink != nil {
-		p.sink.Record(sess.id, params.Name, "allow", "", "", nil, oblNames)
+		p.sink.Record(sess.id, params.Name, "allow", "", "", nil, oblNames, p.dryRun)
 	}
 	upResp.ID = msg.ID
 	return upResp

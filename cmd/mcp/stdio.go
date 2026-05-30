@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/eunolabs/eunox/pkg/capability"
+	"github.com/eunolabs/eunox/pkg/enforcement"
 )
 
 const (
@@ -52,7 +53,8 @@ type StdioProxy struct {
 	sink           *auditSink
 	sessionID      string
 	shutdownMs     int
-	upstreamTimeMs int // 0 = no timeout
+	upstreamTimeMs int  // 0 = no timeout
+	dryRun         bool // evaluate policies but never block
 
 	// runtime (set in Start)
 	upCmd    *exec.Cmd
@@ -84,6 +86,7 @@ type StdioProxyOptions struct {
 	SessionID      string
 	ShutdownMs     int
 	UpstreamTimeMs int
+	DryRun         bool // evaluate policies but never block tool calls
 }
 
 // NewStdioProxy creates a StdioProxy ready to call Start.
@@ -102,6 +105,7 @@ func NewStdioProxy(opts StdioProxyOptions) *StdioProxy {
 		sessionID:      opts.SessionID,
 		shutdownMs:     opts.ShutdownMs,
 		upstreamTimeMs: opts.UpstreamTimeMs,
+		dryRun:         opts.DryRun,
 		pending:        make(map[string]chan rpcMsg),
 		hostReader:     newMsgReader(os.Stdin),
 		hostWriter:     newMsgWriter(os.Stdout),
@@ -313,16 +317,28 @@ func (p *StdioProxy) handleToolsCall(ctx context.Context, msg rpcMsg) {
 		params.Arguments = map[string]interface{}{}
 	}
 
-	dec := p.pdp.Decide(ctx, p.sessionID, params.Name, params.Arguments, "")
+	// In dry-run mode, pass enforcement.WithDryRun so MaxCalls is not counted.
+	decCtx := ctx
+	if p.dryRun {
+		decCtx = enforcement.WithDryRun(ctx)
+	}
+	dec := p.pdp.Decide(decCtx, p.sessionID, params.Name, params.Arguments, "")
 
 	if dec.Decision == capability.DecisionDeny {
 		denial := dec.Denial
 		if p.sink != nil {
-			p.sink.Record(p.sessionID, params.Name, "deny", denial.Code, denial.ConditionType, denial.Details, nil)
+			p.sink.Record(p.sessionID, params.Name, "deny", denial.Code, denial.ConditionType, denial.Details, nil, p.dryRun)
 		}
-		resp := denialResult(msg.ID, params.Name, denial.Code, denial.Message, denial.Details)
-		_ = p.hostWriter.Write(resp)
-		return
+		if !p.dryRun {
+			resp := denialResult(msg.ID, params.Name, denial.Code, denial.Message, denial.Details)
+			_ = p.hostWriter.Write(resp)
+			return
+		}
+		// Dry-run: log to stderr but do not block.
+		fmt.Fprintf(os.Stderr,
+			"[eunox-mcp] DRY-RUN WARN: tool %q would be denied (%s) — forwarding anyway\n",
+			params.Name, denial.Code,
+		)
 	}
 
 	// Forward to upstream with optional timeout.
@@ -346,7 +362,7 @@ func (p *StdioProxy) handleToolsCall(ctx context.Context, msg rpcMsg) {
 			reason = fmt.Sprintf("upstream did not respond within %d ms", p.upstreamTimeMs)
 		}
 		if p.sink != nil {
-			p.sink.Record(p.sessionID, params.Name, "deny", code, "", nil, nil)
+			p.sink.Record(p.sessionID, params.Name, "deny", code, "", nil, nil, p.dryRun)
 		}
 		_ = p.hostWriter.Write(denialResult(msg.ID, params.Name, code, reason, nil))
 		return
@@ -362,7 +378,7 @@ func (p *StdioProxy) handleToolsCall(ctx context.Context, msg rpcMsg) {
 		oblNames = append(oblNames, ob.Type)
 	}
 	if p.sink != nil {
-		p.sink.Record(p.sessionID, params.Name, "allow", "", "", nil, oblNames)
+		p.sink.Record(p.sessionID, params.Name, "allow", "", "", nil, oblNames, p.dryRun)
 	}
 	upResp.ID = msg.ID // ensure the response carries the host's original ID
 	_ = p.hostWriter.Write(upResp)
