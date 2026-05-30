@@ -54,9 +54,14 @@ const (
 )
 
 // openAuditSink opens (or creates) the audit log and loads (or generates) the
-// HMAC signing key.  logPath and rotateSizeBytes may be zero values for
-// defaults.
-func openAuditSink(logPath string, rotateSizeBytes int64) (*auditSink, error) {
+// HMAC signing key.  logPath, keyPath, and rotateSizeBytes may be zero values
+// for defaults.
+//
+// REL-04: keyPath is configurable so the signing key can be injected in
+// containerised deployments or when multiple eunox-mcp instances share a host.
+// When keyPath is empty the default (~/.eunox/audit.key) is used, which can
+// also be overridden by the EUNOX_AUDIT_KEY_PATH environment variable.
+func openAuditSink(logPath, keyPath string, rotateSizeBytes int64) (*auditSink, error) {
 	if logPath == "" {
 		logPath = defaultAuditLog
 	}
@@ -66,7 +71,14 @@ func openAuditSink(logPath string, rotateSizeBytes int64) (*auditSink, error) {
 		rotateSizeBytes = defaultRotateSizeBytes
 	}
 
-	key, err := loadOrCreateAuditKey(expandHome(defaultAuditKeyPath))
+	if keyPath == "" {
+		if env := os.Getenv("EUNOX_AUDIT_KEY_PATH"); env != "" {
+			keyPath = env
+		} else {
+			keyPath = defaultAuditKeyPath
+		}
+	}
+	key, err := loadOrCreateAuditKey(expandHome(keyPath))
 	if err != nil {
 		return nil, fmt.Errorf("audit key: %w", err)
 	}
@@ -183,7 +195,10 @@ func (s *auditSink) VerifyRecord(line []byte) (bool, error) {
 	mac := hmac.New(sha256.New, s.key)
 	mac.Write(body)
 	want := "sha256:" + hex.EncodeToString(mac.Sum(nil))
-	return storedHMAC == want, nil
+	// SEC-02: use constant-time comparison to prevent timing side-channel
+	// attacks that could allow an attacker to forge valid HMAC signatures
+	// by measuring response latency byte-by-byte.
+	return hmac.Equal([]byte(storedHMAC), []byte(want)), nil
 }
 
 func (s *auditSink) rotate() {
@@ -208,11 +223,11 @@ func (s *auditSink) rotate() {
 // -----------------------------------------------------------------
 
 func loadOrCreateAuditKey(keyPath string) ([]byte, error) {
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil { //nolint:gosec // G703: keyPath is user-configured via --audit-key-path; taint is intentional
 		return nil, err
 	}
 
-	data, err := os.ReadFile(keyPath) //nolint:gosec // G304: path is the hardcoded default key path expanded from ~/.eunox/audit.key
+	data, err := os.ReadFile(keyPath) //nolint:gosec // G304,G703: path is user-configured audit key location (--audit-key-path or EUNOX_AUDIT_KEY_PATH)
 	if err == nil {
 		key := make([]byte, hex.DecodedLen(len(data)))
 		n, err := hex.Decode(key, data)
@@ -229,7 +244,7 @@ func loadOrCreateAuditKey(keyPath string) ([]byte, error) {
 
 	encoded := make([]byte, hex.EncodedLen(len(key)))
 	hex.Encode(encoded, key)
-	if err := os.WriteFile(keyPath, encoded, 0o600); err != nil {
+	if err := os.WriteFile(keyPath, encoded, 0o600); err != nil { //nolint:gosec // G703: keyPath is user-configured; writing to user-specified location is intentional
 		return nil, fmt.Errorf("writing audit key: %w", err)
 	}
 	return key, nil

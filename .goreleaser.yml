@@ -10,6 +10,34 @@ before:
     - make check-license
 
 builds:
+  # ── eunox-mcp (public, Apache-2.0) ─────────────────────────────────────────
+  # The primary open-source binary.  Builds for 5 platforms including Windows
+  # so Claude Desktop users on all platforms can install via `go install` or
+  # a pre-built release binary.
+  - id: mcp
+    main: ./cmd/mcp
+    binary: eunox-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Exclude the unsupported darwin/arm64 + windows/arm64 combination —
+    # goreleaser will still build linux/arm64 and darwin/arm64.
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  # ── Legacy platform services (BUSL-1.1) ───────────────────────────────────
   - id: gateway
     main: ./cmd/gateway
     binary: eunox-gateway
@@ -112,7 +140,30 @@ builds:
       - -X main.date={{.Date}}
 
 archives:
+  # eunox-mcp archive: include the Apache-2.0 license from cmd/mcp/LICENSE.
+  - id: mcp
+    ids: [mcp]
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "eunox-mcp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: cmd/mcp/LICENSE
+        dst: LICENSE
+      - README.md
+
+  # All other binaries.
   - id: default
+    ids:
+      - gateway
+      - issuer
+      - minter
+      - db-token-svc
+      - storage-grant-svc
+      - posture-emitter
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -123,6 +174,38 @@ archives:
       - docs/deployment.md
 
 dockers:
+  # ── eunox-mcp ───────────────────────────────────────────────────────────────
+  - id: mcp-amd64
+    ids: [mcp]
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+    dockerfile: deploy/docker/Dockerfile.mcp
+    build_flag_templates:
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.title=eunox-mcp"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=TARGETARCH=amd64"
+
+  - id: mcp-arm64
+    ids: [mcp]
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+    dockerfile: deploy/docker/Dockerfile.mcp
+    build_flag_templates:
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.title=eunox-mcp"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=TARGETARCH=arm64"
+
+  # ── Legacy platform services ─────────────────────────────────────────────
   # Gateway
   - id: gateway-amd64
     ids: [gateway]
@@ -286,6 +369,17 @@ dockers:
       - "--build-arg=BINARY={{ .Binary }}"
 
 docker_manifests:
+  # ── eunox-mcp ───────────────────────────────────────────────────────────────
+  - name_template: "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-mcp:latest"
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+
+  # ── Legacy platform services ─────────────────────────────────────────────
   - name_template: "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}"
     image_templates:
       - "ghcr.io/eunolabs/eunox-gateway:{{ .Version }}-amd64"

@@ -5,6 +5,10 @@ name: Docker Publish
 
 # Triggered by semver tags (e.g. v1.2.3). Pre-release tags (e.g. v1.0.0-rc.1)
 # build and push but do NOT update the `latest` / `latest-windows` tags.
+#
+# REL-02: images are pushed to BOTH registries so users can pull from either:
+#   docker pull ghcr.io/eunolabs/eunox-mcp:latest   (documented in README)
+#   docker pull eunolabs/eunox-mcp:latest            (Docker Hub)
 on:
   push:
     tags:
@@ -12,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  packages: write  # required for ghcr.io push
 
 jobs:
   # ── Linux: linux/amd64 + linux/arm64 via BuildKit + QEMU ────────────────────
@@ -35,12 +40,24 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # REL-02: also authenticate to GitHub Container Registry so the image is
+      # available at ghcr.io/eunolabs/eunox-mcp (documented in README).
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Generates tags: 1.2.3 / 1.2 / 1 / latest (skips latest for pre-releases).
+      # Both Docker Hub and ghcr.io receive the same tag set.
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: eunolabs/eunox-mcp
+          images: |
+            eunolabs/eunox-mcp
+            ghcr.io/eunolabs/eunox-mcp
           flavor: |
             latest=auto
           tags: |
@@ -79,13 +96,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Generates tags with a -windows suffix: 1.2.3-windows / 1.2-windows /
       # 1-windows / latest-windows (skips latest-windows for pre-releases).
       - name: Extract image metadata (Windows)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: eunolabs/eunox-mcp
+          images: |
+            eunolabs/eunox-mcp
+            ghcr.io/eunolabs/eunox-mcp
           flavor: |
             latest=auto
             suffix=-windows,onlatest=true

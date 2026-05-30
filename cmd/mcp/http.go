@@ -22,7 +22,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -43,6 +45,14 @@ const (
 	sessionHeader = "Mcp-Session-Id"
 	ctJSON        = "application/json"
 	ctSSE         = "text/event-stream"
+
+	// HTTP server timeout constants.
+	httpReadTimeout  = 30 * time.Second
+	httpWriteTimeout = 30 * time.Second
+
+	// maxRequestBodyBytes is the maximum POST body size accepted by the proxy.
+	// Requests exceeding this limit are rejected with 413 Request Entity Too Large.
+	maxRequestBodyBytes = 4 << 20 // 4 MiB
 )
 
 // HTTPProxy implements the MCP Streamable HTTP transport.
@@ -182,9 +192,15 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 	}
 	fmt.Fprintf(os.Stderr, "[eunox-mcp] HTTP proxy listening on http://%s/mcp\n", ln.Addr())
 
+	// SEC-03: add read/write timeouts to prevent Slowloris-style DoS attacks
+	// where slow clients hold connections open indefinitely.
+	// WriteTimeout is overridden to zero for long-lived SSE GET streams — see
+	// handleMCPGet, which calls http.NewResponseController(w).SetWriteDeadline.
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
@@ -204,12 +220,16 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 
 // checkAuth validates the Authorization header when an auth token is configured.
 // Returns true if the request is authorised; false if not (response already written).
+//
+// SEC-01: constant-time comparison prevents timing side-channel attacks where an
+// attacker can deduce the token byte-by-byte by measuring response latency.
 func (p *HTTPProxy) checkAuth(w http.ResponseWriter, r *http.Request) bool {
 	if p.authToken == "" {
 		return true
 	}
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || auth[len("Bearer "):] != p.authToken {
+	if !strings.HasPrefix(auth, "Bearer ") ||
+		!hmac.Equal([]byte(auth[len("Bearer "):]), []byte(p.authToken)) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
@@ -263,8 +283,16 @@ func (p *HTTPProxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 // handleMCPPost processes a JSON-RPC request from the MCP host.
 func (p *HTTPProxy) handleMCPPost(w http.ResponseWriter, r *http.Request) {
+	// SEC-04: cap request body to prevent memory exhaustion via arbitrarily large
+	// JSON payloads.  Reads beyond maxRequestBodyBytes return http.MaxBytesError.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	var msg rpcMsg
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid JSON-RPC body", http.StatusBadRequest)
 		return
 	}
@@ -359,6 +387,52 @@ func (s *httpSession) buildInitResponse(msg rpcMsg) rpcMsg { //nolint:gocritic /
 	return resp
 }
 
+// sanitizeDenialDetails strips user-controlled values from a denial Details map
+// before the map is sent back to the client in a JSON-RPC error response.
+//
+// SEC-06: Details may contain raw argument values supplied by the agent (e.g.
+// file paths, SQL query text, email addresses).  Echoing them verbatim leaks
+// information about internal policy structure and may expose sensitive data
+// from other sessions if those values were written to a shared log first.
+// The audit log retains the full, unsanitized details; only the client-facing
+// denial result is sanitized.
+//
+// Keys that are stripped:
+//
+//	"value"     – allowedValues condition (raw argument value)
+//	"filePath"  – allowedValues on file path arguments
+//	"extension" – allowedExtensions condition
+//	"operation" – allowedOperations condition (SQL verb, HTTP method, …)
+//	"sourceIp"  – allowedIPs condition (IP address)
+//	"tables"    – allowedTables condition (SQL table names)
+//	"recipients"– allowedRecipients condition (email addresses)
+func sanitizeDenialDetails(details map[string]interface{}) map[string]interface{} {
+	if len(details) == 0 {
+		return details
+	}
+	// Keys that must never be forwarded to the client because they contain
+	// user-controlled values.
+	const redacted = "[redacted]"
+	sensitive := map[string]struct{}{
+		"value":      {},
+		"filePath":   {},
+		"extension":  {},
+		"operation":  {},
+		"sourceIp":   {},
+		"tables":     {},
+		"recipients": {},
+	}
+	out := make(map[string]interface{}, len(details))
+	for k, v := range details {
+		if _, drop := sensitive[k]; drop {
+			out[k] = redacted
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // handleHTTPToolsCall applies the PDP and either forwards to the upstream or
 // returns a denial result.
 func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, msg rpcMsg, sourceIP string) rpcMsg { //nolint:gocritic // hugeParam: rpcMsg is passed by value intentionally
@@ -379,10 +453,14 @@ func (p *HTTPProxy) handleHTTPToolsCall(ctx context.Context, sess *httpSession, 
 	if dec.Decision == capability.DecisionDeny {
 		denial := dec.Denial
 		if p.sink != nil {
+			// Audit log receives full, unsanitized details for compliance/forensics.
 			p.sink.Record(sess.id, params.Name, "deny", denial.Code, denial.ConditionType, denial.Details, nil, p.dryRun)
 		}
 		if !p.dryRun {
-			return denialResult(msg.ID, params.Name, denial.Code, denial.Message, denial.Details)
+			// SEC-06: sanitize details before returning to the client — strip
+			// user-controlled values that could reveal policy internals or
+			// sensitive data from other sessions.
+			return denialResult(msg.ID, params.Name, denial.Code, denial.Message, sanitizeDenialDetails(denial.Details))
 		}
 		// Dry-run: log to stderr but do not block.
 		fmt.Fprintf(os.Stderr,
@@ -450,6 +528,12 @@ func (p *HTTPProxy) handleMCPGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SEC-03: SSE is a long-lived stream; remove the server-level WriteTimeout
+	// so the connection is not killed after httpWriteTimeout.  The per-request
+	// context (r.Context()) already enforces client-side disconnects.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", ctSSE)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -511,11 +595,25 @@ func (p *HTTPProxy) handleKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SEC-07: the loopback check prevents remote network access, but a process
+	// running on the same host (e.g. a compromised tool subprocess) could reach
+	// this endpoint without a token.  Require auth when a token is configured.
+	if !p.checkAuth(w, r) {
+		return
+	}
+
+	// SEC-04: cap request body to prevent memory exhaustion.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	var body struct {
 		SessionID string `json:"sessionId"`
 		All       bool   `json:"all"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
