@@ -27,7 +27,8 @@ type auditRecord struct {
 	RequestID     string                 `json:"request_id"`
 	SessionID     string                 `json:"session_id"`
 	ToolName      string                 `json:"tool_name"`
-	Decision      string                 `json:"decision"` // "allow" | "deny"
+	Decision      string                 `json:"decision"`          // "allow" | "deny"
+	DryRun        bool                   `json:"dry_run,omitempty"` // true when --dry-run is active
 	DenialCode    string                 `json:"denial_code,omitempty"`
 	ConditionType string                 `json:"condition_type,omitempty"`
 	Details       map[string]interface{} `json:"details,omitempty"`
@@ -95,8 +96,9 @@ func openAuditSink(logPath string, rotateSizeBytes int64) (*auditSink, error) {
 }
 
 // Record writes a single audit record.  Fire-and-forget: errors are printed to
-// stderr but do not block the caller.
-func (s *auditSink) Record(sessionID, toolName, decision, denialCode, condType string, details map[string]interface{}, obligs []string) {
+// stderr but do not block the caller.  dryRun marks the record as a dry-run
+// observation (policy evaluated but not enforced).
+func (s *auditSink) Record(sessionID, toolName, decision, denialCode, condType string, details map[string]interface{}, obligs []string, dryRun bool) {
 	activityID := 1
 	if decision == "deny" {
 		activityID = 2
@@ -111,6 +113,7 @@ func (s *auditSink) Record(sessionID, toolName, decision, denialCode, condType s
 		SessionID:     sessionID,
 		ToolName:      toolName,
 		Decision:      decision,
+		DryRun:        dryRun,
 		DenialCode:    denialCode,
 		ConditionType: condType,
 		Details:       details,

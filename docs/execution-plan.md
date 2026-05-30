@@ -136,17 +136,30 @@ eunox-mcp proxy \
 ---
 
 ### T-03 · Expose dry-run mode in the proxy CLI
-**Effort:** half a day · **Priority:** P1 · **Depends on:** nothing
+**Effort:** half a day · **Priority:** P1 · **Depends on:** nothing · **Status: ✅ DONE**
 
 `WithDryRun(ctx)` already exists in the enforcement engine. It evaluates policies but doesn't block. It's not exposed as a CLI flag yet.
 
 **Steps:**
-1. Add `--dry-run` flag to `cmdProxy()`
-2. When set, inject `enforcement.WithDryRun(ctx)` into every `Decide()` call
-3. Log dry-run decisions at `WARN` level with a `dry_run: true` field in the audit record
-4. Print a startup banner: `[eunox-mcp] DRY-RUN MODE: policies are evaluated but not enforced`
+1. ✅ Add `--dry-run` flag to `cmdProxy()`
+2. ✅ When set, inject `enforcement.WithDryRun(ctx)` into every `Decide()` call (skips MaxCalls counter side effects)
+3. ✅ Log dry-run decisions at `WARN` level (`[eunox-mcp] DRY-RUN WARN: tool "X" would be denied (CODE) — forwarding anyway`) with `dry_run: true` field in the audit record
+4. ✅ Print a startup banner: `[eunox-mcp] DRY-RUN MODE: policies are evaluated but not enforced`
 
 **Why now:** enterprises will not deploy a new enforcement component in production without first running it in observation mode for 1–2 weeks. This is the difference between "interesting" and "deployable."
+
+**Implementation notes:**
+- `cmd/mcp/audit.go` — `auditRecord.DryRun bool` field (omitted when false), `Record` signature updated with `dryRun bool` parameter
+- `cmd/mcp/stdio.go` + `cmd/mcp/http.go` — `dryRun bool` field on both proxy types; `handleToolsCall`/`handleHTTPToolsCall` observe the deny, log it, and forward when `dryRun=true`
+- JWT 401 responses are not affected by dry-run (authentication, not policy)
+- Upstream errors are not affected by dry-run (infrastructure fault, not policy)
+
+**Invocation:**
+```bash
+eunox-mcp proxy --dry-run --policy manifest.yaml -- node ./server.js
+```
+
+**Verified:** 6 tests in `cmd/mcp/dry_run_test.go` covering: deny forwarded in dry-run, audit dry_run flag, normal-mode deny still blocks, allowed-call unaffected, audit record JSON field present/omitted. All pass with `-race`.
 
 ---
 
