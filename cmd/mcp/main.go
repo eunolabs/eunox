@@ -135,6 +135,9 @@ Flags:
 	jwtIssuer := fs.String("jwt-issuer", "", "Expected issuer (iss) claim in incoming JWTs. Leave empty to skip issuer validation.")
 	jwtAudience := fs.String("jwt-audience", "", "Expected audience (aud) claim in incoming JWTs. Leave empty to skip audience validation.")
 
+	// Dry-run flag.
+	dryRun := fs.Bool("dry-run", false, "Evaluate policies but do not block tool calls.\nDenials are logged to the audit trail with dry_run=true but the request is forwarded.\nUse for observation mode before production enforcement.")
+
 	// Find the optional '--' separator between proxy flags and the upstream command.
 	allArgs := os.Args[2:]
 	ddIdx := -1
@@ -262,6 +265,10 @@ Flags:
 		sid = uuid.New().String()
 	}
 
+	if *dryRun {
+		fmt.Fprintf(os.Stderr, "[eunox-mcp] DRY-RUN MODE: policies are evaluated but not enforced\n")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -280,6 +287,7 @@ Flags:
 			SessionID:      sid,
 			ShutdownMs:     *shutdownTimeout,
 			UpstreamTimeMs: *upstreamTimeout,
+			DryRun:         *dryRun,
 		})
 		if err := proxy.Start(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
@@ -337,6 +345,7 @@ Flags:
 			UpstreamURL:           *upstreamURL,
 			UpstreamAuthHeader:    *upstreamAuthHeader,
 			UpstreamTLSSkipVerify: *upstreamTLSSkipVerify,
+			DryRun:                *dryRun,
 		})
 		if err := proxy.Serve(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
