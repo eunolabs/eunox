@@ -256,16 +256,22 @@ jwt:      # issues a test JWT with capability claims from local Keycloak
 ---
 
 ### T-06 · README reposition
-**Effort:** half a day · **Priority:** P0 · **Depends on:** T-05
+**Effort:** half a day · **Priority:** P0 · **Depends on:** T-05 · **Status: ✅ DONE**
 
 Currently `cmd/mcp/` is listed sixth in the services table below five BUSL-licensed services. New evaluators see a 6-service enterprise platform and immediately estimate high operational burden. This is wrong.
 
 **Changes:**
-1. Lead with `eunox-mcp` — what it is, what problem it solves, one-command install
-2. Quick start points at `demo/` only — not the full stack
-3. The 6-service architecture moves to `docs/architecture.md` with a note: "for enterprise deployment"
-4. Add a "How it works" section with the actual interception flow: Agent → eunox-mcp proxy → MCP server (local or remote)
-5. Add a comparison table: what eunox-mcp enforces that OPA/Envoy cannot (the three gap scenarios)
+1. ✅ Lead with `eunox-mcp` — what it is, what problem it solves, one-command install
+2. ✅ Quick start points at `demo/` only — not the full stack
+3. ✅ The 6-service architecture moves to `docs/architecture.md` with a note: "for enterprise deployment"
+4. ✅ Add a "How it works" section with the actual interception flow: Agent → eunox-mcp proxy → MCP server (local or remote)
+5. ✅ Add a comparison table: what eunox-mcp enforces that OPA/Envoy cannot (the three gap scenarios)
+
+**Implementation notes:**
+- `README.md` — Quick start section with `make -C demo` commands; ASCII flow diagram (host → proxy → allow/deny); corrected manifest example (was using wrong `tools:` schema); comparison table with the three OPA/Envoy gap scenarios; Advanced JWT PDP section; updated docs links including demo and threat model.
+- `docs/architecture.md` — Added enterprise-scope callout at the top directing evaluators to the demo and README instead.
+
+**Verified:** README renders correctly; manifest example matches `demo/manifest.yaml` schema; `docs/architecture.md` leads with the enterprise-deployment scope note.
 
 ---
 
@@ -368,7 +374,7 @@ All of the following must be true before Stage 2 begins:
 - [ ] Audit log schema has not changed for 2 consecutive weeks
 - [ ] 3 production or active staging deployments running
 - [ ] At least one capability claim pattern or policy condition discovered from real traffic that wasn't anticipated at design time
-- [ ] README leads with `eunox-mcp`, not the 6-service architecture
+- [x] README leads with `eunox-mcp`, not the 6-service architecture
 
 ---
 
