@@ -51,6 +51,7 @@ type HTTPProxy struct {
 	command        string
 	args           []string
 	pdp            PolicyDecisionPoint
+	jwtPDP         *JWTPDP // non-nil when --jwks-uri is configured
 	sink           *auditSink
 	ks             killswitch.Manager
 	shutdownMs     int
@@ -74,6 +75,7 @@ type HTTPProxyOptions struct {
 	Command        string
 	Args           []string
 	PDP            PolicyDecisionPoint
+	JWTPDP         *JWTPDP // non-nil when --jwks-uri is configured
 	Sink           *auditSink
 	KS             killswitch.Manager
 	ShutdownMs     int
@@ -111,6 +113,7 @@ func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy { //nolint:gocritic // hugeP
 		command:               opts.Command,
 		args:                  opts.Args,
 		pdp:                   opts.PDP,
+		jwtPDP:                opts.JWTPDP,
 		sink:                  opts.Sink,
 		ks:                    opts.KS,
 		shutdownMs:            opts.ShutdownMs,
@@ -225,6 +228,19 @@ func (p *HTTPProxy) sourceIP(r *http.Request) string {
 func (p *HTTPProxy) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if !p.checkAuth(w, r) {
 		return
+	}
+	// JWT pre-validation: validate the Bearer token and attach claims to ctx.
+	// Must happen before routing so that all subsequent handlers see the claims.
+	if p.jwtPDP != nil {
+		ctx, err := p.jwtPDP.ValidateToken(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			if p.sink != nil {
+				p.sink.Record("", "", "deny", "JWT_INVALID", "jwt", map[string]interface{}{"error": err.Error()}, nil)
+			}
+			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	switch r.Method {
 	case http.MethodPost:
