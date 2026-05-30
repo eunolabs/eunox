@@ -37,14 +37,19 @@ var (
 // LogEntry is a type alias for contract.LogEntry, re-exported so that existing
 // callers compile without modification. D-1 fix: canonical definition lives in
 // pkg/audit/contract to decouple consumers from the implementation package.
-//
-// SignedAuditEvidence, Pipeline, and LedgerBackend are aliased for the same reason.
-type (
-	LogEntry            = contract.LogEntry
-	SignedAuditEvidence = contract.SignedAuditEvidence
-	Pipeline            = contract.Pipeline
-	LedgerBackend       = contract.LedgerBackend
-)
+type LogEntry = contract.LogEntry
+
+// SignedAuditEvidence is a type alias for contract.SignedAuditEvidence,
+// re-exported for the same backward-compatibility reason as LogEntry.
+type SignedAuditEvidence = contract.SignedAuditEvidence
+
+// Pipeline is a type alias for contract.Pipeline, re-exported for the same
+// backward-compatibility reason as LogEntry.
+type Pipeline = contract.Pipeline
+
+// LedgerBackend is a type alias for contract.LedgerBackend, re-exported for
+// the same backward-compatibility reason as LogEntry.
+type LedgerBackend = contract.LedgerBackend
 
 // EvidenceSigner signs audit entries to produce tamper-evident records.
 type EvidenceSigner struct {

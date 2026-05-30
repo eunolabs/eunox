@@ -176,7 +176,11 @@ func (p *PartitionedKillSwitch) ShouldBlock(ctx context.Context, agentID, sessio
 	}
 
 	// Ensure a per-agent partition (and subscription) exists for this agentID.
-	part := p.getOrCreatePartition(agentID)
+	// The subscription goroutine is deliberately tied to p.lifecycleCtx, not to
+	// the per-request ctx, so that it outlives individual ShouldBlock calls.
+	// Propagating the request context here would cancel the subscription when
+	// the request finishes — the opposite of the intended behaviour.
+	part := p.getOrCreatePartition(agentID) //nolint:contextcheck // see comment above: lifecycle context is intentional
 
 	// Promote to MRU position on each access (A-3 LRU tracking).
 	p.mu.Lock()
