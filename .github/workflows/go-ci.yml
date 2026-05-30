@@ -115,6 +115,39 @@ jobs:
       - name: Validate migration files
         run: go test -run TestMigration ./internal/integration/ -v -count=1
 
+  benchmark:
+    name: Benchmark (sanity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      # Run each benchmark for 100 ms × 1 iteration.  This is intentionally
+      # short: the goal is to catch panics, deadlocks, and compilation errors,
+      # not to enforce latency targets (GH runner performance is too variable
+      # for that).  Full target validation is done locally via scripts/bench.sh.
+      - name: Run benchmarks (smoke)
+        run: |
+          go test \
+            -run='^$' \
+            -bench=. \
+            -benchtime=100ms \
+            -benchmem \
+            -count=1 \
+            ./cmd/mcp/ \
+            2>&1 | grep -v '^\[eunox-mcp\]' | tee bench-ci.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-ci.txt
+          retention-days: 30
+
   vulnerability-scan:
     name: Trivy Vulnerability Scan
     runs-on: ubuntu-latest
