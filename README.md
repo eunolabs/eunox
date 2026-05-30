@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/eunolabs/eunox/blob/main/site/img/eunolabs.png?raw=true" alt="eunox" height="160">
+  <img src="https://github.com/eunolabs/eunox/blob/main/img/eunolabs.png?raw=true" alt="eunox" height="160">
 </p>
 
 <h1 align="center">eunox-mcp</h1>
