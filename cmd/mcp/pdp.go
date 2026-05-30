@@ -43,7 +43,14 @@ func (alwaysAllowPDP) Decide(_ context.Context, _, _ string, _ map[string]interf
 // Matching semantics (mirrors the TypeScript PDP):
 //   - A tool call is allowed if NO constraint in the manifest matches the tool name.
 //   - If a constraint matches, conditions are evaluated.  A failure denies.
-//   - Actions must include "call" or "*".
+//   - Actions must include "call", "*", or a semantic category ("read", "write",
+//     "delete", "execute", "admin") that matches the resolved action for the tool.
+//
+// Action resolution (in priority order):
+//  1. Exact match in the configured ActionResolver (custom map or built-in profile).
+//  2. HeuristicResolver — name-prefix inference (e.g. "get_*" → read).
+//  3. Generic fallback — if neither resolver classifies the tool, "call" or "*"
+//     in the constraint's actions list still permits the call.
 //
 // The enforcement engine is used for condition evaluation, but capability
 // matching uses proxy-local resource matching so that Context.Operation can
@@ -53,12 +60,21 @@ type ManifestPDP struct {
 	manifest *LocalManifest
 	engine   *enforcement.Engine
 	ks       killswitch.Manager
+	resolver ActionResolver // optional; enables semantic action matching
 }
 
 // NewManifestPDP creates a PDP backed by the given manifest.
 // engine must have a CallCounter configured to support maxCalls conditions.
 func NewManifestPDP(manifest *LocalManifest, engine *enforcement.Engine, ks killswitch.Manager) *ManifestPDP {
 	return &ManifestPDP{manifest: manifest, engine: engine, ks: ks}
+}
+
+// WithResolver attaches an ActionResolver to the PDP, enabling semantic action
+// matching in manifest constraints (actions: ["read"], actions: ["write"], etc.).
+// Returns p for fluent chaining.
+func (p *ManifestPDP) WithResolver(r ActionResolver) *ManifestPDP {
+	p.resolver = r
+	return p
 }
 
 func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, args map[string]interface{}, sourceIP string) capability.EnforceResponse {
@@ -82,13 +98,22 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 		return capability.EnforceResponse{Decision: capability.DecisionAllow}
 	}
 
-	// 3. Verify the constraint permits the MCP "call" action.
-	if !containsAction(matched.Actions, "call") {
+	// 3. Verify the constraint permits this tool call.
+	// Two modes are supported:
+	//   Generic:   actions includes "call" or "*" → permits any MCP tool call.
+	//   Semantic:  actions includes a resolved category ("read", "write", "delete",
+	//              "execute", "admin") → matched via the ActionResolver chain.
+	if !p.actionPermitted(matched.Actions, toolName) {
+		resolvedCat := p.resolveAction(toolName)
+		catDesc := string(resolvedCat)
+		if catDesc == "" {
+			catDesc = "unknown (not classified by resolver)"
+		}
 		return capability.EnforceResponse{
 			Decision: capability.DecisionDeny,
 			Denial: &capability.DenialInfo{
 				Code:    "CAPABILITY_DENIED",
-				Message: fmt.Sprintf("action 'call' is not listed in the constraint for %q", matched.Resource),
+				Message: fmt.Sprintf("tool %q resolved to action %q which is not permitted by constraint %q (allowed: %s)", toolName, catDesc, matched.Resource, strings.Join(matched.Actions, ", ")),
 			},
 		}
 	}
@@ -138,6 +163,40 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 		}
 	}
 	return resp
+}
+
+// actionPermitted reports whether the constraint actions list permits a call
+// to toolName.
+//
+// Rules (checked in order):
+//  1. "call" or "*" in actions → always permit (backwards-compatible generic mode).
+//  2. Resolved semantic category (via resolver chain) matches one of the listed
+//     actions → permit.
+//  3. Neither rule satisfied → deny.
+func (p *ManifestPDP) actionPermitted(actions []string, toolName string) bool {
+	// Generic mode: "call" / "*" passthrough — preserves backwards compatibility
+	// for manifests written before ActionResolver support was added.
+	if containsAction(actions, "call") || containsAction(actions, "*") {
+		return true
+	}
+	// Semantic mode: check whether the resolved category is in the actions list.
+	cat := p.resolveAction(toolName)
+	if cat == "" {
+		// No resolver could classify the tool and "call"/"*" is absent → deny.
+		return false
+	}
+	return containsAction(actions, string(cat))
+}
+
+// resolveAction returns the semantic ActionCategory for toolName by querying
+// the configured resolver first, then falling back to the HeuristicResolver.
+func (p *ManifestPDP) resolveAction(toolName string) ActionCategory {
+	if p.resolver != nil {
+		if cat := p.resolver.Resolve(toolName); cat != "" {
+			return cat
+		}
+	}
+	return HeuristicResolver{}.Resolve(toolName)
 }
 
 // findConstraint returns the most specific capability.Constraint whose Resource

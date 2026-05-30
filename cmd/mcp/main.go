@@ -54,6 +54,8 @@ func main() {
 		cmdValidateToken()
 	case "stats":
 		cmdStats()
+	case "profiles":
+		cmdProfiles()
 	case "--help", "-h", "help":
 		printUsage()
 	default:
@@ -71,6 +73,7 @@ Usage:
   eunox-mcp kill    [--port N] [--host H] <session-id|all>
   eunox-mcp validate-token [flags]
   eunox-mcp stats   [flags]
+  eunox-mcp profiles [<name>]
 
 Subcommands:
   proxy           Start the proxy (default: stdio transport).
@@ -78,6 +81,7 @@ Subcommands:
   kill            Activate the kill switch on a running HTTP proxy.
   validate-token  Verify HMAC signatures in the local audit log.
   stats           Print a denial count histogram from the audit log.
+  profiles        List built-in server profiles (or show tools for one profile).
 
 Run 'eunox-mcp <subcommand> --help' for per-command flags.
 `)
@@ -112,6 +116,8 @@ Flags:
 	upstreamTimeout := fs.Int("upstream-timeout", 0, "Milliseconds to wait for the upstream to respond (0 = no timeout).")
 	authToken := fs.String("auth-token", "", "Bearer token required on incoming requests (HTTP transport only).")
 	trustFwdFor := fs.Bool("trust-forwarded-for", false, "Trust X-Forwarded-For header for source IP (HTTP + loopback bind only).")
+	serverProfile := fs.String("server", "", fmt.Sprintf("Built-in server profile for semantic action resolution (e.g. github, slack, filesystem).\nAvailable: %s", strings.Join(ListBuiltinProfiles(), ", ")))
+	actionMapFile := fs.String("action-map", "", "Path to a YAML/JSON file mapping tool names to action categories (read/write/delete/execute/admin).\nTakes priority over --server when both are supplied.")
 
 	// Find the '--' separator to split proxy flags from the upstream command.
 	allArgs := os.Args[2:]
@@ -175,10 +181,23 @@ Flags:
 			manifests = append(manifests, m)
 		}
 		merged := MergeManifests(manifests)
+
+		// Resolve the server profile: CLI flag > manifest.Server field.
+		effectiveServer := *serverProfile
+		if effectiveServer == "" {
+			effectiveServer = merged.Server
+		}
+
+		resolver, err := BuildResolver(effectiveServer, *actionMapFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "eunox-mcp proxy: %v\n", err)
+			os.Exit(1)
+		}
+
 		counter := callcounter.NewInMemory()
 		engine := enforcement.New(enforcement.WithCallCounter(counter))
 		ks := killswitch.NewInMemory()
-		pdp = NewManifestPDP(merged, engine, ks)
+		pdp = NewManifestPDP(merged, engine, ks).WithResolver(resolver)
 	}
 
 	// Open audit sink.
@@ -552,6 +571,90 @@ Flags:
 	fmt.Println(strings.Repeat("-", 72))
 	for _, r := range rows {
 		fmt.Printf("%-30s  %-30s  %d\n", r.tool, r.code, r.count)
+	}
+}
+
+// -----------------------------------------------------------------
+// profiles subcommand
+// -----------------------------------------------------------------
+
+// cmdProfiles lists the built-in server profiles or prints the tool map for
+// one profile.
+//
+// Usage:
+//
+//	eunox-mcp profiles           # list all profiles
+//	eunox-mcp profiles github    # show tool→action map for "github"
+func cmdProfiles() {
+	args := os.Args[2:]
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprint(os.Stderr, `Usage:
+  eunox-mcp profiles           List all built-in server profiles
+  eunox-mcp profiles <name>    Show the tool-to-action map for a profile
+`)
+		return
+	}
+
+	if len(args) == 0 {
+		// List all profiles.
+		names := ListBuiltinProfiles()
+		maxLen := 0
+		for _, n := range names {
+			if len(n) > maxLen {
+				maxLen = len(n)
+			}
+		}
+		fmt.Printf("%-*s  %s\n", maxLen, "PROFILE", "DESCRIPTION")
+		fmt.Println(strings.Repeat("-", maxLen+2+60))
+		for _, n := range names {
+			desc := BuiltinProfileDescription(n)
+			if len(desc) > 60 {
+				desc = desc[:57] + "..."
+			}
+			fmt.Printf("%-*s  %s\n", maxLen, n, desc)
+		}
+		return
+	}
+
+	// Show tool map for the named profile.
+	name := args[0]
+	r := BuiltinResolver(name)
+	if r == nil {
+		fmt.Fprintf(os.Stderr, "eunox-mcp profiles: unknown profile %q\nAvailable: %s\n",
+			name, strings.Join(ListBuiltinProfiles(), ", "))
+		os.Exit(1)
+	}
+	sr, ok := r.(*StaticActionResolver)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "eunox-mcp profiles: profile %q is not a static resolver\n", name)
+		os.Exit(1)
+	}
+
+	type entry struct {
+		tool string
+		cat  ActionCategory
+	}
+	entries := make([]entry, 0, len(sr.toolMap))
+	for tool, cat := range sr.toolMap {
+		entries = append(entries, entry{tool, cat})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].tool < entries[j].tool })
+
+	maxTool := 0
+	for _, e := range entries {
+		if len(e.tool) > maxTool {
+			maxTool = len(e.tool)
+		}
+	}
+	fmt.Printf("Profile: %s\n", name)
+	if desc := BuiltinProfileDescription(name); desc != "" {
+		fmt.Printf("         %s\n", desc)
+	}
+	fmt.Println()
+	fmt.Printf("%-*s  %s\n", maxTool, "TOOL", "ACTION")
+	fmt.Println(strings.Repeat("-", maxTool+2+10))
+	for _, e := range entries {
+		fmt.Printf("%-*s  %s\n", maxTool, e.tool, e.cat)
 	}
 }
 

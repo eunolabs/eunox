@@ -27,6 +27,14 @@ type AgentCapabilityManifest struct {
 	DefaultTTL int `json:"defaultTtl,omitempty"`
 	// Audience is the target audience for tokens.
 	Audience string `json:"audience,omitempty"`
+	// Server optionally identifies a built-in eunox-mcp ActionResolver profile
+	// for this manifest (e.g. "github", "slack", "filesystem").  When set,
+	// eunox-mcp proxy activates the corresponding pre-built tool-to-action
+	// mapping, enabling semantic action categories in capability constraints
+	// (e.g. actions: ["read"] restricts the agent to read-only tools).
+	// The --server CLI flag overrides this field.
+	// See 'eunox-mcp profiles' for the list of available profiles.
+	Server string `json:"server,omitempty"`
 }
 
 // ManifestBuilder provides a fluent API for building agent capability manifests.
