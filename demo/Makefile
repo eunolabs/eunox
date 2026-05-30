@@ -9,7 +9,7 @@
 # Or from inside the demo/ directory:
 #   cd demo && make up
 
-.PHONY: up up-jwt down allow deny audit jwt jwt-allow jwt-deny logs help
+.PHONY: up up-jwt down allow deny deny-path deny-op audit jwt jwt-allow jwt-deny logs ci-test ci-test-jwt help
 
 DEMO_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -116,6 +116,35 @@ audit:
 ## Follow container logs for eunox-mcp.
 logs:
 	docker compose -f "$(DEMO_DIR)docker-compose.yml" logs -f eunox-mcp
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CI integration tests (start stack → test → always tear down)
+# ─────────────────────────────────────────────────────────────────────────────
+
+## ci-test: Run manifest-only integration tests in CI (starts stack, tests, tears down).
+ci-test:
+	@mkdir -p "$(DEMO_DIR)audit" && chmod 777 "$(DEMO_DIR)audit"
+	@echo "==> Starting manifest-only stack for CI tests (Keycloak skipped) ..."
+	@docker compose -f "$(DEMO_DIR)docker-compose.yml" \
+	  up --build --force-recreate -d --wait --scale keycloak=0 \
+	  && bash "$(DEMO_DIR)scripts/ci-test.sh"; STATUS=$$?; \
+	  docker compose -f "$(DEMO_DIR)docker-compose.yml" down --remove-orphans; \
+	  exit $$STATUS
+
+## ci-test-jwt: Run JWT-mode integration tests in CI (starts full stack, tests, tears down).
+ci-test-jwt:
+	@mkdir -p "$(DEMO_DIR)audit" && chmod 777 "$(DEMO_DIR)audit"
+	@echo "==> Starting JWT-mode stack for CI tests (Keycloak + eunox-mcp) ..."
+	@docker compose \
+	  -f "$(DEMO_DIR)docker-compose.yml" \
+	  -f "$(DEMO_DIR)docker-compose.jwt.yml" \
+	  up --build --force-recreate -d --wait \
+	  && bash "$(DEMO_DIR)scripts/ci-test-jwt.sh"; STATUS=$$?; \
+	  docker compose \
+	    -f "$(DEMO_DIR)docker-compose.yml" \
+	    -f "$(DEMO_DIR)docker-compose.jwt.yml" \
+	    down --remove-orphans; \
+	  exit $$STATUS
 
 ## Print this help.
 help:
