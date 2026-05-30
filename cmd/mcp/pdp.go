@@ -40,8 +40,9 @@ func (alwaysAllowPDP) Decide(_ context.Context, _, _ string, _ map[string]interf
 
 // ManifestPDP applies the local capability manifest to every tool call.
 //
-// Matching semantics (mirrors the TypeScript PDP):
-//   - A tool call is allowed if NO constraint in the manifest matches the tool name.
+// Matching semantics:
+//   - The manifest is an allowlist: only tools with an explicit capability entry
+//     are permitted.  A tool absent from the manifest is denied by default.
 //   - If a constraint matches, conditions are evaluated.  A failure denies.
 //   - Actions must include "call", "*", or a semantic category ("read", "write",
 //     "delete", "execute", "admin") that matches the resolved action for the tool.
@@ -92,10 +93,18 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 	}
 
 	// 2. Find the most specific matching constraint.
+	// The manifest is an allowlist: absent tools are denied by default so that
+	// operators must explicitly grant access rather than accidentally permitting
+	// any tool the upstream MCP server happens to expose.
 	matched := p.findConstraint(toolName)
 	if matched == nil {
-		// No constraint covers this tool → allow (manifest restricts only listed tools).
-		return capability.EnforceResponse{Decision: capability.DecisionAllow}
+		return capability.EnforceResponse{
+			Decision: capability.DecisionDeny,
+			Denial: &capability.DenialInfo{
+				Code:    capability.ErrCodeAuthorizationFailed,
+				Message: fmt.Sprintf("tool %q is not listed in the capability manifest", toolName),
+			},
+		}
 	}
 
 	// 3. Verify the constraint permits this tool call.
