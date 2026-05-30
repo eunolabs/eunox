@@ -11,43 +11,53 @@ EUNOX_HOST="${EUNOX_HOST:-http://localhost:3000}"
 OPA_HOST="${OPA_HOST:-http://localhost:8181}"
 
 # ── colour / formatting ───────────────────────────────────────────────────────
-RED='\033[0;31m'
-GRN='\033[0;32m'
-YLW='\033[0;33m'
-BLU='\033[0;34m'
-CYN='\033[0;36m'
-BOLD='\033[1m'
-RST='\033[0m'
+# Use $'...' ANSI-C quoting so the variables hold the actual ESC byte.
+# Plain `echo` (no -e flag) then renders them correctly in any bash version.
+RED=$'\033[0;31m'
+GRN=$'\033[0;32m'
+YLW=$'\033[0;33m'
+BLU=$'\033[0;34m'
+CYN=$'\033[0;36m'
+BOLD=$'\033[1m'
+RST=$'\033[0m'
 
 print_header() {
   local title="$1"
   echo ""
-  echo -e "${BOLD}${BLU}══════════════════════════════════════════════════════════════${RST}"
-  echo -e "${BOLD}${BLU}  ${title}${RST}"
-  echo -e "${BOLD}${BLU}══════════════════════════════════════════════════════════════${RST}"
+  echo "${BOLD}${BLU}══════════════════════════════════════════════════════════════${RST}"
+  echo "${BOLD}${BLU}  ${title}${RST}"
+  echo "${BOLD}${BLU}══════════════════════════════════════════════════════════════${RST}"
 }
 
 print_step() {
-  echo -e "\n${CYN}▶  $*${RST}"
+  echo ""
+  echo "${CYN}▶  $*${RST}"
 }
 
 print_ok() {
-  echo -e "${GRN}✔  $*${RST}"
+  echo "${GRN}✔  $*${RST}"
 }
 
 print_denied() {
-  echo -e "${RED}✘  $*${RST}"
+  echo "${RED}✘  $*${RST}"
 }
 
 print_note() {
-  echo -e "${YLW}ℹ  $*${RST}"
+  echo "${YLW}ℹ  $*${RST}"
 }
+
+# ── prerequisites ─────────────────────────────────────────────────────────────
+if ! command -v jq &>/dev/null; then
+  echo "${RED}ERROR: jq is required but not installed.${RST}" >&2
+  echo "       Install: https://jqlang.github.io/jq/download/" >&2
+  exit 1
+fi
 
 # ── OPA query ─────────────────────────────────────────────────────────────────
 # opa_check <package> <tool> [extra-json-fields]
 # Queries POST /v1/data/<package>/allow and prints the decision.
-# extra-json-fields: additional key:value pairs to merge into input (comma-sep JSON).
-# Returns 0 if OPA says allow=true, 1 otherwise.
+# extra-json-fields: additional comma-separated JSON key:value pairs merged into input.
+# Returns 0 if allow=true, 1 otherwise.
 opa_check() {
   local pkg="$1"
   local tool="$2"
@@ -70,13 +80,13 @@ opa_check() {
   }
 
   local decision
-  decision=$(echo "$resp" | grep -o '"result":[^,}]*' | cut -d: -f2 | tr -d ' "')
+  decision=$(echo "$resp" | jq -r '.result // false')
 
   if [[ "$decision" == "true" ]]; then
     print_ok "OPA [${pkg}] tool=${tool} → ALLOW"
     return 0
   else
-    print_denied "OPA [${pkg}] tool=${tool} → DENY (decision=${decision:-false})"
+    print_denied "OPA [${pkg}] tool=${tool} → DENY (decision=${decision})"
     return 1
   fi
 }
@@ -107,8 +117,9 @@ mcp_init() {
 }
 
 # mcp_call <tool> <args-json>
-# Issues a tools/call and returns the result text.
-# Prints eunox decision (ALLOW / DENY) based on HTTP + isError.
+# Issues a tools/call against eunox-mcp and prints the outcome.
+# Prints ALLOW with a preview of the result text, or DENY with the reason.
+# Returns 0 on allow, 1 on deny.
 mcp_call() {
   local tool="$1"
   local args="$2"
@@ -124,25 +135,31 @@ mcp_call() {
     -H "Mcp-Session-Id: ${MCP_SESSION_ID}" \
     -d "$body")
 
-  # Check for a JSON-RPC error (policy denial) vs success.
-  if echo "$resp" | grep -q '"error"'; then
-    local msg
-    msg=$(echo "$resp" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4)
+  # JSON-RPC protocol-level error (e.g. unknown session, parse error).
+  local rpc_err
+  rpc_err=$(echo "$resp" | jq -r '.error.message // empty' 2>/dev/null || true)
+  if [[ -n "$rpc_err" ]]; then
+    print_denied "eunox [tool=${tool}] → DENY: ${rpc_err}"
+    return 1
+  fi
+
+  # eunox wraps policy denials as isError:true inside the MCP result envelope.
+  local is_err
+  is_err=$(echo "$resp" | jq -r '.result.isError // false' 2>/dev/null || echo "false")
+  if [[ "$is_err" == "true" ]]; then
+    # The content text is a JSON object with a "message" field.
+    local inner msg
+    inner=$(echo "$resp" | jq -r '.result.content[0].text // ""' 2>/dev/null || true)
+    msg=$(echo "$inner" | jq -r '.message // "denied"' 2>/dev/null || echo "denied")
     print_denied "eunox [tool=${tool}] → DENY: ${msg}"
-    echo "$resp"
     return 1
   fi
 
-  # Check isError flag from the MCP tool result.
-  if echo "$resp" | grep -q '"isError":true'; then
-    print_denied "eunox [tool=${tool}] → TOOL ERROR"
-    echo "$resp"
-    return 1
-  fi
-
-  local text
-  text=$(echo "$resp" | grep -o '"text":"[^"]*"' | head -1 | cut -d'"' -f4)
-  print_ok "eunox [tool=${tool}] → ALLOW: ${text:0:80}$([ ${#text} -gt 80 ] && echo '…')"
-  echo "$resp"
+  # Successful tool call — show a preview of the result text.
+  local text preview
+  text=$(echo "$resp" | jq -r '.result.content[0].text // ""' 2>/dev/null || true)
+  preview="${text:0:80}"
+  [[ ${#text} -gt 80 ]] && preview="${preview}…"
+  print_ok "eunox [tool=${tool}] → ALLOW: ${preview}"
   return 0
 }

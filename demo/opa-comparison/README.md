@@ -15,6 +15,7 @@ before within the same session.
 |------|---------|
 | Docker ≥ 27 with Compose v2 | Run the demo stack |
 | `curl` + `bash` | Drive the scenario scripts |
+| `jq` | Parse JSON responses in scenario scripts |
 | `make` | Convenience wrapper (optional) |
 
 No account or token needed. Everything runs locally.
