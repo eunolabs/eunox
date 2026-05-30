@@ -12,7 +12,7 @@
   "accessTokenLifespan": 3600,
   "clients": [
     {
-      "id": "a1b2c3d4-0000-0000-0000-demo-agent-01",
+      "id": "a1b2c3d4-0000-0000-0000-demo-agent01",
       "clientId": "demo-agent",
       "name": "Demo Agent",
       "description": "Service account used in the eunox demo.  Issues JWTs with eunox capability claims.",
@@ -31,7 +31,7 @@
       },
       "protocolMappers": [
         {
-          "id": "a1b2c3d4-0000-0000-0001-cap-mapper-01",
+          "id": "a1b2c3d4-0000-0000-0001-cap-mapper01",
           "name": "eunox-capabilities",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
@@ -45,7 +45,7 @@
           }
         },
         {
-          "id": "a1b2c3d4-0000-0000-0002-cap-mapper-02",
+          "id": "a1b2c3d4-0000-0000-0002-cap-mapper02",
           "name": "eunox-task-id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
@@ -59,7 +59,7 @@
           }
         },
         {
-          "id": "a1b2c3d4-0000-0000-0003-cap-mapper-03",
+          "id": "a1b2c3d4-0000-0000-0003-cap-mapper03",
           "name": "eunox-agent-id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
@@ -73,7 +73,7 @@
           }
         },
         {
-          "id": "a1b2c3d4-0000-0000-0004-cap-mapper-04",
+          "id": "a1b2c3d4-0000-0000-0004-cap-mapper04",
           "name": "eunox-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
