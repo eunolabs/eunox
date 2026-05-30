@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package agentruntime implements the agent runtime library for embedding in
 // agent applications. It manages token lifecycle, DPoP proof generation, and

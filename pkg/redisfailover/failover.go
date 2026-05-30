@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package redisfailover provides failure mode policies for Redis-dependent
 // components. It defines fail-open and fail-closed behaviors, implements

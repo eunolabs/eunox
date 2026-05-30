@@ -55,17 +55,46 @@ vet:
 generate:
 	$(GO) generate ./...
 
-## Check license headers: BUSL-1.1 everywhere except cmd/mcp/ and demo/ (Apache-2.0)
+## Check license headers.
+##
+## Apache-2.0 (open-source MVP surface):
+##   cmd/mcp/                    — proxy binary
+##   demo/                       — demo scripts and examples
+##   internal/agentruntime/      — manifest parsing used by cmd/mcp
+##   pkg/callcounter/            — call-count enforcement
+##   pkg/capability/             — policy decision types and enforcement interface
+##   pkg/circuitbreaker/         — circuit-breaker used by capability layer
+##   pkg/enforcement/            — enforcement engine
+##   pkg/killswitch/             — kill-switch manager
+##   pkg/redisfailover/          — Redis failover client (used by callcounter + killswitch)
+##
+## BUSL-1.1 (everything else — enterprise platform services):
+##   All remaining *.go files not listed above.
 check-license:
 	@echo "Checking license headers..."
 	@fail=0; \
-	for f in $$(find . -name '*.go' -not -path './vendor/*' -not -path './cmd/mcp/*' -not -path './demo/*'); do \
+	APACHE_PATHS="./cmd/mcp ./demo ./internal/agentruntime ./pkg/callcounter ./pkg/capability ./pkg/circuitbreaker ./pkg/enforcement ./pkg/killswitch ./pkg/redisfailover"; \
+	APACHE_FIND_ARGS=""; \
+	for p in $$APACHE_PATHS; do APACHE_FIND_ARGS="$$APACHE_FIND_ARGS -path '$$p/*' -o"; done; \
+	for f in $$(find . -name '*.go' -not -path './vendor/*' \
+		-not -path './cmd/mcp/*' \
+		-not -path './demo/*' \
+		-not -path './internal/agentruntime/*' \
+		-not -path './pkg/callcounter/*' \
+		-not -path './pkg/capability/*' \
+		-not -path './pkg/circuitbreaker/*' \
+		-not -path './pkg/enforcement/*' \
+		-not -path './pkg/killswitch/*' \
+		-not -path './pkg/redisfailover/*'); do \
 		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: BUSL-1.1"; then \
 			echo "MISSING BUSL LICENSE HEADER: $$f"; \
 			fail=1; \
 		fi; \
 	done; \
-	for f in $$(find ./cmd/mcp ./demo -name '*.go'); do \
+	for f in $$(find ./cmd/mcp ./demo ./internal/agentruntime \
+		./pkg/callcounter ./pkg/capability ./pkg/circuitbreaker \
+		./pkg/enforcement ./pkg/killswitch ./pkg/redisfailover \
+		-name '*.go'); do \
 		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: Apache-2.0"; then \
 			echo "MISSING APACHE LICENSE HEADER: $$f"; \
 			fail=1; \
