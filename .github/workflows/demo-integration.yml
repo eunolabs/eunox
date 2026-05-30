@@ -1,12 +1,13 @@
 # Copyright 2026 Eunolabs, LLC
 # SPDX-License-Identifier: Apache-2.0
 #
-# End-to-end integration tests for the OPA/Envoy comparison demo.
-# Each scenario builds the Docker Compose stack, runs the scenario script
-# that exercises both OPA and eunox-mcp, and tears everything down.
+# End-to-end integration tests for all eunox demos:
+#   - T-05 demo: manifest-only and JWT-mode (demo/)
+#   - T-08 OPA/Envoy comparison demo (demo/opa-comparison/)
 #
-# Jobs run in parallel (one per scenario) on separate runners so there
-# are no port conflicts and the suite finishes in ~scenario-1 time.
+# Each job builds its Docker Compose stack, runs the test script, and always
+# tears down afterwards.  Jobs run in parallel on separate runners so there
+# are no port conflicts.
 #
 # Triggered on:
 #   - push / PR touching demo code, enforcement engine, proxy, or Dockerfile
@@ -21,14 +22,14 @@ on:
   push:
     branches: [main, "copilot/**"]
     paths:
-      - "demo/opa-comparison/**"
+      - "demo/**"
       - "pkg/enforcement/**"
       - "cmd/mcp/**"
       - "deploy/docker/**"
   pull_request:
     branches: [main]
     paths:
-      - "demo/opa-comparison/**"
+      - "demo/**"
       - "pkg/enforcement/**"
       - "cmd/mcp/**"
       - "deploy/docker/**"
@@ -83,4 +84,73 @@ jobs:
         if: failure()
         run: |
           docker compose -f demo/opa-comparison/docker-compose.yml \
+            down --remove-orphans --volumes 2>/dev/null || true
+
+  # ── T-05 demo: manifest-only mode ─────────────────────────────────────────
+  demo-manifest:
+    name: "T-05 demo / manifest-only"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker compose version
+          jq --version
+
+      - name: Run manifest-only integration tests
+        run: make -C demo ci-test
+        # Starts mock-mcp-server + eunox-mcp (Keycloak skipped via --scale 0).
+        # CI=true is set by GitHub Actions; color output is suppressed.
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f demo/docker-compose.yml \
+            logs --no-color --timestamps 2>/dev/null || true
+
+      - name: Force cleanup on failure
+        if: failure()
+        run: |
+          docker compose -f demo/docker-compose.yml \
+            down --remove-orphans --volumes 2>/dev/null || true
+
+  # ── T-05 demo: JWT mode ────────────────────────────────────────────────────
+  demo-jwt:
+    name: "T-05 demo / JWT mode"
+    runs-on: ubuntu-latest
+    # Keycloak needs ~30 s to start; allow extra headroom for slow runners.
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker compose version
+          jq --version
+
+      - name: Run JWT-mode integration tests
+        run: make -C demo ci-test-jwt
+        # Starts mock-mcp-server + Keycloak + eunox-mcp (JWT overlay).
+        # --wait blocks until Keycloak's healthcheck passes before running tests.
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f demo/docker-compose.yml \
+            -f demo/docker-compose.jwt.yml \
+            logs --no-color --timestamps 2>/dev/null || true
+
+      - name: Force cleanup on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f demo/docker-compose.yml \
+            -f demo/docker-compose.jwt.yml \
             down --remove-orphans --volumes 2>/dev/null || true

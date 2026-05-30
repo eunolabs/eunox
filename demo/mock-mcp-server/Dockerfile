@@ -24,11 +24,15 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /out/mock-mcp-server \
     ./demo/mock-mcp-server/
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# Alpine final stage: includes sh and wget (via busybox) so the
+# docker-compose CMD-SHELL healthcheck can run inside the container.
+# A non-root user is created to preserve least-privilege.
+FROM alpine:3.21
+RUN addgroup -S nonroot && adduser -S -G nonroot nonroot
 
 COPY --from=builder /out/mock-mcp-server /usr/local/bin/mock-mcp-server
 
-USER 65534:65534
+USER nonroot
 
 EXPOSE 8080
 

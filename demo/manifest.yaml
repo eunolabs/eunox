@@ -4,8 +4,8 @@
 # It controls what the "demo-agent" is allowed to do against the mock MCP server.
 #
 # Rules:
-#   read_file  — allowed only for paths under /reports/
-#   query_db   — allowed only for SELECT; rate-limited to 5 calls per session
+#   read_file  — allowed only for paths under /reports/  (glob via allowedValues)
+#   query_db   — allowed only for SELECT; rate-limited to 5 calls per hour
 #   write_file — intentionally absent → denied by default
 #
 # When JWT mode is active (make up-jwt), the intersection of JWT claims and this
@@ -19,7 +19,7 @@ capabilities:
     actions: [call]
     conditions:
       - type: allowedValues
-        field: path
+        argument: path
         values:
           - "/reports/*"
 
@@ -27,7 +27,8 @@ capabilities:
     actions: [call]
     conditions:
       - type: maxCalls
-        limit: 5
+        count: 5
+        windowSeconds: 3600
       - type: allowedOperations
         operations:
           - SELECT
