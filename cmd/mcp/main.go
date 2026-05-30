@@ -130,6 +130,11 @@ Flags:
 	upstreamAuthHeader := fs.String("upstream-auth-header", "", `Header forwarded to the remote upstream on every request, in "Name: Value" format.\nExample: --upstream-auth-header "Authorization: Bearer sk-..."`)
 	upstreamTLSSkipVerify := fs.Bool("upstream-tls-skip-verify", false, "Skip TLS certificate verification for the remote upstream (development only).")
 
+	// JWT PDP flags (HTTP transport only).
+	jwksURI := fs.String("jwks-uri", "", "JWKS endpoint URI for IdP-issued capability JWTs (e.g. https://idp.example.com/.well-known/jwks.json).\nWhen set, every request must carry a valid Bearer JWT with eunox capability claims.\nRequires --transport http.")
+	jwtIssuer := fs.String("jwt-issuer", "", "Expected issuer (iss) claim in incoming JWTs. Leave empty to skip issuer validation.")
+	jwtAudience := fs.String("jwt-audience", "", "Expected audience (aud) claim in incoming JWTs. Leave empty to skip audience validation.")
+
 	// Find the optional '--' separator between proxy flags and the upstream command.
 	allArgs := os.Args[2:]
 	ddIdx := -1
@@ -168,6 +173,9 @@ Flags:
 		os.Exit(1)
 	case hasLocalCmd && len(upstreamAll) == 0:
 		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: no upstream command after '--'\n")
+		os.Exit(1)
+	case *jwksURI != "" && *transport != "http":
+		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: --jwks-uri requires --transport http\n")
 		os.Exit(1)
 	}
 
@@ -285,16 +293,39 @@ Flags:
 		if *upstreamTLSSkipVerify {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] WARNING: --upstream-tls-skip-verify is enabled. TLS certificate verification is DISABLED. Do NOT use in production.\n")
 		}
+
+		// Build the JWT PDP when --jwks-uri is configured.
+		var jwtPDP *JWTPDP
+		if *jwksURI != "" {
+			fmt.Fprintf(os.Stderr, "[eunox-mcp] JWT PDP enabled (JWKS URI: %s)\n", *jwksURI)
+			jwtPDP = NewJWTPDP(JWTPDPOptions{
+				JWKSURI:  *jwksURI,
+				Issuer:   *jwtIssuer,
+				Audience: *jwtAudience,
+				Inner:    pdp, // nil when no --policy; intersection with manifest when both are set
+			})
+		}
+
 		var ks killswitch.Manager
 		if mp, ok := pdp.(*ManifestPDP); ok {
 			ks = mp.ks
 		} else {
 			ks = killswitch.NewInMemory()
 		}
+
+		// When --jwks-uri is set, the JWTPDP is the primary PDP; the manifest
+		// PDP (if any) becomes its inner (intersection) PDP.  When --jwks-uri is
+		// not set, the manifest PDP (or alwaysAllow) is used directly.
+		effectivePDP := pdp
+		if jwtPDP != nil {
+			effectivePDP = jwtPDP
+		}
+
 		proxy := NewHTTPProxy(HTTPProxyOptions{
 			Command:               upstreamCmd,
 			Args:                  upstreamArgs,
-			PDP:                   pdp,
+			PDP:                   effectivePDP,
+			JWTPDP:                jwtPDP,
 			Sink:                  sink,
 			KS:                    ks,
 			ShutdownMs:            *shutdownTimeout,

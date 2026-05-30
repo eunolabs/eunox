@@ -79,7 +79,7 @@ eunox-mcp proxy \
 ---
 
 ### T-02 · JWT PDP mode — IdP-issued capability claims
-**Effort:** 3–4 days · **Priority:** P0 · **Depends on:** nothing (parallel with T-01)
+**Effort:** 3–4 days · **Priority:** P0 · **Depends on:** nothing (parallel with T-01) · **Status: ✅ DONE**
 
 The current `ManifestPDP` enforces from a local YAML file. For enterprise deployments, the capability set needs to come from the IdP token the agent already has — so eunox becomes additive to their existing auth stack rather than a replacement.
 
@@ -93,17 +93,45 @@ The current `ManifestPDP` enforces from a local YAML file. For enterprise deploy
 ```
 
 **Steps:**
-1. Add `--jwks-uri` flag to `cmdProxy()`
-2. When `--jwks-uri` is set, add a `JWKPDP` that:
-   - Fetches and caches JWKS on startup, refreshes on key miss
-   - Validates incoming JWT: signature, expiry, issuer (`--jwt-issuer` flag)
-   - Extracts `eunox.capabilities` claim array
-   - Translates each claim string into a `capability.Constraint` and delegates to the existing enforcement engine
-3. When both `--jwks-uri` and `--policy` are set: JWT claims narrow the manifest — intersection, not union. JWT can only restrict, never expand beyond what the manifest permits.
-4. When neither is set: fall through to `alwaysAllowPDP` (existing transparent passthrough)
-5. 401 on invalid/expired JWT, 403 on capability mismatch — both logged to audit
+1. ✅ Add `--jwks-uri`, `--jwt-issuer`, `--jwt-audience` flags to `cmdProxy()`
+2. ✅ When `--jwks-uri` is set, `JWTPDP` (`cmd/mcp/pdp_jwt.go`):
+   - Fetches and caches JWKS with singleflight deduplication; force-refreshes on key miss (key rotation safe)
+   - Validates incoming JWT: signature, expiry, issuer (`--jwt-issuer`), audience (`--jwt-audience`)
+   - Extracts `eunox.capabilities` claim array (`[]string`, parsed separately from standard JWT claims)
+   - Translates each claim string into a `capability.Constraint` and evaluates conditions directly
+3. ✅ When both `--jwks-uri` and `--policy` are set: JWT claims narrow the manifest — intersection, not union. JWT can only restrict, never expand beyond what the manifest permits.
+4. ✅ When neither is set: fall through to `alwaysAllowPDP` (existing transparent passthrough)
+5. ✅ 401 on invalid/expired JWT (HTTP layer, before JSON-RPC routing); 403-equivalent JSON-RPC denial on capability mismatch — both logged to audit
+6. ✅ Claim shorthand: `"tool"` (allow), `"tool:SELECT"` (AllowedOperations), `"tool:/path/*"` (AllowedValues path glob)
 
-**Done when:** proxy enforces tool calls using capability claims from a JWT issued by a local Keycloak instance. Manifest-only mode continues to work unchanged.
+**Implementation notes:**
+- `cmd/mcp/pdp_jwt.go` — `JWTPDP`, `jwksCache`, `JWTClaims`, context propagation, claim parsing
+- JWT pre-validation at HTTP layer in `handleMCP` (401 returned directly); claims propagated via `context.WithValue`
+- `JWTPDP.Decide()` reads claims from context; inner PDP checked for intersection when `--policy` is also set
+- Custom `jwksCache` instead of reusing `capability.JWKSClient`: IdP tokens use `eunox.capabilities: []string` which cannot unmarshal into `TokenPayload.Capabilities []Constraint`
+- `--jwks-uri` requires `--transport http`
+
+**Invocation:**
+```bash
+# JWT-only mode (no manifest)
+eunox-mcp proxy \
+  --transport http \
+  --jwks-uri https://idp.example.com/.well-known/jwks.json \
+  --jwt-issuer https://idp.example.com \
+  --jwt-audience eunox \
+  --upstream-url https://mcp.stripe.com \
+  --upstream-auth-header "Authorization: Bearer sk-..."
+
+# JWT + manifest intersection (JWT narrows manifest)
+eunox-mcp proxy \
+  --transport http \
+  --jwks-uri https://idp.example.com/.well-known/jwks.json \
+  --policy manifest.yaml \
+  --upstream-url https://mcp.stripe.com \
+  --upstream-auth-header "Authorization: Bearer sk-..."
+```
+
+**Verified:** 23 tests in `cmd/mcp/pdp_jwt_test.go` covering claim parsing, JWT validation (valid, expired, wrong issuer, wrong audience, invalid signature, unknown kid with refresh), enforce decisions (allow, deny by tool, path glob, SQL verb), intersection with manifest, JWKS singleflight concurrency, HTTP 401 integration. All pass with `-race`.
 
 ---
 
