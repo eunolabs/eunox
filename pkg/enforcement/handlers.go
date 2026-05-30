@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -464,8 +465,21 @@ func (e *Engine) handleAllowedValues(_ context.Context, cond capability.Conditio
 	}
 
 	for _, allowed := range av.Values {
+		// Exact match (handles non-string types: bool, number, nil).
 		if reflect.DeepEqual(allowed, argValue) {
 			return nil
+		}
+		// Glob match: when both the pattern and the argument value are strings,
+		// apply path.Match so that values like "/reports/*" match "/reports/q3.pdf".
+		// path.Match uses slash as the separator on all platforms, which is correct
+		// for URL-style path arguments.  A malformed pattern (path.ErrBadPattern)
+		// falls through to the next allowed value rather than causing an error.
+		if pattern, patOK := allowed.(string); patOK {
+			if str, strOK := argValue.(string); strOK {
+				if matched, err := path.Match(pattern, str); err == nil && matched {
+					return nil
+				}
+			}
 		}
 	}
 

@@ -310,7 +310,7 @@ Without this, security review at any enterprise stalls before it reaches an arch
 
 ## Sprint 3 — Failure Demo + Performance (Weeks 3–4)
 
-### T-08 · "OPA/Envoy fails here" reproducible demo
+### T-08 · "OPA/Envoy fails here" reproducible demo ✅
 **Effort:** 3–4 days · **Priority:** P0 · **Depends on:** T-05
 
 This is the most leveraged sales asset in the plan. Every enterprise architect will ask "why can't I just extend OPA?" This demo answers it without a conversation.
@@ -371,7 +371,7 @@ All of the following must be true before Stage 2 begins:
 - [x] JWT PDP mode works with Auth0 and Keycloak
 - [x] Dry-run mode exposed as `--dry-run` CLI flag
 - [x] Demo setup completes in under 10 minutes on a cold machine, validated by someone other than the author
-- [ ] OPA/Envoy failure demo is publicly runnable
+- [x] OPA/Envoy failure demo is publicly runnable (`demo/opa-comparison/`, `make scenario-1/2/3`)
 - [x] Threat model published at `docs/threat-model-mcp.md`
 - [ ] Audit log schema has not changed for 2 consecutive weeks
 - [ ] 3 production or active staging deployments running

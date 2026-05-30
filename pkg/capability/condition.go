@@ -83,6 +83,8 @@ type CustomCondition struct {
 // AllowedValuesCondition limits a named argument to a fixed set of allowed values.
 // The Argument field names the key in EnforceRequest.Arguments to check.
 // Values contains the allowed scalar values (string, number, boolean, or null).
+// String values are matched both by exact equality and by path.Match glob patterns,
+// so "/reports/*" matches "/reports/q3.pdf" but not "/internal/secret.txt".
 type AllowedValuesCondition struct {
 	Argument string        `json:"argument"`
 	Values   []interface{} `json:"values"`
