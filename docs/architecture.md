@@ -1,4 +1,6 @@
-# eunox — Architecture Overview
+# eunox — Architecture Overview (Enterprise Deployment)
+
+> **Scope:** This document covers the full 6-service eunox platform for enterprise deployments (gateway, issuer, minter, audit ledger, posture emitter, control plane). If you are evaluating `eunox-mcp` as a standalone proxy, start with the [demo](../demo/README.md) and the [README](../README.md) instead.
 
 > **Status:** ✅ Reflects the current two-folder workspace layout as of May 2026.
 >
