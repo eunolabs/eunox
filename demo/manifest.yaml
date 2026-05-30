@@ -1,0 +1,33 @@
+# demo/manifest.yaml — capability manifest for the eunox demo.
+#
+# This policy is loaded by eunox-mcp in the docker-compose stack.
+# It controls what the "demo-agent" is allowed to do against the mock MCP server.
+#
+# Rules:
+#   read_file  — allowed only for paths under /reports/
+#   query_db   — allowed only for SELECT; rate-limited to 5 calls per session
+#   write_file — intentionally absent → denied by default
+#
+# When JWT mode is active (make up-jwt), the intersection of JWT claims and this
+# manifest is enforced: the JWT can only restrict further, never expand.
+
+name: demo-policy
+version: "1.0"
+
+capabilities:
+  - resource: read_file
+    actions: [call]
+    conditions:
+      - type: allowedValues
+        field: path
+        values:
+          - "/reports/*"
+
+  - resource: query_db
+    actions: [call]
+    conditions:
+      - type: maxCalls
+        limit: 5
+      - type: allowedOperations
+        operations:
+          - SELECT

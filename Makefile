@@ -55,17 +55,17 @@ vet:
 generate:
 	$(GO) generate ./...
 
-## Check license headers: BUSL-1.1 everywhere except cmd/mcp/ (Apache-2.0)
+## Check license headers: BUSL-1.1 everywhere except cmd/mcp/ and demo/ (Apache-2.0)
 check-license:
 	@echo "Checking license headers..."
 	@fail=0; \
-	for f in $$(find . -name '*.go' -not -path './vendor/*' -not -path './cmd/mcp/*'); do \
+	for f in $$(find . -name '*.go' -not -path './vendor/*' -not -path './cmd/mcp/*' -not -path './demo/*'); do \
 		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: BUSL-1.1"; then \
 			echo "MISSING BUSL LICENSE HEADER: $$f"; \
 			fail=1; \
 		fi; \
 	done; \
-	for f in $$(find ./cmd/mcp -name '*.go'); do \
+	for f in $$(find ./cmd/mcp ./demo -name '*.go'); do \
 		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: Apache-2.0"; then \
 			echo "MISSING APACHE LICENSE HEADER: $$f"; \
 			fail=1; \
