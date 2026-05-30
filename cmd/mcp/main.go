@@ -138,6 +138,11 @@ Flags:
 	// Dry-run flag.
 	dryRun := fs.Bool("dry-run", false, "Evaluate policies but do not block tool calls.\nDenials are logged to the audit trail with dry_run=true but the request is forwarded.\nUse for observation mode before production enforcement.")
 
+	// Redis flags (optional — in-memory is used when absent).
+	redisAddr := fs.String("redis-addr", "", "Redis address (host:port) for persistent call-counter and kill-switch state.\nWhen set, state survives proxy restarts and is shared across instances.\nExample: --redis-addr localhost:6379")
+	redisPassword := fs.String("redis-password", "", "Redis password (AUTH). Leave empty for unauthenticated connections.")
+	redisTLS := fs.Bool("redis-tls", false, "Enable TLS for the Redis connection.")
+
 	// Find the optional '--' separator between proxy flags and the upstream command.
 	allArgs := os.Args[2:]
 	ddIdx := -1
@@ -213,6 +218,30 @@ Flags:
 		os.Exit(1)
 	}
 
+	// Build call counter and kill-switch manager.
+	// These are created before loading manifests so both the ManifestPDP and
+	// the HTTP proxy's kill-switch endpoint share the same backend instance.
+	var (
+		counter          callcounter.Store  = callcounter.NewInMemory()
+		ks               killswitch.Manager = killswitch.NewInMemory()
+		ksRedis          *killswitch.Redis  // non-nil when --redis-addr is set
+	)
+	if *redisAddr != "" {
+		rdb, err := buildRedisClient(*redisAddr, *redisPassword, *redisTLS)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "eunox-mcp proxy: Redis configuration error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := pingRedis(context.Background(), rdb); err != nil {
+			fmt.Fprintf(os.Stderr, "eunox-mcp proxy: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "[eunox-mcp] Redis backend enabled (%s). State persists across restarts.\n", *redisAddr)
+		counter = callcounter.NewRedis(rdb)
+		ksRedis = killswitch.NewRedis(rdb)
+		ks = ksRedis
+	}
+
 	// Load manifest(s).
 	var pdp PolicyDecisionPoint
 	if len(*policyFiles) > 0 {
@@ -239,9 +268,7 @@ Flags:
 			os.Exit(1)
 		}
 
-		counter := callcounter.NewInMemory()
 		engine := enforcement.New(enforcement.WithCallCounter(counter))
-		ks := killswitch.NewInMemory()
 		pdp = NewManifestPDP(merged, engine, ks).WithResolver(resolver)
 	}
 
@@ -276,6 +303,10 @@ Flags:
 		<-sigCh
 		cancel()
 	}()
+
+	if ksRedis != nil {
+		ksRedis.Start(ctx)
+	}
 
 	switch *transport {
 	case "stdio":
@@ -312,13 +343,6 @@ Flags:
 				Audience: *jwtAudience,
 				Inner:    pdp, // nil when no --policy; intersection with manifest when both are set
 			})
-		}
-
-		var ks killswitch.Manager
-		if mp, ok := pdp.(*ManifestPDP); ok {
-			ks = mp.ks
-		} else {
-			ks = killswitch.NewInMemory()
 		}
 
 		// When --jwks-uri is set, the JWTPDP is the primary PDP; the manifest
