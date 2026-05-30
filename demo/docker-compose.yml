@@ -58,14 +58,19 @@ services:
       - "8081:8080"
     restart: unless-stopped
     healthcheck:
+      # curl is available in the Keycloak UBI image.  Checking the eunox-demo
+      # realm's OIDC discovery endpoint confirms both that Keycloak is serving
+      # HTTP *and* that the realm import has completed — both are required before
+      # eunox-mcp can validate JWTs.
+      # Note: /dev/tcp is a bash-only feature; CMD-SHELL runs under /bin/sh so
+      # it cannot be used here.
       test:
         - "CMD-SHELL"
-        - |
-          exec 3<>/dev/tcp/localhost/8080 && echo -e "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q '"status":"UP"' <&3
+        - "curl -sf http://localhost:8080/realms/eunox-demo/.well-known/openid-configuration > /dev/null"
       interval: 10s
       timeout: 5s
-      retries: 15
-      start_period: 20s
+      retries: 18
+      start_period: 30s
 
   # ── eunox-mcp ──────────────────────────────────────────────────────
   # Policy-enforcement proxy in manifest-only mode.

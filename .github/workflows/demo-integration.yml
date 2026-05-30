@@ -122,8 +122,9 @@ jobs:
   demo-jwt:
     name: "T-05 demo / JWT mode"
     runs-on: ubuntu-latest
-    # Keycloak needs ~30 s to start; allow extra headroom for slow runners.
-    timeout-minutes: 25
+    # Keycloak startup + 18 health-check retries (10 s each) + 30 s start_period
+    # = up to ~3.5 min just for Keycloak, plus image build and test run.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
