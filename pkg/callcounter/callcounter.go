@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package callcounter provides a sliding-window call counter for rate limiting.
 package callcounter

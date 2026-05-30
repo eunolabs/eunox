@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package capability tests capability token JSON models and related payload types.
 package capability

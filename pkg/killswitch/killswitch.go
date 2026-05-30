@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package killswitch provides kill-switch management for blocking agents, sessions, or all traffic.
 package killswitch

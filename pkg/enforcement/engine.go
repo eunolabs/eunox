@@ -1,5 +1,5 @@
 // Copyright 2026 Eunolabs, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Apache-2.0
 
 // Package enforcement implements the capability enforcement engine that evaluates
 // conditions against incoming requests and produces allow/deny decisions.
