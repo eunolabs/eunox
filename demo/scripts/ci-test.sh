@@ -117,6 +117,31 @@ check \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_db","arguments":{"query":"DROP TABLE reports"}}}' \
   deny
 
+# ── audit HMAC verification ────────────────────────────────────────────────
+
+echo ""
+echo "==> Verifying audit log HMAC signatures ..."
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_FILE="$(dirname "$SCRIPT_DIR")/docker-compose.yml"
+
+vt_exit=0
+vt_out=$(docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+  eunox-mcp validate-token \
+  --audit-log /audit/audit.jsonl \
+  --audit-key-path /audit/audit.key) || vt_exit=$?
+
+summary=$(printf '%s\n' "$vt_out" | grep '^Checked' || true)
+
+if [[ $vt_exit -eq 0 && -n "$summary" ]]; then
+  printf 'PASS  validate-token: %s\n' "$summary"
+  ((pass++)) || true
+else
+  printf '%s\n' "$vt_out"
+  printf 'FAIL  validate-token: %s\n' "${summary:-no summary output}"
+  ((fail++)) || true
+fi
+
 # ── results ───────────────────────────────────────────────────────────────────
 
 echo ""

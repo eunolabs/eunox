@@ -138,7 +138,7 @@ make -C demo allow
 
 Expected: `"isError": false` and mock file contents in the response.
 
-- [x] Allow response contains `"isError": false`
+- [ ] Allow response contains `"isError": false`
 
 **Denied call — `write_file` (not in manifest):**
 
@@ -148,7 +148,7 @@ make -C demo deny
 
 Expected: `"isError": true` and `"code":"AUTHORIZATION_FAILED"`.
 
-- [x] Deny response contains `AUTHORIZATION_FAILED`
+- [ ] Deny response contains `AUTHORIZATION_FAILED`
 
 **Denied call — `read_file /etc/shadow` (wrong path):**
 
@@ -158,7 +158,7 @@ make -C demo deny-path
 
 Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"argument":"path"` in details.
 
-- [x] Deny response contains `CONDITION_FAILED`
+- [ ] Deny response contains `CONDITION_FAILED`
 
 **Denied call — `query_db DELETE` (wrong SQL op):**
 
@@ -168,7 +168,7 @@ make -C demo deny-op
 
 Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"allowedOperations"` in details.
 
-- [x] Deny response contains `CONDITION_FAILED`
+- [ ] Deny response contains `CONDITION_FAILED`
 
 **Audit log — verify records and HMAC chain:**
 
@@ -197,9 +197,9 @@ Expected: `Checked N record(s): N valid, 0 invalid, 0 skipped.`
 make -C demo ci-test
 ```
 
-This starts the stack, runs all assertions from `demo/scripts/ci-test.sh`, and tears down. Expect `Results: 8 passed, 0 failed`.
+This starts the stack, runs all assertions from `demo/scripts/ci-test.sh`, and tears down. Expect `Results: 9 passed, 0 failed`.
 
-- [x] `ci-test` exits 0 with 8/8 passing
+- [ ] `ci-test` exits 0 with 9/9 passing
 
 ### 3b — JWT mode (manifest + IdP claims)
 
@@ -393,7 +393,7 @@ Replace the local build with the published image to confirm the release is funct
 make -C demo ci-test
 ```
 
-- [ ] `ci-test` passes 8/8 using the published image
+- [ ] `ci-test` passes 9/9 using the published image
 
 ### 7.4 Verify pkg.go.dev indexing
 
