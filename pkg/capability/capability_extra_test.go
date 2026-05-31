@@ -121,3 +121,40 @@ func TestConditionJSONMalformedTypeField(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "null", string(data))
 }
+
+func TestConditionWrapper_UnmarshalJSON_Null(t *testing.T) {
+	var w ConditionWrapper
+	err := json.Unmarshal([]byte("null"), &w)
+	require.NoError(t, err)
+	assert.Nil(t, w.Condition)
+}
+
+func TestSchemaType_MarshalJSON_Null(t *testing.T) {
+	data, err := json.Marshal(SchemaType{})
+	require.NoError(t, err)
+	assert.Equal(t, "null", string(data))
+}
+
+func TestSchemaType_UnmarshalJSON_InvalidType(t *testing.T) {
+	var s SchemaType
+	err := json.Unmarshal([]byte("123"), &s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema type must be string, array of strings, or null")
+}
+
+func TestConstraint_MarshalJSON_NilConditions(t *testing.T) {
+	c := Constraint{Resource: "r", Actions: []string{"a"}}
+	data, err := json.Marshal(c)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), `"conditions"`)
+}
+
+// TestConstraint_UnmarshalJSON_MalformedJSON verifies that Constraint.UnmarshalJSON
+// propagates errors when the input JSON cannot be decoded.
+func TestConstraint_UnmarshalJSON_MalformedJSON(t *testing.T) {
+	t.Parallel()
+	var c Constraint
+	// "conditions" must be an array; a scalar string triggers a type mismatch error.
+	err := json.Unmarshal([]byte(`{"resource":"r","conditions":"not-an-array"}`), &c)
+	require.Error(t, err, "UnmarshalJSON must return an error for malformed conditions")
+}

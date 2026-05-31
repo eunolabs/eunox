@@ -5,6 +5,7 @@ package killswitch
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -229,6 +230,75 @@ func TestRedis_Reset_StatePreservedOnError(t *testing.T) {
 	assert.True(t, globalStillActive, "global state must be preserved when Reset fails")
 }
 
+func TestRedis_DeactivateGlobal(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.NewMiniRedis()
+	require.NoError(t, mr.Start())
+	t.Cleanup(mr.Close)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	r := NewRedis(client)
+	ctx := context.Background()
+
+	// Activate then deactivate — ShouldBlock must go false.
+	require.NoError(t, r.ActivateGlobal(ctx))
+	r.mu.RLock()
+	assert.True(t, r.globalActive)
+	r.mu.RUnlock()
+
+	require.NoError(t, r.DeactivateGlobal(ctx))
+	r.mu.RLock()
+	assert.False(t, r.globalActive)
+	r.mu.RUnlock()
+
+	blocked, err := r.ShouldBlock(ctx, "", "")
+	require.NoError(t, err)
+	assert.False(t, blocked)
+}
+
+func TestRedis_ReviveSession(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.NewMiniRedis()
+	require.NoError(t, mr.Start())
+	t.Cleanup(mr.Close)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	r := NewRedis(client)
+	ctx := context.Background()
+
+	require.NoError(t, r.KillSession(ctx, "sess-abc"))
+	r.mu.RLock()
+	assert.True(t, r.killedSessions["sess-abc"])
+	r.mu.RUnlock()
+
+	require.NoError(t, r.ReviveSession(ctx, "sess-abc"))
+	r.mu.RLock()
+	assert.False(t, r.killedSessions["sess-abc"])
+	r.mu.RUnlock()
+
+	blocked, err := r.ShouldBlock(ctx, "", "sess-abc")
+	require.NoError(t, err)
+	assert.False(t, blocked)
+}
+
+func TestRedis_Status(t *testing.T) {
+	t.Parallel()
+	r := &Redis{
+		globalActive:   true,
+		killedAgents:   map[string]bool{"agent-1": true, "agent-2": true},
+		killedSessions: map[string]bool{"sess-1": true},
+	}
+
+	status, err := r.Status(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.True(t, status.GlobalActive)
+	assert.ElementsMatch(t, []string{"agent-1", "agent-2"}, status.KilledAgents)
+	assert.Equal(t, []string{"sess-1"}, status.KilledSessions)
+}
+
 func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
 	t.Parallel()
 
@@ -257,4 +327,30 @@ func TestRedis_WithLogger_LogsRefreshFailure(t *testing.T) {
 	defer r.Stop()
 
 	assert.Contains(t, buf.String(), "initial state refresh failed")
+}
+
+func TestRedis_HandlePubSubMessage_UnknownPayload_WithClient(t *testing.T) {
+	t.Parallel()
+
+	// Create a live miniredis so refreshState succeeds.
+	mr := miniredis.NewMiniRedis()
+	require.NoError(t, mr.Start())
+	t.Cleanup(mr.Close)
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), DialTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = client.Close() })
+
+	r := NewRedis(client)
+	r.Start(t.Context())
+	defer r.Stop()
+
+	// Unknown payload triggers shouldRefresh = true and calls refreshState with
+	// the live client — must complete without panic.
+	r.handlePubSubMessage("unknown-xyz")
+
+	// After refresh from empty Redis, globalActive must still be false.
+	r.mu.RLock()
+	globalActive := r.globalActive
+	r.mu.RUnlock()
+	assert.False(t, globalActive)
 }
