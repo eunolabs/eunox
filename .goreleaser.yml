@@ -1,0 +1,127 @@
+# goreleaser configuration for eunox
+# See https://goreleaser.com/customization/
+
+version: 2
+
+project_name: eunox
+
+before:
+  hooks:
+    - make check-license
+
+builds:
+  # ── eunox-mcp (public, Apache-2.0) ─────────────────────────────────────────
+  # The primary open-source binary.  Builds for 5 platforms including Windows
+  # so Claude Desktop users on all platforms can install via `go install` or
+  # a pre-built release binary.
+  - id: mcp
+    main: ./cmd/mcp
+    binary: eunox-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Exclude the unsupported darwin/arm64 + windows/arm64 combination —
+    # goreleaser will still build linux/arm64 and darwin/arm64.
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  # eunox-mcp archive: include the Apache-2.0 license from cmd/mcp/LICENSE.
+  - id: mcp
+    ids: [mcp]
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "eunox-mcp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: cmd/mcp/LICENSE
+        dst: LICENSE
+      - README.md
+
+dockers:
+  # ── eunox-mcp ───────────────────────────────────────────────────────────────
+  - id: mcp-amd64
+    ids: [mcp]
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+    dockerfile: deploy/docker/Dockerfile.mcp
+    build_flag_templates:
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.title=eunox-mcp"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=TARGETARCH=amd64"
+
+  - id: mcp-arm64
+    ids: [mcp]
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+    dockerfile: deploy/docker/Dockerfile.mcp
+    build_flag_templates:
+      - "--label=org.opencontainers.image.source=https://github.com/eunolabs/eunox"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.title=eunox-mcp"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=TARGETARCH=arm64"
+
+docker_manifests:
+  # ── eunox-mcp ───────────────────────────────────────────────────────────────
+  - name_template: "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/eunolabs/eunox-mcp:latest"
+    image_templates:
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/eunolabs/eunox-mcp:{{ .Version }}-arm64"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))?!?:.+$'
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))?!?:.+$'
+    - title: "🔒 Security"
+      regexp: '^.*?sec(\([[:word:]]+\))?!?:.+$'
+    - title: "Others"
+      order: 999
+
+release:
+  github:
+    owner: eunolabs
+    name: eunox
+  prerelease: auto
+  draft: false
+  name_template: "v{{ .Version }}"

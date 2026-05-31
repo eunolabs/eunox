@@ -1,0 +1,157 @@
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# End-to-end integration tests for all eunox demos:
+#   - manifest-only and JWT-mode (demo/)
+#   - OPA/Envoy comparison demo (demo/opa-comparison/)
+#
+# Each job builds its Docker Compose stack, runs the test script, and always
+# tears down afterwards.  Jobs run in parallel on separate runners so there
+# are no port conflicts.
+#
+# Triggered on:
+#   - push / PR touching demo code, enforcement engine, proxy, or Dockerfile
+#   - manual dispatch (workflow_dispatch)
+#
+# All required tools are pre-installed on ubuntu-latest:
+#   Docker Engine + Compose v2, jq, make, curl, bash
+
+name: Demo Integration Tests
+
+on:
+  push:
+    branches: [main, "copilot/**"]
+    paths:
+      - "demo/**"
+      - "pkg/enforcement/**"
+      - "cmd/mcp/**"
+      - "deploy/docker/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "demo/**"
+      - "pkg/enforcement/**"
+      - "cmd/mcp/**"
+      - "deploy/docker/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: demo-integration-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  opa-comparison:
+    name: "OPA comparison / ${{ matrix.scenario }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      # Keep running the other scenarios even if one fails so we see
+      # all failures in a single CI run rather than one at a time.
+      fail-fast: false
+      matrix:
+        scenario: [scenario-1, scenario-2, scenario-3]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker compose version
+          jq --version
+          make --version | head -1
+
+      - name: Run ${{ matrix.scenario }}
+        run: make -C demo/opa-comparison ${{ matrix.scenario }}
+        # CI=true is already set by GitHub Actions; common.sh reads it to
+        # suppress ANSI colour codes so the log output is clean.
+
+      # On failure, capture container logs before the Makefile cleanup
+      # removes the stack.  The cleanup step in the Makefile always runs
+      # (see the ;STATUS=$$?; pattern), but Docker may already be down
+      # when this step fires — the "|| true" handles that gracefully.
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f demo/opa-comparison/docker-compose.yml \
+            logs --no-color --timestamps 2>/dev/null || true
+
+      - name: Force cleanup on failure
+        if: failure()
+        run: |
+          docker compose -f demo/opa-comparison/docker-compose.yml \
+            down --remove-orphans --volumes 2>/dev/null || true
+
+  # ── demo: manifest-only mode ──────────────────────────────────────────────
+  demo-manifest:
+    name: "demo / manifest-only"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker compose version
+          jq --version
+
+      - name: Run manifest-only integration tests
+        run: make -C demo ci-test
+        # Starts mock-mcp-server + eunox-mcp (Keycloak skipped via --scale 0).
+        # CI=true is set by GitHub Actions; color output is suppressed.
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f demo/docker-compose.yml \
+            logs --no-color --timestamps 2>/dev/null || true
+
+      - name: Force cleanup on failure
+        if: failure()
+        run: |
+          docker compose -f demo/docker-compose.yml \
+            down --remove-orphans --volumes 2>/dev/null || true
+
+  # ── demo: JWT mode ────────────────────────────────────────────────────────
+  demo-jwt:
+    name: "demo / JWT mode"
+    runs-on: ubuntu-latest
+    # Keycloak startup + 18 health-check retries (10 s each) + 30 s start_period
+    # = up to ~3.5 min just for Keycloak, plus image build and test run.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print toolchain versions
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker compose version
+          jq --version
+
+      - name: Run JWT-mode integration tests
+        run: make -C demo ci-test-jwt
+        # Starts mock-mcp-server + Keycloak + eunox-mcp (JWT overlay).
+        # --wait blocks until Keycloak's healthcheck passes before running tests.
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f demo/docker-compose.yml \
+            -f demo/docker-compose.jwt.yml \
+            logs --no-color --timestamps 2>/dev/null || true
+
+      - name: Force cleanup on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f demo/docker-compose.yml \
+            -f demo/docker-compose.jwt.yml \
+            down --remove-orphans --volumes 2>/dev/null || true

@@ -1,0 +1,100 @@
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - revive
+    - gosec
+    - misspell
+    - unconvert
+    - unparam
+    - noctx
+    - contextcheck
+
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - "checkPrivateReceivers"
+    gosec:
+      excludes:
+        - G404 # Allow math/rand for non-crypto uses (test helpers)
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+          - noctx
+          - contextcheck
+      - path: kms_stub\.go
+        linters:
+          - unparam
+          - noctx
+      # Pre-existing contextcheck suppressions for background/lifecycle patterns
+      # where context is intentionally created from lifecycle ctx rather than passed.
+      - path: pkg/audit/transport\.go
+        linters:
+          - contextcheck
+      - path: pkg/killswitch/redis\.go
+        text: "handlePubSubMessage"
+        linters:
+          - contextcheck
+      # partitioned.go starts per-agent subscriptions from the service lifecycle
+      # context (p.lifecycleCtx), not from the request context. The subscription
+      # must outlive any single ShouldBlock call.
+      - path: pkg/killswitch/partitioned\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck
+      - path: pkg/lifecycle/lifecycle\.go
+        linters:
+          - contextcheck
+      # async_pipeline.go deliberately falls back to context.Background() when the
+      # parent context is already cancelled, so the inner pipeline write still completes.
+      - path: pkg/audit/async_pipeline\.go
+        linters:
+          - contextcheck
+      # tracingTransport.RoundTrip must use req.Context() – the request carries its own
+      # context per the http.RoundTripper contract; not a "non-inherited" context.
+      - path: internal/gateway/jwks_verifier\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck
+      # slog.Handler interface requires slog.Record by value; cannot change the signature.
+      - path: pkg/audit/async_pipeline_test\.go
+        text: "hugeParam"
+        linters:
+          - gocritic
+      # cmd/mcp: rpcMsg and options structs are intentionally passed by value for
+      # clarity at call sites; copy overhead is acceptable in this proxy.
+      - path: cmd/mcp/
+        text: "hugeParam"
+        linters:
+          - gocritic
+      # cmd/mcp: os.Exit on fatal errors is intentional; deferred file close is
+      # not critical when the process is terminating (OS cleans up).
+      - path: cmd/mcp/
+        text: "exitAfterDefer"
+        linters:
+          - gocritic
+      # cmd/mcp: graceful HTTP shutdown uses context.Background() because the
+      # server context is already cancelled; the fresh timeout is intentional.
+      - path: cmd/mcp/http\.go
+        text: "Non-inherited new context"
+        linters:
+          - contextcheck
