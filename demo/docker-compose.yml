@@ -90,6 +90,7 @@ services:
       - --upstream-url=http://mock-mcp-server:8080
       - --policy=/demo/manifest.yaml
       - --audit-log=/audit/audit.jsonl
+      - --audit-key-path=/audit/audit.key
     volumes:
       - ./manifest.yaml:/demo/manifest.yaml:ro
       - ./audit:/audit
