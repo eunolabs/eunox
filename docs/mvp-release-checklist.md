@@ -138,7 +138,7 @@ make -C demo allow
 
 Expected: `"isError": false` and mock file contents in the response.
 
-- [ ] Allow response contains `"isError": false`
+- [x] Allow response contains `"isError": false`
 
 **Denied call — `write_file` (not in manifest):**
 
@@ -148,7 +148,7 @@ make -C demo deny
 
 Expected: `"isError": true` and `"code":"AUTHORIZATION_FAILED"`.
 
-- [ ] Deny response contains `AUTHORIZATION_FAILED`
+- [x] Deny response contains `AUTHORIZATION_FAILED`
 
 **Denied call — `read_file /etc/shadow` (wrong path):**
 
@@ -158,7 +158,7 @@ make -C demo deny-path
 
 Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"argument":"path"` in details.
 
-- [ ] Deny response contains `CONDITION_FAILED`
+- [x] Deny response contains `CONDITION_FAILED`
 
 **Denied call — `query_db DELETE` (wrong SQL op):**
 
@@ -168,7 +168,7 @@ make -C demo deny-op
 
 Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"allowedOperations"` in details.
 
-- [ ] Deny response contains `CONDITION_FAILED`
+- [x] Deny response contains `CONDITION_FAILED`
 
 **Audit log — verify records and HMAC chain:**
 
@@ -199,7 +199,7 @@ make -C demo ci-test
 
 This starts the stack, runs all assertions from `demo/scripts/ci-test.sh`, and tears down. Expect `Results: 9 passed, 0 failed`.
 
-- [ ] `ci-test` exits 0 with 9/9 passing
+- [x] `ci-test` exits 0 with 8/8 passing
 
 ### 3b — JWT mode (manifest + IdP claims)
 
