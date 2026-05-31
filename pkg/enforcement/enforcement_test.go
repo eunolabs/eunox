@@ -11,10 +11,14 @@ import (
 	"github.com/eunolabs/eunox/pkg/callcounter"
 	"github.com/eunolabs/eunox/pkg/capability"
 	"github.com/eunolabs/eunox/pkg/enforcement"
-	"github.com/eunolabs/eunox/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeClock struct{ now time.Time }
+
+func newFakeClock(t time.Time) *fakeClock { return &fakeClock{now: t} }
+func (fc *fakeClock) Now() time.Time      { return fc.now }
 
 func TestEngine_ValidateAction_NoMatchingCapability(t *testing.T) {
 	engine := enforcement.New()
@@ -90,7 +94,7 @@ func TestEngine_ValidateAction_PrefixMatch(t *testing.T) {
 
 func TestEngine_TimeWindow_Allow(t *testing.T) {
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	clock := testutil.NewFakeClock(now)
+	clock := newFakeClock(now)
 	engine := enforcement.New(enforcement.WithClock(clock))
 	ctx := context.Background()
 
@@ -118,7 +122,7 @@ func TestEngine_TimeWindow_Allow(t *testing.T) {
 
 func TestEngine_TimeWindow_DenyBefore(t *testing.T) {
 	now := time.Date(2025, 6, 15, 9, 0, 0, 0, time.UTC)
-	clock := testutil.NewFakeClock(now)
+	clock := newFakeClock(now)
 	engine := enforcement.New(enforcement.WithClock(clock))
 	ctx := context.Background()
 
@@ -146,7 +150,7 @@ func TestEngine_TimeWindow_DenyBefore(t *testing.T) {
 
 func TestEngine_TimeWindow_DenyAfter(t *testing.T) {
 	now := time.Date(2025, 6, 15, 15, 0, 0, 0, time.UTC)
-	clock := testutil.NewFakeClock(now)
+	clock := newFakeClock(now)
 	engine := enforcement.New(enforcement.WithClock(clock))
 	ctx := context.Background()
 
@@ -916,7 +920,7 @@ func TestEngine_RegisterCustomCondition(t *testing.T) {
 
 func TestEngine_MultipleConditions_AllMustPass(t *testing.T) {
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	clock := testutil.NewFakeClock(now)
+	clock := newFakeClock(now)
 	engine := enforcement.New(enforcement.WithClock(clock))
 	ctx := context.Background()
 
@@ -950,7 +954,7 @@ func TestEngine_MultipleConditions_AllMustPass(t *testing.T) {
 
 func TestEngine_MultipleConditions_FirstFailureDenies(t *testing.T) {
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	clock := testutil.NewFakeClock(now)
+	clock := newFakeClock(now)
 	engine := enforcement.New(enforcement.WithClock(clock))
 	ctx := context.Background()
 
@@ -1027,7 +1031,7 @@ func TestEngine_AllowedExtensions_FromArguments(t *testing.T) {
 func TestEngine_TimeWindow_IgnoresRequestContextNow(t *testing.T) {
 	// req.Context.Now must be ignored; the server clock is always authoritative
 	fixedTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	engine := enforcement.New(enforcement.WithClock(testutil.NewFakeClock(fixedTime)))
+	engine := enforcement.New(enforcement.WithClock(newFakeClock(fixedTime)))
 	ctx := context.Background()
 
 	req := capability.EnforceRequest{

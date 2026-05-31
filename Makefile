@@ -1,5 +1,5 @@
 # Copyright 2026 Eunolabs, LLC
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: Apache-2.0
 
 VERSION ?= 0.1.0
 GO ?= go
@@ -15,16 +15,10 @@ DOCKERFILE_MCP_WIN := deploy/docker/Dockerfile.mcp.windows
 
 all: lint test build
 
-## Build all service binaries to ./bin/
+## Build the eunox-mcp binary to ./bin/
 build:
 	mkdir -p bin
-	$(GO) build -o bin/eunox-gateway           	./cmd/gateway
-	$(GO) build -o bin/eunox-issuer            	./cmd/issuer
-	$(GO) build -o bin/eunox-minter            	./cmd/minter
-	$(GO) build -o bin/eunox-db-token-svc      	./cmd/db-token-svc
-	$(GO) build -o bin/eunox-storage-grant-svc 	./cmd/storage-grant-svc
-	$(GO) build -o bin/eunox-posture-emitter   	./cmd/posture-emitter
-	$(GO) build -o bin/eunox-mcp         		./cmd/mcp
+	$(GO) build -o bin/eunox-mcp ./cmd/mcp
 
 ## Run tests with race detector
 test:
@@ -55,46 +49,11 @@ vet:
 generate:
 	$(GO) generate ./...
 
-## Check license headers.
-##
-## Apache-2.0 (open-source MVP surface):
-##   cmd/mcp/                    — proxy binary
-##   demo/                       — demo scripts and examples
-##   internal/agentruntime/      — manifest parsing used by cmd/mcp
-##   pkg/callcounter/            — call-count enforcement
-##   pkg/capability/             — policy decision types and enforcement interface
-##   pkg/circuitbreaker/         — circuit-breaker used by capability layer
-##   pkg/enforcement/            — enforcement engine
-##   pkg/killswitch/             — kill-switch manager
-##   pkg/redisfailover/          — Redis failover client (used by callcounter + killswitch)
-##
-## BUSL-1.1 (everything else — enterprise platform services):
-##   All remaining *.go files not listed above.
+## Check license headers — all Go files must carry Apache-2.0.
 check-license:
 	@echo "Checking license headers..."
 	@fail=0; \
-	APACHE_PATHS="./cmd/mcp ./demo ./internal/agentruntime ./pkg/callcounter ./pkg/capability ./pkg/circuitbreaker ./pkg/enforcement ./pkg/killswitch ./pkg/redisfailover"; \
-	APACHE_FIND_ARGS=""; \
-	for p in $$APACHE_PATHS; do APACHE_FIND_ARGS="$$APACHE_FIND_ARGS -path '$$p/*' -o"; done; \
-	for f in $$(find . -name '*.go' -not -path './vendor/*' \
-		-not -path './cmd/mcp/*' \
-		-not -path './demo/*' \
-		-not -path './internal/agentruntime/*' \
-		-not -path './pkg/callcounter/*' \
-		-not -path './pkg/capability/*' \
-		-not -path './pkg/circuitbreaker/*' \
-		-not -path './pkg/enforcement/*' \
-		-not -path './pkg/killswitch/*' \
-		-not -path './pkg/redisfailover/*'); do \
-		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: BUSL-1.1"; then \
-			echo "MISSING BUSL LICENSE HEADER: $$f"; \
-			fail=1; \
-		fi; \
-	done; \
-	for f in $$(find ./cmd/mcp ./demo ./internal/agentruntime \
-		./pkg/callcounter ./pkg/capability ./pkg/circuitbreaker \
-		./pkg/enforcement ./pkg/killswitch ./pkg/redisfailover \
-		-name '*.go'); do \
+	for f in $$(find . -name '*.go' -not -path './vendor/*'); do \
 		if ! head -2 "$$f" | grep -q "SPDX-License-Identifier: Apache-2.0"; then \
 			echo "MISSING APACHE LICENSE HEADER: $$f"; \
 			fail=1; \

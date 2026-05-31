@@ -85,16 +85,16 @@ The GitHub Actions workflow (`.github/workflows/go-ci.yml`) runs:
 
 - `go vet` + `golangci-lint`
 - Tests with race detector and 80% coverage threshold for `pkg/`
-- BSL license header check
+- Apache-2.0 license header check
 - Cross-compilation (linux/amd64, linux/arm64, windows/amd64, windows/arm64)
 
 ## Local Development Stack
 
 ```bash
-# Start full local stack with Docker Compose
-docker compose -f infra/docker-compose.yml --profile full up --build
+# Start local demo stack
+docker compose -f demo/docker-compose.yml up --build
 ```
 
 ## License
 
-All code is licensed under Business Source License 1.1 (BUSL-1.1).
+All code is licensed under the Apache License 2.0. See [`cmd/mcp/LICENSE`](../cmd/mcp/LICENSE).

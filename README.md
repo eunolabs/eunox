@@ -214,9 +214,5 @@ See the JWT mode walkthrough in [`demo/README.md`](./demo/README.md#step-3--jwt-
 
 ## License
 
-**`cmd/mcp/`** (`eunox-mcp` binary) — **Apache License 2.0** — free to use, embed,
-redistribute, and build on. See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE).
-
-**The rest of the eunox platform** (gateway, issuer, minter, enforcement packages) —
-**Business Source License 1.1**. See [`docs/licensing-faq.md`](./docs/licensing-faq.md)
-for a plain-English breakdown of what you can and cannot do.
+**Apache License 2.0** — free to use, embed, redistribute, and build on.
+See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE) and [`docs/licensing-faq.md`](./docs/licensing-faq.md).
