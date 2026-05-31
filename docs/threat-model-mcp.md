@@ -426,7 +426,7 @@ When `--redis-addr` is configured, kill-switch and call-counter state are persis
 | Engagement                    | Scope                                       | Status              | Expected completion |
 | ----------------------------- | ------------------------------------------- | ------------------- | ------------------- |
 | Internal code review          | `cmd/mcp/` and its `pkg/` dependencies      | Ongoing             | Continuous          |
-| External penetration test     | Black-box JWT bypass, argument injection, audit HMAC | **Planned post-Stage 2** | 2026-Q4 |
+| External penetration test     | Black-box JWT bypass, argument injection, audit HMAC | Planned | — |
 | SOC 2 readiness               | N/A for the proxy binary (single-binary OSS tool) | Not applicable | —                  |
 
 No external security audit of the `eunox-mcp` proxy has been completed. This document is the primary public security reference for the proxy until an external assessment is published at `docs/security-review.md`.
@@ -440,7 +440,7 @@ Security teams evaluating the proxy for production deployment before the externa
 | L-1 | Session binding       | No cryptographic binding between bearer JWT and session ID (§3.3). Mitigated by `--auth-token` for HTTP transport. | Low | Open |
 | L-2 | Kill-switch gap       | Kill switches activated during a Redis outage do not propagate until Redis recovers (§5.3).                  | Low        | Open   |
 | L-3 | Audit completeness    | Write failures produce a gap in the audit trail without blocking enforcement (§5.4). Mitigated by external log shipping. | Info | Accepted — documented tradeoff |
-| L-4 | SSE notifications     | SSE notifications from a remote `--upstream-url` are not forwarded to the client (MVP limitation, documented in `http_remote.go`). | Info | Deferred to post-MVP |
+| L-4 | SSE notifications     | SSE notifications from a remote `--upstream-url` are not forwarded to the client (documented in `http_remote.go`). | Info | Open |
 | L-5 | X-Forwarded-For trust | When `--trust-forwarded-for` is enabled without a trusted-proxy CIDR restriction, clients can spoof source IP for `IPRange` conditions. | Medium | Open — only enable `--trust-forwarded-for` when the proxy is behind a trusted reverse proxy that strips and rewrites the header |
 
 ### 7.3 Reporting security issues
@@ -458,7 +458,7 @@ We aim to acknowledge security reports within 48 hours and to provide an initial
 
 | Version | Date       | Author                  | Changes             |
 | ------- | ---------- | ----------------------- | ------------------- |
-| 1.0     | 2026-05-29 | Eunolabs Platform Security | Initial publication covering T-01 through T-04 feature set |
+| 1.0     | 2026-05-29 | Eunolabs Platform Security | Initial publication |
 
 ---
 

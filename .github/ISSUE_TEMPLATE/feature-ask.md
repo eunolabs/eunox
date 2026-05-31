@@ -1,9 +1,8 @@
 ---
-name: Feature request / Stage 2 signal
-about: Request a new condition type, cross-process state, shared audit, or other
-  feature beyond the Stage 1 scope
+name: Feature request
+about: Request a new condition type or other feature for eunox-mcp
 title: "[Feature] "
-labels: stage-2-signal
+labels: enhancement
 assignees: ""
 ---
 
@@ -29,10 +28,3 @@ assignees: ""
 - Agent framework (LangChain.js, raw MCP client, Claude Desktop, Cursor, other):
 - OS:
 - Node.js version:
-
----
-
-> **Why this template?** Unsolicited requests for features beyond the current
-> Stage 1 scope are a primary signal for deciding when Stage 2 development
-> begins. Tagging issues with `stage-2-signal` lets us count them.
-> See [docs/mvp.md](../../docs/mvp.md) §"Gate to Stage 2".

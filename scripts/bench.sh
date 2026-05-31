@@ -2,7 +2,7 @@
 # Copyright 2026 Eunolabs, LLC
 # SPDX-License-Identifier: Apache-2.0
 #
-# scripts/bench.sh — eunox-mcp performance benchmark runner (T-09)
+# scripts/bench.sh — eunox-mcp performance benchmark runner
 #
 # Usage:
 #   ./scripts/bench.sh              # default: -count=3 -benchtime=3s

@@ -6,8 +6,8 @@
 
 ## Overview
 
-eunox is a Go monorepo containing all enterprise platform services for AI agent
-policy enforcement via the [Model Context Protocol](https://spec.modelcontextprotocol.io/).
+eunox is a Go repository for `eunox-mcp`, a policy-enforcement proxy for MCP servers,
+built on the [Model Context Protocol](https://spec.modelcontextprotocol.io/).
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ policy enforcement via the [Model Context Protocol](https://spec.modelcontextpro
 ## Build & Test
 
 ```bash
-# Build all services
+# Build eunox-mcp
 make build
 
 # Run all tests with race detector
@@ -38,45 +38,21 @@ make check-license
 
 ```
 eunox/
-├── cmd/                    # Service binaries (main packages)
-│   ├── gateway/            # Enforcement Gateway
-│   ├── issuer/             # Capability Issuer
-│   ├── minter/             # API-Key Minter
-│   ├── db-token-svc/       # DB Token Service
-│   ├── storage-grant-svc/  # Storage Grant Service
-│   ├── posture-emitter/    # Posture Emitter
-│   └── mcp/                # MCP proxy PDP/PEP (Apache-2.0 license)
-├── internal/               # Private application logic (not importable)
-│   ├── gateway/
-│   ├── issuer/
-│   ├── minter/
-│   ├── dbtokensvc/
-│   ├── storagegrantsvc/
-│   ├── agentruntime/
-│   ├── posture/
-│   └── integration/
-├── pkg/                    # Public importable packages
-│   ├── capability/         # Token payload types, constraints, conditions, JWKS verification
-│   ├── callcounter/        # Rate-limit call counting
-│   ├── config/             # Struct-tag validated config loading
-│   ├── crypto/             # Signing adapters (software PEM, KMS)
-│   ├── enforcement/        # PDP enforcement logic
-│   ├── identity/           # Identity/DID resolution
-│   ├── killswitch/         # Emergency kill switch
-│   ├── observability/      # Logging (slog), metrics (Prometheus), tracing (OTel)
-│   ├── ratelimit/          # Rate limiting
-│   ├── revocation/         # Token revocation
-│   ├── audit/              # Audit logging and anchoring
-│   ├── did/                # W3C DID support
-│   ├── federation/         # Cross-org federation
-│   ├── ocsf/               # OCSF event format
-│   └── testutil/           # Shared test helpers
-├── migrations/             # SQL migrations (golang-migrate format)
-├── k8s/                    # Kubernetes manifests & Helm charts
-├── infra/                  # Docker Compose, Terraform, cloud configs
-├── docs/                   # Documentation (all filenames lowercase kebab-case)
-├── site/                   # Astro site (landing page, blog, docs hub)
-└── blogs/                  # Blog content
+├── cmd/
+│   └── mcp/                # eunox-mcp proxy binary (Apache-2.0)
+├── internal/
+│   └── agentruntime/       # Manifest parsing and token management
+├── pkg/                    # Importable packages
+│   ├── capability/         # Constraint types, conditions, JWKS verification
+│   ├── callcounter/        # Rate-limit call counting (in-memory and Redis)
+│   ├── circuitbreaker/     # Circuit-breaker for upstream calls
+│   ├── enforcement/        # PDP enforcement engine
+│   ├── killswitch/         # Emergency kill switch (in-memory and Redis)
+│   └── redisfailover/      # Redis fail-open/fail-closed policies
+├── demo/                   # Runnable demo stack (Docker Compose + scripts)
+├── deploy/docker/          # Dockerfiles for eunox-mcp
+├── docs/                   # Documentation
+└── scripts/                # Development scripts (benchmarks, etc.)
 ```
 
 ## CI

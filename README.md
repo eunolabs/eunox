@@ -138,7 +138,7 @@ OPA and Envoy enforce access control at the HTTP layer — they see the HTTP req
 | **Parameter-dependent authorization at scale** — `read_file` allowed for `/reports/*`, blocked for `/internal/*`. Must be expressed per-parameter across every tool shape. | Complex Rego; rules multiply per tool | `allowedValues` condition: 3 lines per tool, all enforced by the same engine |
 | **Task-lifecycle credential scope** — AWS STS minimum session is 15 minutes. A credential-reading tool should be callable once per task, not for the full token lifetime.  | Time-based expiry only (15 min floor) | `maxCalls: 1` blocks after the first use, regardless of token TTL            |
 
-Runnable demos for all three scenarios: `demo/opa-comparison/` (coming in T-08).
+Runnable demos for all three scenarios: [`demo/opa-comparison/`](./demo/opa-comparison/).
 
 ---
 
@@ -204,15 +204,11 @@ See the JWT mode walkthrough in [`demo/README.md`](./demo/README.md#step-3--jwt-
 
 - 🚀 **Demo — first enforcement in 10 minutes** — [`demo/README.md`](./demo/README.md)
 - 📋 **Capability manifest guide** — [`docs/capability-manifest-guide.md`](./docs/capability-manifest-guide.md)
-- 🔍 **Audit log & compliance** — [`docs/audit-retention-compliance.md`](./docs/audit-retention-compliance.md)
-- 🛡 **Threat model** — [`docs/threat-model.md`](./docs/threat-model.md)
-- 🏗 **Enterprise architecture (6-service platform)** — [`docs/architecture.md`](./docs/architecture.md)
-- 🚢 **Deployment (Helm, EKS, GKE)** — [`docs/deployment.md`](./docs/deployment.md)
-- ⚖️ **Licensing FAQ** — [`docs/licensing-faq.md`](./docs/licensing-faq.md)
+- 🛡 **Threat model** — [`docs/threat-model-mcp.md`](./docs/threat-model-mcp.md)
+- ⚡ **Benchmarks** — [`docs/benchmarks.md`](./docs/benchmarks.md)
 
 ---
 
 ## License
 
 **Apache License 2.0** — free to use, embed, redistribute, and build on.
-See [`cmd/mcp/LICENSE`](./cmd/mcp/LICENSE) and [`docs/licensing-faq.md`](./docs/licensing-faq.md).

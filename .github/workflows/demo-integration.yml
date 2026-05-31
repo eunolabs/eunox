@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # End-to-end integration tests for all eunox demos:
-#   - T-05 demo: manifest-only and JWT-mode (demo/)
-#   - T-08 OPA/Envoy comparison demo (demo/opa-comparison/)
+#   - manifest-only and JWT-mode (demo/)
+#   - OPA/Envoy comparison demo (demo/opa-comparison/)
 #
 # Each job builds its Docker Compose stack, runs the test script, and always
 # tears down afterwards.  Jobs run in parallel on separate runners so there
@@ -86,9 +86,9 @@ jobs:
           docker compose -f demo/opa-comparison/docker-compose.yml \
             down --remove-orphans --volumes 2>/dev/null || true
 
-  # ── T-05 demo: manifest-only mode ─────────────────────────────────────────
+  # ── demo: manifest-only mode ──────────────────────────────────────────────
   demo-manifest:
-    name: "T-05 demo / manifest-only"
+    name: "demo / manifest-only"
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -118,9 +118,9 @@ jobs:
           docker compose -f demo/docker-compose.yml \
             down --remove-orphans --volumes 2>/dev/null || true
 
-  # ── T-05 demo: JWT mode ────────────────────────────────────────────────────
+  # ── demo: JWT mode ────────────────────────────────────────────────────────
   demo-jwt:
-    name: "T-05 demo / JWT mode"
+    name: "demo / JWT mode"
     runs-on: ubuntu-latest
     # Keycloak startup + 18 health-check retries (10 s each) + 30 s start_period
     # = up to ~3.5 min just for Keycloak, plus image build and test run.

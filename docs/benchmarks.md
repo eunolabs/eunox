@@ -1,6 +1,6 @@
-# eunox-mcp Performance Benchmarks (T-09)
+# eunox-mcp Performance Benchmarks
 
-This document records the performance baseline established as part of T-09.
+This document records the performance baseline for `eunox-mcp`.
 All numbers were measured on **Apple M4 (arm64, darwin)** with **Go 1.24**.
 
 ## How to reproduce
@@ -29,7 +29,6 @@ go test -run='^$' -bench=. -benchtime=3s -benchmem -count=3 ./cmd/mcp/ \
 
 ## Targets and measured results
 
-Targets are defined in `docs/execution-plan.md` (T-09).
 The table below shows the mean of 3 × 3s runs on the reference machine.
 
 ### 1. Policy evaluation — pure CPU, no I/O
