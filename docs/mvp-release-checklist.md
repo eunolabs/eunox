@@ -183,7 +183,9 @@ docker run --rm \
   -v "$(pwd)/demo/audit:/audit" \
   --entrypoint /usr/local/bin/mcp \
   eunolabs/eunox-mcp:latest \
-  validate-token --audit-log /audit/audit.jsonl
+  validate-token \
+  --audit-log /audit/audit.jsonl \
+  --audit-key-path /audit/audit.key
 ```
 
 Expected: `Checked N record(s): N valid, 0 invalid, 0 skipped.`
