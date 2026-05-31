@@ -93,3 +93,25 @@ func TestInMemory_Cleanup(t *testing.T) {
 	// Cleanup shouldn't panic
 	counter.Cleanup()
 }
+
+func TestInMemory_Cleanup_DeletesStaleEntry(t *testing.T) {
+	current := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	counter := callcounter.NewInMemory(callcounter.WithTimeFunc(func() time.Time { return current }))
+	ctx := context.Background()
+
+	// Record a call at t=0.
+	count, err := counter.IncrementAndGet(ctx, "stale-key", 60)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	// Advance time by 25 hours so the entry is stale (>24h old).
+	current = current.Add(25 * time.Hour)
+
+	// Cleanup should delete the stale entry.
+	counter.Cleanup()
+
+	// Now IncrementAndGet must return 1 (fresh entry), not 2.
+	count, err = counter.IncrementAndGet(ctx, "stale-key", 60)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count, "stale entry must have been deleted by Cleanup")
+}

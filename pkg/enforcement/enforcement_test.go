@@ -5,6 +5,7 @@ package enforcement_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -1416,4 +1417,550 @@ func TestEngine_MostSpecificMatch_JWTOrderingDoesNotMatter(t *testing.T) {
 	respB, err := engine.ValidateAction(ctx, &req, []capability.Constraint{constraints[1], constraints[0]})
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, respB.Decision)
+}
+
+// ── ConditionError ──────────────────────────────────────────────────────────
+
+func TestConditionError_Error(t *testing.T) {
+	t.Parallel()
+	ce := &enforcement.ConditionError{
+		Code:          "TEST_CODE",
+		ConditionType: "timeWindow",
+		Message:       "something went wrong",
+	}
+	assert.Equal(t, "something went wrong", ce.Error())
+}
+
+// ── WithDryRun ──────────────────────────────────────────────────────────────
+
+func TestEngine_WithDryRun_SkipsMaxCallsIncrement(t *testing.T) {
+	t.Parallel()
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+
+	// Normal context: MaxCalls=1 is consumed on the first call.
+	ctx := context.Background()
+	req := capability.EnforceRequest{
+		SessionID: "sess-dry",
+		ToolName:  "tool",
+	}
+	caps := []capability.Constraint{{
+		Resource:   "tool",
+		Actions:    []string{"*"},
+		Conditions: []capability.Condition{&capability.MaxCallsCondition{Count: 1, WindowSeconds: 60}},
+	}}
+
+	resp, err := engine.ValidateAction(ctx, &req, caps)
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+
+	// Second call on normal context is denied (quota exhausted).
+	resp, err = engine.ValidateAction(ctx, &req, caps)
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+
+	// Dry-run context: quota must NOT be consumed.
+	freshCounter := callcounter.NewInMemory()
+	engineDry := enforcement.New(enforcement.WithCallCounter(freshCounter))
+	dryCtx := enforcement.WithDryRun(context.Background())
+
+	resp, err = engineDry.ValidateAction(dryCtx, &req, caps)
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision, "dry-run must pass MaxCalls without consuming quota")
+
+	// On a normal context after the dry-run the quota is still intact (count is zero).
+	resp, err = engineDry.ValidateAction(ctx, &req, caps)
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision, "quota must not have been consumed during dry-run")
+}
+
+// ── FindMatchingCapability ──────────────────────────────────────────────────
+
+func TestEngine_FindMatchingCapability_ReturnsMatch(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+
+	req := &capability.EnforceRequest{ToolName: "read_file"}
+	caps := []capability.Constraint{
+		{Resource: "write_file", Actions: []string{"*"}},
+		{Resource: "read_file", Actions: []string{"*"}},
+	}
+
+	matched := engine.FindMatchingCapability(req, caps)
+	require.NotNil(t, matched)
+	assert.Equal(t, "read_file", matched.Resource)
+}
+
+func TestEngine_FindMatchingCapability_ReturnsNilWhenNoMatch(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+
+	req := &capability.EnforceRequest{ToolName: "delete_file"}
+	caps := []capability.Constraint{
+		{Resource: "read_file", Actions: []string{"*"}},
+	}
+
+	matched := engine.FindMatchingCapability(req, caps)
+	assert.Nil(t, matched)
+}
+
+// ── Value-form condition branch coverage ───────────────────────────────────
+//
+// Each `as*` helper in pkg/enforcement/handlers.go tries the pointer-form type
+// assertion first and falls back to value-form. Existing tests always pass pointer
+// conditions. The tests below pass value-form (non-pointer) conditions to exercise
+// the second branch.
+
+func TestEngine_TimeWindow_ValueForm(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	engine := enforcement.New(enforcement.WithClock(newFakeClock(now)))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "tool",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			// value form — not pointer
+			capability.TimeWindowCondition{
+				NotBefore: "2025-06-15T10:00:00Z",
+				NotAfter:  "2025-06-15T14:00:00Z",
+			},
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_IPRange_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "tool",
+		Context:   capability.EnforceRequestContext{SourceIP: "192.168.1.50"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "tool",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.IPRangeCondition{CIDRs: []string{"192.168.0.0/16"}}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedOperations_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "db",
+		Context:   capability.EnforceRequestContext{Operation: "SELECT"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "db",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.AllowedOperationsCondition{Operations: []string{"SELECT"}}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedExtensions_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "file:read",
+		Context:   capability.EnforceRequestContext{FilePath: "/docs/report.pdf"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "file:read",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.AllowedExtensionsCondition{Extensions: []string{".pdf"}}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedTables_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "db:query",
+		Context: capability.EnforceRequestContext{
+			Tables: []capability.TableAccess{{Table: "reports"}},
+		},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "db:query",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.AllowedTablesCondition{Tables: []string{"reports"}}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_MaxCalls_ValueForm(t *testing.T) {
+	t.Parallel()
+	counter := callcounter.NewInMemory()
+	engine := enforcement.New(enforcement.WithCallCounter(counter))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-mc-val", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "tool",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.MaxCallsCondition{Count: 5, WindowSeconds: 60}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_RecipientDomain_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "email:send",
+		Context:   capability.EnforceRequestContext{Recipients: []string{"alice@example.com"}},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "email:send",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.RecipientDomainCondition{Domains: []string{"example.com"}}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_Policy_ValueForm(t *testing.T) {
+	t.Parallel()
+	// A nil PolicyEvaluator with a policy condition is fail-closed (deny).
+	// The important thing is that asPolicy's value-form branch is exercised.
+	engine := enforcement.New() // no PolicyEvaluator wired
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "tool",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.PolicyCondition{Backend: "opa"}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	// Fail-closed: no evaluator → deny.
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+func TestEngine_Custom_ValueForm(t *testing.T) {
+	t.Parallel()
+	// The built-in custom handler always denies (fail-closed). This test verifies
+	// that asCustom's value-form branch is exercised: a value-form CustomCondition
+	// is correctly identified and the handler is reached (result is deny, as designed).
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "tool",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.CustomCondition{Name: "my-custom", Config: nil}, // value form
+		},
+	}})
+
+	require.NoError(t, err)
+	// Fail-closed: built-in handleCustom always denies.
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	assert.Equal(t, capability.ConditionTypeCustom, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedValues_ValueForm(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "read_file",
+		Arguments: map[string]interface{}{"path": "/reports/q3.pdf"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "read_file",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			capability.AllowedValuesCondition{ // value form
+				Argument: "path",
+				Values:   []interface{}{"/reports/*"},
+			},
+		},
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+// ── Additional coverage tests ───────────────────────────────────────────────
+
+func TestEngine_MatchesResource_BadGlobPattern(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+
+	req := &capability.EnforceRequest{ToolName: "anything"}
+	matched := engine.FindMatchingCapability(req, []capability.Constraint{
+		{Resource: "[", Actions: []string{"*"}},
+	})
+	assert.Nil(t, matched, "bad glob pattern must produce no match")
+}
+
+func TestEngine_AllowedOperations_FallsBackToToolName(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "myTool",
+		// Context.Operation intentionally empty
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "myTool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedOperationsCondition{Operations: []string{"myTool"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_TimeWindow_InvalidNotBefore(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New(enforcement.WithClock(newFakeClock(time.Now())))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.TimeWindowCondition{NotBefore: "not-a-date"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ConditionTypeTimeWindow, resp.Denial.ConditionType)
+}
+
+func TestEngine_TimeWindow_InvalidNotAfter(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New(enforcement.WithClock(newFakeClock(time.Now())))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.TimeWindowCondition{NotAfter: "not-a-date"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ConditionTypeTimeWindow, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedValues_EmptyArgumentName(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{Argument: "", Values: []interface{}{"x"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ConditionTypeAllowedValues, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedValues_MissingArgument(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Arguments: nil, // no arguments at all
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{Argument: "path", Values: []interface{}{"/tmp"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+}
+
+func TestEngine_AllowedValues_ExactMatchNonString(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Arguments: map[string]interface{}{"count": float64(42)},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{
+					Argument: "count",
+					Values:   []interface{}{float64(42)},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedValues_NoMatch(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess-1",
+		ToolName:  "tool",
+		Arguments: map[string]interface{}{"color": "c"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.AllowedValuesCondition{
+					Argument: "color",
+					Values:   []interface{}{"a", "b"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+// errorCounter is a CallCounter that always returns an error.
+type errorCounter struct{}
+
+func (errorCounter) IncrementAndGet(_ context.Context, _ string, _ int) (int64, error) {
+	return 0, errors.New("counter error")
+}
+
+func TestEngine_MaxCalls_CounterError(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New(enforcement.WithCallCounter(errorCounter{}))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.MaxCallsCondition{Count: 10, WindowSeconds: 60},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	require.NotNil(t, resp.Denial)
+	assert.Equal(t, capability.ErrCodeConditionFailed, resp.Denial.Code)
+	assert.Contains(t, resp.Denial.Message, "call counter error")
+}
+
+// allowEvaluator is a PolicyEvaluator that always allows.
+type allowEvaluator struct{}
+
+func (allowEvaluator) Evaluate(_ context.Context, _ string, _, _ interface{}, _ *capability.EnforceRequest) *enforcement.ConditionError {
+	return nil
+}
+
+func TestEngine_Policy_WithEvaluator_Allow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New(enforcement.WithPolicyEvaluator(allowEvaluator{}))
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{SessionID: "sess-1", ToolName: "tool"}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
+		{
+			Resource: "tool",
+			Actions:  []string{"*"},
+			Conditions: []capability.Condition{
+				&capability.PolicyCondition{Backend: "test"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }

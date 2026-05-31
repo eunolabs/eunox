@@ -560,3 +560,59 @@ func TestSignECDSA_SmallRS(t *testing.T) {
 	err = capability.VerifyCoSignatures(context.Background(), "msg", proofs, resolver)
 	require.Error(t, err, "invalid r/s must fail, not panic")
 }
+
+func TestVerifyCoSignatures_RSAPKCSv15_WrongKeyType(t *testing.T) {
+	// Algorithm claims RS256 but the resolver returns an ECDSA key — must fail
+	// at key-type check before attempting signature verification.
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Use any base64-encoded bytes as the signature; the key-type check fires first.
+	fakeSig := base64.RawURLEncoding.EncodeToString(make([]byte, 64))
+
+	proofs := &capability.IssuanceProofs{
+		Signatures: []capability.IssuerSignature{
+			{IssuerDID: "did:example:rsa-wrong", Algorithm: "RS256", Signature: fakeSig},
+		},
+	}
+	resolver := &staticKeyResolver{keys: []gocrypto.PublicKey{ecKey.Public()}}
+	err = capability.VerifyCoSignatures(context.Background(), "token", proofs, resolver)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key type mismatch")
+}
+
+func TestVerifyCoSignatures_RSAPSS_WrongKeyType(t *testing.T) {
+	// Algorithm claims PS256 but the resolver returns an ECDSA key.
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	fakeSig := base64.RawURLEncoding.EncodeToString(make([]byte, 64))
+
+	proofs := &capability.IssuanceProofs{
+		Signatures: []capability.IssuerSignature{
+			{IssuerDID: "did:example:pss-wrong", Algorithm: "PS256", Signature: fakeSig},
+		},
+	}
+	resolver := &staticKeyResolver{keys: []gocrypto.PublicKey{ecKey.Public()}}
+	err = capability.VerifyCoSignatures(context.Background(), "token", proofs, resolver)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key type mismatch")
+}
+
+func TestVerifyCoSignatures_EdDSA_WrongKeyType(t *testing.T) {
+	// Algorithm claims EdDSA but the resolver returns an RSA key.
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	fakeSig := base64.RawURLEncoding.EncodeToString(make([]byte, 64))
+
+	proofs := &capability.IssuanceProofs{
+		Signatures: []capability.IssuerSignature{
+			{IssuerDID: "did:example:eddsa-wrong", Algorithm: "EdDSA", Signature: fakeSig},
+		},
+	}
+	resolver := &staticKeyResolver{keys: []gocrypto.PublicKey{rsaKey.Public()}}
+	err = capability.VerifyCoSignatures(context.Background(), "token", proofs, resolver)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key type mismatch")
+}

@@ -432,3 +432,110 @@ func TestJWKSClientBreaker_HalfOpenAfterCooldown(t *testing.T) {
 	assert.Equal(t, int32(2), hits.Load())
 	assert.Equal(t, circuitbreaker.StateClosed, breaker.State())
 }
+
+// TestJWKSClient_VerifyToken_WrongKey exercises the signature-verification failure
+// path inside VerifyToken: the key is returned by findKeys (kid matches) but the
+// signature was made with a different private key, so tok.Claims returns an error.
+func TestJWKSClient_VerifyToken_WrongKey(t *testing.T) {
+	// signerKey signs the JWT.
+	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// verifierKey is what the JWKS server returns — wrong key, same kid.
+	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	server := makeJWKSServer(t, &verifierKey.PublicKey, "k1")
+	defer server.Close()
+
+	// Token is signed with signerKey but JWKS has verifierKey — mismatch.
+	token := makeCapabilityToken(t, signerKey, "k1", "sub", "", time.Now().Add(time.Hour))
+
+	client := NewJWKSClient(JWKSClientConfig{JWKSURL: server.URL, Client: server.Client()})
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err, "VerifyToken must fail when the signing key does not match the JWKS key")
+}
+
+// TestJWKSClient_VerifyToken_RefreshFails exercises the path in VerifyToken where
+// the initial findKeys returns no match (JWT kid not in JWKS) and the subsequent
+// cache refresh HTTP call also fails.
+func TestJWKSClient_VerifyToken_RefreshFails(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	var requestCount atomic.Int32
+	// First HTTP call returns a JWKS with kid="k1"; subsequent calls return HTTP 500.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := requestCount.Add(1)
+		if n > 1 {
+			http.Error(w, "forced error", http.StatusInternalServerError)
+			return
+		}
+		jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &privateKey.PublicKey, KeyID: "k1", Use: "sig"}}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	}))
+	defer server.Close()
+
+	// JWT with a kid that does not match the JWKS — forces a refresh attempt.
+	token := makeCapabilityToken(t, privateKey, "nonexistent-kid", "sub", "", time.Now().Add(time.Hour))
+
+	// Short cache TTL so the second attempt re-fetches rather than using cached keys.
+	client := NewJWKSClient(JWKSClientConfig{
+		JWKSURL:  server.URL,
+		Client:   server.Client(),
+		CacheTTL: time.Millisecond,
+	})
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err, "VerifyToken must fail when the refresh HTTP call returns an error")
+}
+
+// TestJWKSClient_VerifyToken_MissingExp exercises the claim-validation path that
+// rejects a JWT whose exp claim is absent.
+func TestJWKSClient_VerifyToken_MissingExp(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	server := makeJWKSServer(t, &privateKey.PublicKey, "k1")
+	defer server.Close()
+
+	// Build a token without an exp claim by signing raw JSON claims.
+	sig, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.ES256, Key: privateKey},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "k1"),
+	)
+	require.NoError(t, err)
+	noExpClaims := map[string]interface{}{"sub": "test-sub", "iat": time.Now().Unix()}
+	token, err := jwt.Signed(sig).Claims(noExpClaims).Serialize()
+	require.NoError(t, err)
+
+	client := NewJWKSClient(JWKSClientConfig{JWKSURL: server.URL, Client: server.Client()})
+	_, err = client.VerifyToken(context.Background(), token)
+	require.Error(t, err, "VerifyToken must fail when exp claim is absent")
+	assert.Contains(t, err.Error(), "exp")
+}
+
+// TestJWKSClient_FindKeys_NoKID verifies that VerifyToken succeeds when the JWT
+// carries an empty kid header — exercising the findKeys path that returns all keys
+// rather than filtering by kid.
+func TestJWKSClient_FindKeys_NoKID(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// JWKS server serves the key with a specific kid.
+	server := makeJWKSServer(t, &privateKey.PublicKey, "k1")
+	defer server.Close()
+
+	// Sign the token with kid="" — findKeys will be called with an empty kid
+	// and must return all keys from the JWKS (the kid="" path).
+	token := makeCapabilityToken(t, privateKey, "", "sub", "", time.Now().Add(time.Hour))
+
+	// requireKID is false (default) so an empty kid does not cause an early error.
+	client := NewJWKSClient(JWKSClientConfig{
+		JWKSURL: server.URL,
+		Client:  server.Client(),
+	})
+	payload, err := client.VerifyToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "sub", payload.Subject)
+}
