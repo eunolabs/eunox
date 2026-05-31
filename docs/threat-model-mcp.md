@@ -65,7 +65,7 @@ Three policy sources can be combined:
 
 | Item                                       | How trust is established                                                                        |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| JWT capability claims (`eunox.capabilities`, `eunox.task_id`, `eunox.agent_id`) | JWT signature verified against the JWKS endpoint; `exp`, `iss`, `aud` validated |
+| JWT capability claims (`mcp.capabilities`, `mcp.task_id`, `mcp.agent_id`) | JWT signature verified against the JWKS endpoint; `exp`, `iss`, `aud` validated |
 | Manifest policy file contents              | Loaded at startup from a local path the operator controls; not re-fetched at runtime            |
 | Kill-switch state (in-memory or Redis)     | Checked on every `Decide()` call before capability evaluation                                  |
 | Call counter state (in-memory or Redis)    | Checked on every `Decide()` call; enforces `maxCalls` conditions                               |
@@ -79,7 +79,7 @@ Three policy sources can be combined:
 3. `exp` has not passed (1-minute clock-skew tolerance applied).
 4. `iss` matches `--jwt-issuer` (when configured).
 5. `aud` contains `--jwt-audience` (when configured).
-6. `eunox.capabilities` claim covers the requested tool name.
+6. `mcp.capabilities` claim covers the requested tool name.
 7. Any condition shorthand in the capability claim (path glob, SQL verb) matches the actual arguments.
 
 **Manifest PDP** (`--policy` set):
@@ -143,7 +143,7 @@ When both `--jwks-uri` and `--policy` are set, a call must pass **both** checks.
 
 ### 3.1 Capability Claim Forgery
 
-**Attack:** An attacker crafts or modifies a JWT to include capability claims (`eunox.capabilities`) for tools they are not permitted to call — for example, adding `"write_file"` to a token that was issued with only `"read_file"`.
+**Attack:** An attacker crafts or modifies a JWT to include capability claims (`mcp.capabilities`) for tools they are not permitted to call — for example, adding `"write_file"` to a token that was issued with only `"read_file"`.
 
 **Mitigation:** JWT signature validation using the JWKS fetched from `--jwks-uri`. The proxy:
 
@@ -215,7 +215,7 @@ The audit key is generated once at first startup using `crypto/rand` (Go's CSPRN
 
 **Attack:** An agent accumulates broader API access than any specific task requires because credentials are issued for the user's full role rather than for the current task's scope.
 
-**Mitigation (JWT PDP mode):** When the IdP is configured to inject `eunox.capabilities` claims into access tokens, the proxy enforces the task-scoped capability set rather than the full role. The JWT carries exactly what this agent invocation is permitted to call — `"read_file:/reports/*"`, not `"*"`. Calls to any tool not listed in the capability claims are denied with `CAPABILITY_NOT_GRANTED`.
+**Mitigation (JWT PDP mode):** When the IdP is configured to inject `mcp.capabilities` claims into access tokens, the proxy enforces the task-scoped capability set rather than the full role. The JWT carries exactly what this agent invocation is permitted to call — `"read_file:/reports/*"`, not `"*"`. Calls to any tool not listed in the capability claims are denied with `CAPABILITY_NOT_GRANTED`.
 
 **Mitigation (manifest + JWT intersection):** When `--policy` is also set, the proxy computes the intersection: a tool call must be permitted by **both** the manifest constraints and the JWT capability claims. The JWT can only restrict what the manifest allows; it cannot expand it. This prevents a misconfigured IdP from accidentally granting broader access than the manifest operator intended.
 
@@ -246,7 +246,7 @@ These attack classes are outside the proxy's enforcement boundary. This is not a
 
 **Why it is out of scope:** The proxy enforces *what the agent is permitted to call*, not *why the agent decided to call it*. A prompt-injected call to `read_file("/reports/Q4.pdf")` is indistinguishable from a legitimate one at the JSON-RPC layer, and will be allowed if the capability token permits it.
 
-**What the proxy does reduce (but does not eliminate):** By scoping capabilities to specific resources and argument patterns, the proxy limits the blast radius of a successful injection. An injected agent cannot exfiltrate data from resources outside its `eunox.capabilities` scope, and cannot call tools not listed in its manifest constraints.
+**What the proxy does reduce (but does not eliminate):** By scoping capabilities to specific resources and argument patterns, the proxy limits the blast radius of a successful injection. An injected agent cannot exfiltrate data from resources outside its `mcp.capabilities` scope, and cannot call tools not listed in its manifest constraints.
 
 **Recommended complementary control:** Input sanitization and content scanning at the application layer before feeding external data to the agent. The proxy is a last line of defense on tool calls, not a substitute for application-level sanitization.
 
@@ -272,7 +272,7 @@ These attack classes are outside the proxy's enforcement boundary. This is not a
 
 ### 4.4 IdP Compromise
 
-**What it is:** The identity provider that issues JWTs with `eunox.capabilities` claims is compromised, allowing an attacker to mint arbitrary tokens.
+**What it is:** The identity provider that issues JWTs with `mcp.capabilities` claims is compromised, allowing an attacker to mint arbitrary tokens.
 
 **Why it is out of scope:** The proxy trusts any JWT that passes signature verification against the IdP's JWKS. An attacker who can issue valid signed JWTs from the IdP can call any tool they include in the capability claims. The proxy is not in a position to second-guess the IdP's issuance decisions.
 

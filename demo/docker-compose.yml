@@ -42,7 +42,7 @@ services:
 
   # ── keycloak ───────────────────────────────────────────────────────
   # Keycloak pre-seeded with the eunox-demo realm.  The demo-agent
-  # client uses client-credentials flow and carries eunox.capabilities
+  # client uses client-credentials flow and carries mcp.capabilities
   # claims in every access token (JWT mode only; run `make jwt`).
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
