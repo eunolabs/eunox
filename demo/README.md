@@ -99,7 +99,7 @@ Expected output:
     "content": [
       {
         "type": "text",
-        "text": "{\"code\":\"TOOL_NOT_PERMITTED\",\"error\":\"CapabilityDenied\",\"message\":\"tool \\\"write_file\\\" is not permitted\",\"tool\":\"write_file\"}"
+        "text": "{\"code\":\"AUTHORIZATION_FAILED\",\"error\":\"CapabilityDenied\",\"message\":\"tool \\\"write_file\\\" is not listed in the capability manifest\",\"tool\":\"write_file\"}"
       }
     ],
     "isError": true
@@ -127,7 +127,7 @@ Expected output:
     "content": [
       {
         "type": "text",
-        "text": "{\"code\":\"ALLOWED_VALUES_VIOLATION\",\"error\":\"CapabilityDenied\",\"message\":\"argument \\\"path\\\" value \\\"/etc/shadow\\\" is not in the allowed set\",\"tool\":\"read_file\"}"
+        "text": "{\"code\":\"CONDITION_FAILED\",\"details\":{\"allowedValues\":[\"/reports/*\"],\"argument\":\"path\",\"value\":\"[redacted]\"},\"error\":\"CapabilityDenied\",\"message\":\"argument \\\"path\\\" value is not in the allowed set\",\"tool\":\"read_file\"}"
       }
     ],
     "isError": true
@@ -155,7 +155,7 @@ Expected output:
     "content": [
       {
         "type": "text",
-        "text": "{\"code\":\"OPERATION_NOT_PERMITTED\",\"error\":\"CapabilityDenied\",\"message\":\"operation \\\"DELETE\\\" is not permitted for tool \\\"query_db\\\"\",\"tool\":\"query_db\"}"
+        "text": "{\"code\":\"CONDITION_FAILED\",\"details\":{\"allowedOperations\":[\"SELECT\"],\"operation\":\"[redacted]\"},\"error\":\"CapabilityDenied\",\"message\":\"operation \\\"DELETE\\\" is not allowed\",\"tool\":\"query_db\"}"
       }
     ],
     "isError": true
@@ -192,7 +192,6 @@ Expected output (one record per tool call, streaming):
   "session_id": "e9d0c1b2-...",
   "tool_name": "write_file",
   "decision": "deny",
-  "denial_code": "TOOL_NOT_PERMITTED",
   "hmac": "sha256:b2c3d4e5..."
 }
 ```
@@ -288,7 +287,7 @@ Expected output:
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "content": [{ "type": "text", "text": "{\"code\":\"TOOL_NOT_PERMITTED\",...}" }],
+    "content": [{ "type": "text", "text": "{\"code\":\"AUTHORIZATION_FAILED\",...}" }],
     "isError": true
   }
 }

@@ -90,7 +90,7 @@ for GOOS in linux darwin windows; do
 done
 ```
 
-- [ ] All 6 platform combinations exit 0
+- [x] All 6 platform combinations exit 0
 
 ### 2.3 Docker image (local platform)
 
@@ -99,8 +99,8 @@ make docker-build-mcp VERSION=0.1.0
 docker run --rm eunolabs/eunox-mcp:0.1.0 --help
 ```
 
-- [ ] Image builds successfully
-- [ ] `--help` output appears (confirms entrypoint is wired correctly)
+- [x] Image builds successfully
+- [x] `--help` output appears (confirms entrypoint is wired correctly)
 
 ---
 
@@ -146,9 +146,9 @@ Expected: `"isError": false` and mock file contents in the response.
 make -C demo deny
 ```
 
-Expected: `"isError": true` and `"code":"TOOL_NOT_PERMITTED"`.
+Expected: `"isError": true` and `"code":"AUTHORIZATION_FAILED"`.
 
-- [ ] Deny response contains `TOOL_NOT_PERMITTED`
+- [ ] Deny response contains `AUTHORIZATION_FAILED`
 
 **Denied call — `read_file /etc/shadow` (wrong path):**
 
@@ -156,9 +156,9 @@ Expected: `"isError": true` and `"code":"TOOL_NOT_PERMITTED"`.
 make -C demo deny-path
 ```
 
-Expected: `"isError": true` and `"code":"ALLOWED_VALUES_VIOLATION"`.
+Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"argument":"path"` in details.
 
-- [ ] Deny response contains `ALLOWED_VALUES_VIOLATION`
+- [ ] Deny response contains `CONDITION_FAILED`
 
 **Denied call — `query_db DELETE` (wrong SQL op):**
 
@@ -166,9 +166,9 @@ Expected: `"isError": true` and `"code":"ALLOWED_VALUES_VIOLATION"`.
 make -C demo deny-op
 ```
 
-Expected: `"isError": true` and `"code":"OPERATION_NOT_PERMITTED"`.
+Expected: `"isError": true` and `"code":"CONDITION_FAILED"` with `"allowedOperations"` in details.
 
-- [ ] Deny response contains `OPERATION_NOT_PERMITTED`
+- [ ] Deny response contains `CONDITION_FAILED`
 
 **Audit log — verify records and HMAC chain:**
 
@@ -241,9 +241,9 @@ Expected: `"isError": false`.
 make -C demo jwt-deny
 ```
 
-Expected: `"isError": true` and `TOOL_NOT_PERMITTED`.
+Expected: `"isError": true` and `AUTHORIZATION_FAILED`.
 
-- [ ] JWT-deny response contains `TOOL_NOT_PERMITTED`
+- [ ] JWT-deny response contains `AUTHORIZATION_FAILED`
 
 **Full JWT CI test:**
 
