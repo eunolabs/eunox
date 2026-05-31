@@ -1,0 +1,38 @@
+server: notion
+description: "Notion — workspace pages and databases (notionhq/notion-mcp-server)"
+tools:
+  # Search / read
+  notion_search: read
+  notion_get_page: read
+  notion_get_database: read
+  notion_query_database: read
+  notion_get_block: read
+  notion_get_block_children: read
+  notion_get_user: read
+  notion_list_users: read
+  notion_get_comments: read
+  # Writes
+  notion_create_page: write
+  notion_update_page: write
+  notion_create_database: write
+  notion_update_database: write
+  notion_create_database_item: write
+  notion_update_database_item: write
+  notion_append_block_children: write
+  notion_update_block: write
+  notion_add_comment: write
+  # Deletes / archives
+  notion_archive_page: delete
+  notion_delete_block: delete
+  # API passthrough naming (some implementations use REST-style names)
+  API-get-block: read
+  API-get-database: read
+  API-post-search: read
+  API-get-pages-id: read
+  API-post-databases-id-query: read
+  API-post-pages: write
+  API-patch-pages-id: write
+  API-patch-databases-id: write
+  API-post-blocks-id-children: write
+  API-patch-blocks-id: write
+  API-delete-blocks-id: delete

@@ -1,0 +1,25 @@
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scenario 2 — Path-gated file access with rate limiting
+#
+# All ten tools share the same two conditions via a wildcard resource match:
+#   1. allowedValues: path must be under /reports/
+#   2. maxCalls: at most 5 calls per tool per minute
+#
+# The OPA equivalent requires one hand-written rule per tool and still cannot
+# express the rate limit.
+name: opa-comparison-scenario2
+version: "1.0"
+
+capabilities:
+  - resource: "*"
+    actions: [call]
+    conditions:
+      - type: allowedValues
+        argument: path
+        values:
+          - "/reports/*"
+      - type: maxCalls
+        count: 5
+        windowSeconds: 60

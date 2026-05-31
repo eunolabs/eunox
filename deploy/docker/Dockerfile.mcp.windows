@@ -1,0 +1,51 @@
+# escape=`
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-stage Dockerfile for the eunox-mcp proxy (Windows/amd64).
+# Windows containers require a Windows host — use the docker-windows CI job
+# or a local Windows machine with Windows container mode enabled.
+#
+# Usage:
+#   docker build -f deploy/docker/Dockerfile.mcp.windows -t eunolabs/eunox-mcp:latest-windows .
+
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM golang:1.25-windowsservercore-ltsc2022 AS builder
+
+ARG VERSION=0.0.0
+
+# Promote the build arg to an environment variable so PowerShell can read it
+# via $env:EUNOX_VERSION during the go build step.
+ENV EUNOX_VERSION=$VERSION
+ENV CGO_ENABLED=0
+
+SHELL ["powershell", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+WORKDIR C:/src
+
+# Cache module downloads independently of source changes.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# -buildvcs=false: git is not available in windowsservercore; skip VCS stamping.
+RUN New-Item -ItemType Directory -Force -Path C:\out | Out-Null; `
+    go build `
+        -trimpath `
+        -buildvcs=false `
+        "-ldflags=-s -w -X main.version=$env:EUNOX_VERSION -buildid=" `
+        -o C:\out\mcp.exe `
+        ./cmd/mcp/
+
+# ── Final stage (Nano Server) ────────────────────────────────────────────────
+FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
+
+COPY --from=builder C:/out/mcp.exe C:/app/mcp.exe
+
+LABEL org.opencontainers.image.source="https://github.com/eunolabs/eunox"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="Eunox"
+LABEL org.opencontainers.image.description="Eunox MCP capability enforcement proxy (Windows)"
+
+ENTRYPOINT ["C:\\app\\mcp.exe"]

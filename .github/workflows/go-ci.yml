@@ -1,0 +1,159 @@
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+
+name: Go CI
+
+on:
+  push:
+    branches: [main, "copilot/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Run tests with race detector
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold (80% for pkg/)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Total coverage: ${COVERAGE}%"
+          PKG_COVERAGE=$(go tool cover -func=coverage.out | grep "^github.com/eunolabs/eunox/pkg/" | awk '{sum += substr($3, 1, length($3)-1); n++} END {if (n>0) printf "%.1f", sum/n; else print "0"}')
+          echo "pkg/ average coverage: ${PKG_COVERAGE}%"
+          if [ "$(echo "$PKG_COVERAGE < 80" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage for pkg/ is below 80% threshold: ${PKG_COVERAGE}%"
+            exit 1
+          fi
+
+  license-check:
+    name: License Headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check BSL license headers
+        run: make check-license
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  types-sync:
+    name: Types Sync (upstream wire.ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Verify Go condition types match upstream TypeScript
+        run: go test ./pkg/capability/ -run 'TestConditionTypesInSyncWithUpstreamTypeScript|TestConditionTypeConstantsValid' -v -count=1
+
+  benchmark:
+    name: Benchmark (sanity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      # Run each benchmark for 100 ms × 1 iteration.  This is intentionally
+      # short: the goal is to catch panics, deadlocks, and compilation errors,
+      # not to enforce latency targets (GH runner performance is too variable
+      # for that).  Full target validation is done locally via scripts/bench.sh.
+      - name: Run benchmarks (smoke)
+        run: |
+          go test \
+            -run='^$' \
+            -bench=. \
+            -benchtime=100ms \
+            -benchmem \
+            -count=1 \
+            ./cmd/mcp/ \
+            2>&1 | grep -v '^\[eunox-mcp\]' | tee bench-ci.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-ci.txt
+          retention-days: 30
+
+  vulnerability-scan:
+    name: Trivy Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"

@@ -1,0 +1,49 @@
+# CODEOWNERS — eunox package ownership
+
+# Default owners
+
+-                                       @eunolabs/eunox-leads
+
+# Go services
+
+/cmd/gateway/ @eunolabs/eunox-dp
+/cmd/issuer/ @eunolabs/eunox-cp
+/cmd/minter/ @eunolabs/eunox-cp
+/cmd/db-token-svc/ @eunolabs/eunox-cp
+/cmd/storage-grant-svc/ @eunolabs/eunox-cp
+/cmd/posture-emitter/ @eunolabs/eunox-obs
+
+# Internal packages
+
+/internal/gateway/ @eunolabs/eunox-dp
+/internal/issuer/ @eunolabs/eunox-cp
+/internal/minter/ @eunolabs/eunox-cp
+/internal/dbtokensvc/ @eunolabs/eunox-cp
+/internal/storagegrantsvc/ @eunolabs/eunox-cp
+/internal/agentruntime/ @eunolabs/eunox-dp
+/internal/posture/ @eunolabs/eunox-obs
+
+# Public packages — shared across teams
+
+/pkg/ @eunolabs/eunox-cp @eunolabs/eunox-dp
+
+# Infrastructure & deployment
+
+/infra/ @eunolabs/eunox-obs
+/k8s/ @eunolabs/eunox-obs
+
+# Documentation
+
+/docs/ @eunolabs/eunox-leads
+/README.md @eunolabs/eunox-leads
+
+# Website
+
+/site/ @eunolabs/eunox-dx
+
+# Repository configuration
+
+/CODEOWNERS @eunolabs/eunox-leads
+/Makefile @eunolabs/eunox-leads
+/go.mod @eunolabs/eunox-leads
+/.github/ @eunolabs/eunox-leads

@@ -1,0 +1,48 @@
+# Copyright 2026 Eunolabs, LLC
+# SPDX-License-Identifier: Apache-2.0
+
+name: Go Publish
+
+# Triggered on every semver tag (e.g. v0.1.0).  Creates a GitHub Release and
+# ensures the module is indexed on pkg.go.dev.  goreleaser (docker-publish.yml)
+# builds the platform binaries and Docker images in a separate workflow.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish Go Module
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Verify module
+        run: go mod verify
+
+      - name: Build all targets
+        run: go build ./...
+
+      - name: Run tests
+        run: go test -race -count=1 ./...
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          make_latest: true
+
+      # pkg.go.dev indexes public modules automatically once a tag is pushed
+      # and a release is created. No additional step is required.
