@@ -1444,18 +1444,18 @@ func TestEngine_WithDryRun_SkipsMaxCallsIncrement(t *testing.T) {
 		SessionID: "sess-dry",
 		ToolName:  "tool",
 	}
-	cap := []capability.Constraint{{
+	caps := []capability.Constraint{{
 		Resource:   "tool",
 		Actions:    []string{"*"},
 		Conditions: []capability.Condition{&capability.MaxCallsCondition{Count: 1, WindowSeconds: 60}},
 	}}
 
-	resp, err := engine.ValidateAction(ctx, &req, cap)
+	resp, err := engine.ValidateAction(ctx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 
 	// Second call on normal context is denied (quota exhausted).
-	resp, err = engine.ValidateAction(ctx, &req, cap)
+	resp, err = engine.ValidateAction(ctx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionDeny, resp.Decision)
 
@@ -1464,12 +1464,12 @@ func TestEngine_WithDryRun_SkipsMaxCallsIncrement(t *testing.T) {
 	engineDry := enforcement.New(enforcement.WithCallCounter(freshCounter))
 	dryCtx := enforcement.WithDryRun(context.Background())
 
-	resp, err = engineDry.ValidateAction(dryCtx, &req, cap)
+	resp, err = engineDry.ValidateAction(dryCtx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision, "dry-run must pass MaxCalls without consuming quota")
 
 	// On a normal context after the dry-run the quota is still intact (count is zero).
-	resp, err = engineDry.ValidateAction(ctx, &req, cap)
+	resp, err = engineDry.ValidateAction(ctx, &req, caps)
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision, "quota must not have been consumed during dry-run")
 }
