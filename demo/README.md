@@ -210,15 +210,15 @@ Checked 4 record(s): 4 valid, 0 invalid, 0 skipped.
 ## Step 3 — JWT mode (manifest + IdP claims)
 
 In JWT mode, every request must carry an IdP-issued Bearer JWT. The proxy
-intersects the JWT's `eunox.capabilities` claims with the manifest: the JWT can
+intersects the JWT's `mcp.capabilities` claims with the manifest: the JWT can
 only restrict, never expand.
 
 The Keycloak `demo-agent` client issues tokens with:
 ```json
 {
-  "eunox.capabilities": ["read_file:/reports/*", "query_db:SELECT"],
-  "eunox.task_id": "demo-task-001",
-  "eunox.agent_id": "demo-agent",
+  "mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"],
+  "mcp.task_id": "demo-task-001",
+  "mcp.agent_id": "demo-agent",
   "aud": "eunox"
 }
 ```

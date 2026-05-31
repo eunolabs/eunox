@@ -222,10 +222,10 @@ make -C demo jwt
 
 Paste the printed token into [jwt.io](https://jwt.io) and verify the claims include:
 
-- `"eunox.capabilities": ["read_file:/reports/*", "query_db:SELECT"]`
+- `"mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"]`
 - `"aud": "eunox"`
 
-- [ ] JWT decode shows expected `eunox.capabilities` claims
+- [ ] JWT decode shows expected `mcp.capabilities` claims
 
 **JWT-authenticated allowed call:**
 

@@ -201,7 +201,7 @@ func benchJWTPDPContext(b *testing.B, inner PolicyDecisionPoint) (*JWTPDP, conte
 		Expiry:   josejwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}
 	payload := idpJWTPayload{
-		Eunox: eunoxClaimSet{
+		MCP: mcpClaimSet{
 			Capabilities: []string{"read_file:/reports/*", "query_db:SELECT"},
 			AgentID:      "bench-agent",
 			TaskID:       "bench-task",

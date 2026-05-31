@@ -6,7 +6,7 @@
 #
 # Asserts that eunox-mcp enforces demo/manifest.yaml with JWT capability
 # claims issued by the local Keycloak instance:
-#   JWT carries: eunox.capabilities = ["read_file:/reports/*", "query_db:SELECT"]
+#   JWT carries: mcp.capabilities = ["read_file:/reports/*", "query_db:SELECT"]
 #
 #   - initialize without JWT              → DENY  (HTTP 401 — JWT is required)
 #   - read_file /reports/q3.pdf   (JWT)   → ALLOW (JWT + manifest both allow)

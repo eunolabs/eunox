@@ -32,12 +32,12 @@
       "protocolMappers": [
         {
           "id": "a1b2c3d4-0000-0000-0001-cap-mapper01",
-          "name": "eunox-capabilities",
+          "name": "mcp-capabilities",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "claim.name": "eunox.capabilities",
+            "claim.name": "mcp.capabilities",
             "claim.value": "[\"read_file:/reports/*\",\"query_db:SELECT\"]",
             "id.token.claim": "true",
             "access.token.claim": "true",
@@ -46,12 +46,12 @@
         },
         {
           "id": "a1b2c3d4-0000-0000-0002-cap-mapper02",
-          "name": "eunox-task-id",
+          "name": "mcp-task-id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "claim.name": "eunox.task_id",
+            "claim.name": "mcp.task_id",
             "claim.value": "demo-task-001",
             "id.token.claim": "true",
             "access.token.claim": "true",
@@ -60,12 +60,12 @@
         },
         {
           "id": "a1b2c3d4-0000-0000-0003-cap-mapper03",
-          "name": "eunox-agent-id",
+          "name": "mcp-agent-id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "claim.name": "eunox.agent_id",
+            "claim.name": "mcp.agent_id",
             "claim.value": "demo-agent",
             "id.token.claim": "true",
             "access.token.claim": "true",

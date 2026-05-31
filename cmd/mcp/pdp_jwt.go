@@ -4,14 +4,14 @@
 // JWT PDP mode for IdP-issued capability claims (T-02: --jwks-uri).
 //
 // When --jwks-uri is set the proxy validates the Authorization: Bearer token
-// on every incoming HTTP request and extracts eunox capability claims.  The
+// on every incoming HTTP request and extracts MCP capability claims.  The
 // claims are translated into capability.Constraint values and evaluated by the
 // enforcement engine on each tools/call.
 //
 // Claim schema (Keycloak and most IdPs nest on dots in claim names):
 //
 //	{
-//	  "eunox": {
+//	  "mcp": {
 //	    "capabilities": ["read_file:/reports/*", "query_db:SELECT"],
 //	    "task_id":       "task-abc123",
 //	    "agent_id":      "agent-xyz"
@@ -49,7 +49,7 @@ import (
 // jwtClaimsKey is the unexported context key type for JWT claims.
 type jwtClaimsKey struct{}
 
-// JWTClaims holds the eunox-specific claims extracted from an IdP JWT.
+// JWTClaims holds the MCP capability claims extracted from an IdP JWT.
 type JWTClaims struct {
 	Capabilities []string
 	TaskID       string
@@ -69,24 +69,24 @@ func jwtClaimsFromContext(ctx context.Context) (*JWTClaims, bool) {
 	return c, ok && c != nil
 }
 
-// eunoxClaimSet holds the eunox-specific fields nested under the "eunox" key.
+// mcpClaimSet holds the MCP-specific fields nested under the "mcp" key.
 // Keycloak's oidc-hardcoded-claim-mapper (and most IdPs) treat dots in a
-// claim.name as path separators, so "eunox.capabilities" is emitted as:
+// claim.name as path separators, so "mcp.capabilities" is emitted as:
 //
-//	{"eunox": {"capabilities": [...], "task_id": "...", "agent_id": "..."}}
+//	{"mcp": {"capabilities": [...], "task_id": "...", "agent_id": "..."}}
 //
 // rather than as a flat key with a literal dot.
-type eunoxClaimSet struct {
+type mcpClaimSet struct {
 	Capabilities []string `json:"capabilities"`
 	TaskID       string   `json:"task_id"`
 	AgentID      string   `json:"agent_id"`
 }
 
-// idpJWTPayload is the subset of IdP JWT claims relevant to eunox enforcement.
+// idpJWTPayload is the subset of IdP JWT claims relevant to MCP enforcement.
 // Standard JWT fields (iss, sub, exp, iat, aud) are parsed separately by
-// jwt.Claims; this struct handles only the eunox-specific custom claims.
+// jwt.Claims; this struct handles only the MCP-specific custom claims.
 type idpJWTPayload struct {
-	Eunox eunoxClaimSet `json:"eunox"`
+	MCP mcpClaimSet `json:"mcp"`
 }
 
 // jwksAlgorithmsIDP lists the algorithms accepted for IdP JWTs.
@@ -323,9 +323,9 @@ func (p *JWTPDP) ValidateToken(ctx context.Context, authHeader string) (context.
 		}
 
 		claims := &JWTClaims{
-			Capabilities: payload.Eunox.Capabilities,
-			TaskID:       payload.Eunox.TaskID,
-			AgentID:      payload.Eunox.AgentID,
+			Capabilities: payload.MCP.Capabilities,
+			TaskID:       payload.MCP.TaskID,
+			AgentID:      payload.MCP.AgentID,
 			Subject:      stdClaims.Subject,
 			Issuer:       stdClaims.Issuer,
 		}
