@@ -28,9 +28,10 @@ Thumbs.db
 logs/
 *.log
 
-# Demo audit log (written by eunox-mcp container; keep the directory, not the data)
+# Demo audit log and HMAC key (written by eunox-mcp container; keep the directory, not the data)
 demo/audit/*.jsonl
 demo/audit/*.jsonl.*
+demo/audit/*.key
 
 # Temporary files
 tmp/

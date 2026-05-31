@@ -20,6 +20,7 @@ services:
       - --upstream-url=http://mock-mcp-server:8080
       - --policy=/demo/manifest.yaml
       - --audit-log=/audit/audit.jsonl
+      - --audit-key-path=/audit/audit.key
       - --jwks-uri=http://keycloak:8080/realms/eunox-demo/protocol/openid-connect/certs
       - --jwt-issuer=http://localhost:8081/realms/eunox-demo
       - --jwt-audience=eunox
