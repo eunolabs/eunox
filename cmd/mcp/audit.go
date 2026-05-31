@@ -181,14 +181,14 @@ func (s *auditSink) Close() error {
 // VerifyRecord re-computes the HMAC of a raw audit record line and reports
 // whether the signature matches.
 func (s *auditSink) VerifyRecord(line []byte) (bool, error) {
-	var m map[string]interface{}
-	if err := json.Unmarshal(line, &m); err != nil {
+	var rec auditRecord
+	if err := json.Unmarshal(line, &rec); err != nil {
 		return false, err
 	}
-	storedHMAC, _ := m["_hmac"].(string)
-	delete(m, "_hmac")
+	storedHMAC := rec.HMAC
+	rec.HMAC = "" // zero before re-signing; matches Record() which signs without this field
 
-	body, err := json.Marshal(m)
+	body, err := json.Marshal(rec)
 	if err != nil {
 		return false, err
 	}

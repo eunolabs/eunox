@@ -183,7 +183,9 @@ docker run --rm \
   -v "$(pwd)/demo/audit:/audit" \
   --entrypoint /usr/local/bin/mcp \
   eunolabs/eunox-mcp:latest \
-  validate-token --audit-log /audit/audit.jsonl
+  validate-token \
+  --audit-log /audit/audit.jsonl \
+  --audit-key-path /audit/audit.key
 ```
 
 Expected: `Checked N record(s): N valid, 0 invalid, 0 skipped.`
@@ -197,7 +199,7 @@ Expected: `Checked N record(s): N valid, 0 invalid, 0 skipped.`
 make -C demo ci-test
 ```
 
-This starts the stack, runs all assertions from `demo/scripts/ci-test.sh`, and tears down. Expect `Results: 8 passed, 0 failed`.
+This starts the stack, runs all assertions from `demo/scripts/ci-test.sh`, and tears down. Expect `Results: 9 passed, 0 failed`.
 
 - [x] `ci-test` exits 0 with 8/8 passing
 
@@ -393,7 +395,7 @@ Replace the local build with the published image to confirm the release is funct
 make -C demo ci-test
 ```
 
-- [ ] `ci-test` passes 8/8 using the published image
+- [ ] `ci-test` passes 9/9 using the published image
 
 ### 7.4 Verify pkg.go.dev indexing
 
