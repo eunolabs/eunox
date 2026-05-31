@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -117,20 +118,25 @@ func TestSEC02_VerifyRecord_ConstantTimeHMAC(t *testing.T) {
 	key := []byte("test-hmac-key-for-sec02")
 	sink := &auditSink{key: key}
 
-	// Build a valid audit record using the same algorithm as the sink.
-	record := map[string]interface{}{
-		"ts":       "2026-01-01T00:00:00Z",
-		"session":  "sess-123",
-		"tool":     "read_file",
-		"decision": "allow",
+	// Build a valid audit record using the same struct+marshal path as Record().
+	// VerifyRecord now unmarshals into auditRecord before re-signing, so the
+	// test record must use the real struct field names or the HMAC will mismatch.
+	rec := auditRecord{
+		ClassUID:    6003,
+		CategoryUID: 6,
+		ActivityID:  1,
+		Time:        "2026-01-01T00:00:00Z",
+		RequestID:   "test-req-id",
+		SessionID:   "sess-123",
+		ToolName:    "read_file",
+		Decision:    "allow",
 	}
-	body, _ := json.Marshal(record)
+	body, _ := json.Marshal(rec) // rec.HMAC is "" — omitted by omitempty
 	mac := hmac.New(sha256.New, key)
 	mac.Write(body)
 	sig := "sha256:" + hex.EncodeToString(mac.Sum(nil))
-	record["_hmac"] = sig
-
-	line, _ := json.Marshal(record)
+	rec.HMAC = sig
+	line, _ := json.Marshal(rec)
 
 	t.Run("valid HMAC passes", func(t *testing.T) {
 		ok, err := sink.VerifyRecord(line)
@@ -181,6 +187,57 @@ func TestSEC02_VerifyRecord_ConstantTimeHMAC(t *testing.T) {
 			t.Error("expected error for invalid JSON input")
 		}
 	})
+}
+
+// TestAuditRecord_SignVerifyRoundTrip exercises the full Record→VerifyRecord
+// path to ensure the signing and verification byte sequences always match.
+// This is the regression test for the map-vs-struct marshaling bug where
+// VerifyRecord re-marshaled through map[string]interface{} (alphabetical key
+// order) while Record signed through the auditRecord struct (declaration order).
+func TestAuditRecord_SignVerifyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	sink, err := openAuditSink(
+		dir+"/test.jsonl",
+		dir+"/test.key",
+		0,
+	)
+	if err != nil {
+		t.Fatalf("openAuditSink: %v", err)
+	}
+	defer func() { _ = sink.Close() }()
+
+	cases := []struct {
+		session   string
+		tool      string
+		decision  string
+		denialCode string
+	}{
+		{"sess-1", "read_file", "allow", ""},
+		{"sess-1", "write_file", "deny", "AUTHORIZATION_FAILED"},
+		{"sess-2", "query_db", "deny", "CONDITION_FAILED"},
+	}
+	for _, c := range cases {
+		sink.Record(c.session, c.tool, c.decision, c.denialCode, "", nil, nil, false)
+	}
+
+	data, err := os.ReadFile(dir + "/test.jsonl")
+	if err != nil {
+		t.Fatalf("reading audit log: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n"))
+	if len(lines) != len(cases) {
+		t.Fatalf("expected %d lines, got %d", len(cases), len(lines))
+	}
+	for i, line := range lines {
+		ok, err := sink.VerifyRecord(line)
+		if err != nil {
+			t.Fatalf("line %d: VerifyRecord error: %v", i, err)
+		}
+		if !ok {
+			t.Errorf("line %d: expected VALID signature, got INVALID", i)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
