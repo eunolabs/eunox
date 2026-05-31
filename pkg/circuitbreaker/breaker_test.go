@@ -506,3 +506,61 @@ func TestProtectedSigner_NilInputsPanic(t *testing.T) {
 		_ = circuitbreaker.NewProtectedSigner(nil, b)
 	})
 }
+
+func TestBreaker_State_HalfOpen(t *testing.T) {
+	var mu sync.Mutex
+	current := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return current
+	}
+
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  2,
+		CooldownDuration:  5 * time.Second,
+		HalfOpenMaxProbes: 1,
+	}
+	b := circuitbreaker.New(cfg, circuitbreaker.WithClock(clock))
+	b.RecordFailure()
+	b.RecordFailure()
+
+	if b.State() != circuitbreaker.StateOpen {
+		t.Fatalf("expected StateOpen after failures")
+	}
+
+	// Advance past cooldown.
+	mu.Lock()
+	current = current.Add(6 * time.Second)
+	mu.Unlock()
+
+	if s := b.State(); s != circuitbreaker.StateHalfOpen {
+		t.Errorf("expected StateHalfOpen after cooldown, got %q", s)
+	}
+}
+
+func TestDoVoid_ContextCancelled(t *testing.T) {
+	b := circuitbreaker.New(circuitbreaker.DefaultConfig())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := circuitbreaker.DoVoid(ctx, b, func(_ context.Context) error {
+		t.Fatal("fn should not be called with cancelled context")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestDoVoid_FnError(t *testing.T) {
+	b := circuitbreaker.New(circuitbreaker.DefaultConfig())
+	boom := errors.New("boom")
+
+	err := circuitbreaker.DoVoid(context.Background(), b, func(_ context.Context) error {
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom error, got %v", err)
+	}
+}

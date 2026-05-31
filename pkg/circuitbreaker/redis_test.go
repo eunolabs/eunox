@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/eunolabs/eunox/pkg/circuitbreaker"
 	"github.com/redis/go-redis/v9"
 )
@@ -133,6 +134,25 @@ func TestProtectedRedis_IncrOpensOnFailures(t *testing.T) {
 	}
 }
 
+func TestProtectedRedis_ExpireOpensOnFailures(t *testing.T) {
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  1,
+		CooldownDuration:  time.Minute,
+		HalfOpenMaxProbes: 1,
+	}
+	b := circuitbreaker.New(cfg)
+	client := newFailingRedisClient(t)
+	pr := circuitbreaker.NewProtectedRedis(client, b)
+
+	ctx := context.Background()
+	_ = pr.Expire(ctx, "key", time.Minute)
+
+	cmd := pr.Expire(ctx, "key", time.Minute)
+	if !errors.Is(cmd.Err(), circuitbreaker.ErrOpen) {
+		t.Fatalf("expected ErrOpen, got %v", cmd.Err())
+	}
+}
+
 func TestProtectedRedis_PublishOpensOnFailures(t *testing.T) {
 	cfg := circuitbreaker.Config{
 		FailureThreshold:  1,
@@ -206,4 +226,54 @@ func TestProtectedRedis_NilInputsPanic(t *testing.T) {
 		}()
 		_ = circuitbreaker.NewProtectedRedis(nil, b)
 	})
+}
+
+func TestProtectedRedis_RecordResult_RedisNilIsSuccess(t *testing.T) {
+	// redis.Nil (key not found) must be treated as SUCCESS, not failure.
+	// After a single redis.Nil result the breaker should remain closed.
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  1,
+		CooldownDuration:  time.Minute,
+		HalfOpenMaxProbes: 1,
+	}
+	b := circuitbreaker.New(cfg)
+	pr := circuitbreaker.NewProtectedRedis(client, b)
+
+	// GET on a key that does not exist returns redis.Nil — should be success.
+	cmd := pr.Get(context.Background(), "nonexistent-key")
+	if !errors.Is(cmd.Err(), redis.Nil) {
+		t.Fatalf("expected redis.Nil, got %v", cmd.Err())
+	}
+
+	// Breaker must still be closed (redis.Nil is not a failure).
+	if !b.Allow() {
+		t.Fatal("breaker should remain closed after redis.Nil result")
+	}
+}
+
+// TestProtectedRedis_Eval_ClosedCircuit verifies that Eval calls the underlying
+// client when the breaker is closed (covering the non-open code path).
+func TestProtectedRedis_Eval_ClosedCircuit(t *testing.T) {
+	cfg := circuitbreaker.Config{
+		FailureThreshold:  10,
+		CooldownDuration:  time.Minute,
+		HalfOpenMaxProbes: 1,
+	}
+	b := circuitbreaker.New(cfg)
+	client := newFailingRedisClient(t) // connection refused; breaker is still closed
+	pr := circuitbreaker.NewProtectedRedis(client, b)
+
+	cmd := pr.Eval(context.Background(), "return 1", []string{})
+	// The call reaches the inner client (connection refused), so the error is
+	// NOT ErrOpen — it is a real dial error.
+	if errors.Is(cmd.Err(), circuitbreaker.ErrOpen) {
+		t.Fatal("expected a real connection error, not ErrOpen")
+	}
+	if cmd.Err() == nil {
+		t.Fatal("expected a non-nil error from a dead client")
+	}
 }
