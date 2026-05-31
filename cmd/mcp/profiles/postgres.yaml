@@ -1,0 +1,18 @@
+server: postgres
+description: "@modelcontextprotocol/server-postgres — PostgreSQL query and schema inspection"
+tools:
+  # Schema inspection (always read)
+  list_tables: read
+  list_schemas: read
+  describe_table: read
+  list_indexes: read
+  list_constraints: read
+  # Query execution
+  # Note: the "query" tool can run arbitrary SQL.  The eunox-mcp PDP
+  # additionally parses the leading SQL verb (SELECT/INSERT/UPDATE/DELETE)
+  # via the AllowedOperations condition; this category is the fallback when
+  # no AllowedOperations condition is present.
+  query: read
+  execute: write
+  read_query: read
+  write_query: write

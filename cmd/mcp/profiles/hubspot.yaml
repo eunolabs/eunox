@@ -1,0 +1,43 @@
+server: hubspot
+description: "HubSpot — CRM contacts, deals, and marketing (HubSpot MCP)"
+tools:
+  # Contacts
+  list_contacts: read
+  get_contact: read
+  search_contacts: read
+  create_contact: write
+  update_contact: write
+  delete_contact: delete
+  # Companies
+  list_companies: read
+  get_company: read
+  search_companies: read
+  create_company: write
+  update_company: write
+  delete_company: delete
+  # Deals
+  list_deals: read
+  get_deal: read
+  search_deals: read
+  create_deal: write
+  update_deal: write
+  delete_deal: delete
+  # Tickets
+  list_tickets: read
+  get_ticket: read
+  create_ticket: write
+  update_ticket: write
+  delete_ticket: delete
+  # Engagements (notes, calls, emails)
+  list_engagements: read
+  get_engagement: read
+  create_note: write
+  create_call: write
+  create_email: write
+  # Pipelines
+  list_pipelines: read
+  get_pipeline: read
+  # Associations
+  list_associations: read
+  create_association: write
+  delete_association: delete

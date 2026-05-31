@@ -3,7 +3,6 @@ coverage.out
 
 # Binary output
 /bin/
-mcp
 
 # Environment variables
 .env

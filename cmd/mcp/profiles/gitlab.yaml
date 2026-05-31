@@ -1,0 +1,40 @@
+server: gitlab
+description: "@modelcontextprotocol/server-gitlab — GitLab repository and merge-request management"
+tools:
+  # Repository
+  list_projects: read
+  get_project: read
+  search_repositories: read
+  create_repository: write
+  fork_project: write
+  get_file_contents: read
+  create_or_update_file: write
+  push_files: write
+  delete_file: delete
+  # Branches and commits
+  list_branches: read
+  get_branch: read
+  create_branch: write
+  list_commits: read
+  get_commit: read
+  # Issues
+  list_issues: read
+  get_issue: read
+  create_issue: write
+  update_issue: write
+  delete_issue: delete
+  add_issue_comment: write
+  list_issue_comments: read
+  # Merge requests
+  list_merge_requests: read
+  get_merge_request: read
+  create_merge_request: write
+  update_merge_request: write
+  accept_merge_request: write
+  list_merge_request_diffs: read
+  # Pipelines (read)
+  list_pipelines: read
+  get_pipeline: read
+  # Groups
+  list_groups: read
+  get_group: read

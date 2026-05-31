@@ -1,0 +1,30 @@
+server: slack
+description: "@modelcontextprotocol/server-slack — Slack messaging and channel management"
+tools:
+  # Channels
+  slack_list_channels: read
+  slack_create_channel: write
+  slack_archive_channel: write
+  slack_invite_to_channel: write
+  slack_join_channel: write
+  slack_leave_channel: write
+  # Messages
+  slack_post_message: write
+  slack_reply_to_thread: write
+  slack_update_message: write
+  slack_delete_message: delete
+  slack_add_reaction: write
+  slack_remove_reaction: write
+  # History / reads
+  slack_get_channel_history: read
+  slack_get_thread_replies: read
+  # Users
+  slack_get_users: read
+  slack_get_user_profile: read
+  # Files
+  slack_upload_file: write
+  slack_list_files: read
+  slack_delete_file: delete
+  # DMs
+  slack_open_dm: write
+  slack_post_dm: write

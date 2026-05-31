@@ -1,0 +1,24 @@
+server: google-drive
+description: "@modelcontextprotocol/server-google-drive — Google Drive file management"
+tools:
+  # Reads
+  search: read
+  list_files: read
+  read_file: read
+  get_file_metadata: read
+  get_file_permissions: read
+  export_file: read
+  # Writes
+  create_folder: write
+  upload_file: write
+  update_file: write
+  copy_file: write
+  move_file: write
+  # Sharing / permissions
+  share_file: write
+  add_permission: write
+  update_permission: write
+  remove_permission: delete
+  # Deletes
+  delete_file: delete
+  trash_file: delete
