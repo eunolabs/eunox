@@ -13,29 +13,71 @@ mechanically.
 
 ## 1. Required structure
 
-Every manifest must match `AgentCapabilityManifest` in
-`internal/agentruntime/manifest.go`. The required top-level fields are
-`name`, `version`, and `capabilities`. Optional fields are
-`description`, `defaultTtl`, and `audience`. Anything missing or shaped
-differently is rejected by `eunox validate`.
+The required top-level fields are `name`, `version`, and `capabilities`.
+Optional fields are `description`, `defaultTtl`, and `audience`.
+Anything missing or shaped differently is rejected by `eunox-mcp validate`.
 
 ```yaml
-name: "Sales Research Bot" # human-readable
-version: "0.1.0" # agent version (semver)
-capabilities: [] # see § 2 — every entry is a capability.Constraint
-description: "Synthesizes account-research briefings."
-defaultTtl: 600 # optional
-audience: "eunox" # optional
+name: "Sales Research Bot" # human-readable, unique per logical agent
+version: "0.1.0"           # semver; recorded in every audit log entry
+capabilities: []           # see § 2 — each entry is a capability constraint
+description: "Synthesizes account-research briefings." # optional
+defaultTtl: 600            # informational only — not enforced by the proxy
+audience: "eunox"          # optional; used in JWT-intersection mode
 ```
 
-The `defaultTtl` and `audience` fields are parsed and stored but are
-informational in the proxy — JWT expiry is enforced by your IdP, not
-by eunox-mcp. See § 5 for TTL guidance.
+The `defaultTtl` and `audience` fields are informational in the proxy —
+JWT expiry is enforced by your IdP, not by eunox-mcp. See § 5 for TTL
+guidance.
 
-## 2. The capability list — the four common patterns
+## 2. How enforcement works
 
-Most manifests fall into one of four shapes. Start from the closest
-one and resist the urge to invent new shapes unless none of these fits.
+Before writing a manifest, understand what the proxy actually checks.
+
+**Resource** — matched against the MCP tool name.
+
+Every `tools/call` request carries a `name` field (e.g. `read_file`,
+`query_db`, `get_customer`). The proxy matches that string against each
+capability entry's `resource` field using `path.Match` glob semantics.
+There are no resource URIs, paths, or URLs in the MCP protocol — only
+tool names. `resource: "get_*"` matches any tool whose name starts with
+`get_`; `resource: read_file` matches only the tool named `read_file`
+exactly.
+
+**Actions** — two modes.
+
+Once a matching capability is found, the proxy checks whether the call
+is permitted by the `actions` list. There are two modes:
+
+| Mode | `actions` value | How it works |
+|---|---|---|
+| Generic | `[call]` or `[*]` | Permits any `tools/call` for the matched resource. This is the safe default and what the demo uses. |
+| Semantic | `[read]`, `[write]`, `[delete]`, `[execute]`, `[admin]` | The tool name is classified into a category by the resolver chain (see below). The call is permitted only if the resolved category appears in the list. |
+
+**Semantic action resolver chain** (evaluated in order):
+
+1. **Static resolver** — an explicit `tool_name → category` map
+   supplied via a profile (`eunox-mcp profiles`) or a custom action-map
+   file. Exact lookups, O(1).
+2. **HeuristicResolver** — infers the category from the tool name
+   prefix when no static entry exists:
+
+   | Category | Matched prefixes |
+   |---|---|
+   | `read` | `get_`, `list_`, `search_`, `read_`, `describe_`, `fetch_`, `show_`, `find_`, `query_`, `view_`, `check_`, `inspect_`, `peek_`, `stat_`, `open_` |
+   | `write` | `create_`, `update_`, `write_`, `set_`, `put_`, `post_`, `send_`, `add_`, `insert_`, `upsert_`, `patch_`, `edit_`, `modify_`, `push_`, `upload_`, `save_`, `append_`, `publish_`, `fork_`, `merge_` |
+   | `delete` | `delete_`, `remove_`, `drop_`, `purge_`, `destroy_`, `archive_`, `close_`, `clear_` |
+   | `execute` | `run_`, `execute_`, `launch_`, `start_`, `stop_`, `restart_`, `invoke_`, `trigger_`, `apply_`, `deploy_`, `install_`, `eval_` |
+   | `admin` | `admin_`, `grant_`, `revoke_`, `promote_`, `demote_`, `approve_`, `reject_` |
+
+3. **Fallback** — if neither resolver classifies the tool and `actions`
+   does not include `call` or `*`, the call is denied.
+
+> **Practical advice:** use `actions: [call]` unless you have a specific
+> reason to restrict by semantic category. It is clear, always works,
+> and does not depend on tool naming conventions.
+
+## 3. The capability list — four common patterns
 
 ### Pattern A — Single-purpose read agent
 
@@ -43,61 +85,72 @@ one and resist the urge to invent new shapes unless none of these fits.
 
 ```yaml
 capabilities:
-  - resource: "api://crm/customers/*"
-    actions: ["read"]
-  - resource: "api://reports/*"
-    actions: ["read"]
+  - resource: "get_*"       # matches get_customer, get_invoice, get_report …
+    actions: [call]
+  - resource: "list_*"      # matches list_customers, list_orders …
+    actions: [call]
+  - resource: "search_*"    # matches search_products, search_tickets …
+    actions: [call]
 ```
 
-- Only `read`.
-- Resources scoped to a _segment_ with `/*`, never bare `*`.
-- The Sentinel rule **"Write attempt from a read-only session"** will
-  fire immediately if this agent ever attempts a write — that's the
-  intended behaviour and it is **not** a false positive. Investigate
-  before widening the manifest.
+- Use `actions: [call]` — it is unconditional for any matched tool.
+- Scope each resource glob to one verb prefix. Do not write
+  `resource: "*"` (rejected by `eunox-mcp validate`) or
+  `resource: "get_or_list_*"` (not how glob patterns work).
+- If the agent should only call a small fixed set of tools, list them
+  individually rather than using a prefix glob — narrow is always safer.
 
-### Pattern B — Workflow agent (read-most, narrow write)
+  ```yaml
+  capabilities:
+    - resource: get_customer
+      actions: [call]
+    - resource: list_orders
+      actions: [call]
+  ```
 
-> _"This agent reads broadly but only writes back to one specific path."_
+### Pattern B — Workflow agent (read-many, narrow write)
+
+> _"This agent reads broadly but writes to exactly one tool."_
 
 ```yaml
 capabilities:
-  - resource: "api://crm/customers/*"
-    actions: ["read"]
-  - resource: "api://crm/customers/*/notes"
-    actions: ["write"]
-  - resource: "api://reports/*"
-    actions: ["read"]
+  - resource: "get_*"           # reads — broad
+    actions: [call]
+  - resource: "list_*"          # reads — broad
+    actions: [call]
+  - resource: add_customer_note # single permitted write tool — explicit
+    actions: [call]
+  # create_*, update_*, delete_* are absent → denied by default
 ```
 
-- Write resource is a **child path** of the read resource.
-- Each write resource lists explicit actions; never use
-  `["read", "write", "delete"]` "just in case".
-- If the agent needs to write into N siblings, list them
-  individually — don't widen to `api://crm/*`.
+- There are no resource paths in MCP — you control access by
+  **naming the write tools explicitly**, not by restricting to a path prefix.
+- Never add a write tool "just in case it's needed later".
+  Every write capability you add is blast radius.
+- If the agent genuinely needs several write tools, list each one
+  individually rather than widening to `"create_*"` or `"*"`.
 
 ### Pattern C — Tool-specialist agent
 
-> _"This agent calls a single internal tool a lot, with arguments."_
+> _"This agent calls one specific tool many times, with argument constraints."_
 
 ```yaml
 capabilities:
-  - resource: "api://forecasting/predict"
-    actions: ["execute"]
+  - resource: run_forecast      # exact tool name
+    actions: [call]
     conditions:
-      - type: maxCalls # MaxCallsCondition
+      - type: maxCalls           # at most 30 calls per minute
         count: 30
         windowSeconds: 60
-      - type: allowedOperations # AllowedOperationsCondition (narrows the verb)
+      - type: allowedOperations  # narrow the operation verb further
         operations: ["predict"]
 ```
 
-- Use `execute` for RPC-style endpoints.
-- Apply typed conditions instead of relying on TTL alone.
-- Each entry is one of the typed condition shapes in
-  `pkg/capability/condition.go`; the proxy enforces them through the
-  `ConditionRegistry` — no new validator code is needed if the type
-  already exists.
+- Use the exact tool name, not a glob — you want this constraint to
+  apply to precisely one tool.
+- Apply typed conditions to constrain arguments and rate. Each condition
+  is one of the typed shapes in `pkg/capability/condition.go`.
+- See § 4 for the full condition type reference.
 
 ### Pattern D — JWT-scoped agent (manifest + IdP intersection)
 
@@ -117,16 +170,13 @@ capabilities:
     actions: [call]
 ```
 
-The IdP then issues a JWT carrying a narrower `mcp.capabilities` claim:
+The IdP then issues a JWT carrying a narrower `eunox.capabilities` claim:
 
 ```json
 {
-  "mcp": {
-    "v": "0.1",
-    "capabilities": ["read_file:/reports/q3.pdf"],
-    "agent_id": "summariser-run-42",
-    "task_id": "briefing-2026-05-31"
-  }
+  "eunox.capabilities": ["read_file:/reports/q3.pdf"],
+  "eunox.agent_id": "summariser-run-42",
+  "eunox.task_id": "briefing-2026-05-31"
 }
 ```
 
@@ -137,98 +187,120 @@ invocation even though the manifest allows it.
 - Start the proxy in JWT mode: `--jwks-uri <url> --jwt-issuer <iss> --jwt-audience eunox --policy manifest.yaml`
 - The audit log records `agent_id` and `task_id` from the JWT automatically.
 
-## 3. Resource pattern do's and don'ts
+## 4. Resource pattern reference
 
-The wildcard semantics are **segment-aware** (`pkg/enforcement/engine.go::matchesResource`).
-Internalize the table below.
+The `resource` field is matched against the MCP **tool name** using
+`path.Match`. Because tool names rarely contain `/`, the `*` wildcard
+effectively matches any suffix within a single naming segment.
 
-| Pattern                 | Matches                              | Does **not** match                     |
-| ----------------------- | ------------------------------------ | -------------------------------------- |
-| `api://crm/customers`   | `api://crm/customers` only           | `api://crm/customers/123`              |
-| `api://crm/customers/*` | `api://crm/customers/123`, `.../abc` | `api://crm/customers`, `.../123/notes` |
-| `storage://docs/team/*` | `storage://docs/team/file.pdf`       | `storage://docs/file.pdf`              |
-| `api://*`               | (rejected by `eunox validate`)       | —                                      |
+| Pattern | Matches | Does **not** match |
+|---|---|---|
+| `get_customer` | `get_customer` only | `get_customers`, `get_customer_by_id` |
+| `get_*` | `get_customer`, `get_invoice`, `get_report` | `list_customers`, `create_customer` |
+| `*_report` | `get_report`, `create_report`, `delete_report` | `report_get`, `reports` |
+| `read_file` | `read_file` only | `read_files`, `read_file_metadata` |
+| `*` | (rejected by `eunox-mcp validate`) | — |
 
 Rules:
 
-- **Schemes are equality-checked.** `api://` and `storage://` never
-  cross-match.
-- **`*` matches one segment only.** `api://crm/customers/*` matches
-  `api://crm/customers/123` but not `api://crm/customers/123/notes`.
-  Multi-segment wildcards (`**`) are not supported — `path.Match`
-  semantics are used and treat `**` identically to `*`.
-- **Bare `*` is not allowed.** `eunox-mcp validate` rejects it.
+- **Match is against the tool name string.** There are no resource URIs,
+  HTTP paths, or URL schemes in the MCP protocol.
+- **`*` matches any characters except `/`.** Since most tool names do not
+  contain `/`, this is effectively a substring wildcard, but it will not
+  span a `/` if one appears.
+- **Multi-segment wildcards (`**`) are not supported.** `path.Match`
+  treats `**` identically to `*`.
+- **Bare `*` is rejected** by `eunox-mcp validate`. Use named tools or
+  specific prefix globs instead.
+- **Most-specific match wins.** If two entries both match a tool name,
+  the one with the higher specificity score (exact > no-wildcard prefix >
+  shorter wildcard) is used.
 
-## 4. Conditions cookbook
+## 5. Conditions cookbook
 
 `conditions` is an array of typed shapes from
-`pkg/capability/condition.go` and `pkg/capability/conditions.go`.
-Every entry has a `type` discriminator and is enforced by the shared
-`ConditionRegistry`. Unknown types are denied at both issuance and at
-the proxy, so spelling matters.
+`pkg/capability/condition.go`. Every entry has a `type` discriminator.
+Unknown types are denied at the proxy, so spelling matters.
 
 ```yaml
-- resource: "api://billing/invoices/*"
-  actions: ["read"]
+# Rate-limit, time-window, and IP-allowlist on a reporting tool
+- resource: get_invoice
+  actions: [call]
   conditions:
-    - type: maxCalls # rate-limit
+    - type: maxCalls        # at most 60 calls per minute
       count: 60
       windowSeconds: 60
-    - type: timeWindow # restrict to a window
+    - type: timeWindow      # restrict to a fiscal-year window
       notBefore: "2026-04-01T00:00:00Z"
       notAfter: "2026-12-31T23:59:59Z"
-    - type: ipRange # source-IP allowlist
+    - type: ipRange         # internal network only
       cidrs: ["10.0.0.0/8"]
 
-- resource: "storage://exports/team-a/*"
-  actions: ["write"]
+# Restrict file exports to safe types
+- resource: export_data
+  actions: [call]
   conditions:
-    - type: allowedExtensions # restrict file types
+    - type: allowedExtensions
       extensions: [".csv", ".json"]
 
-- resource: "db://warehouse/sales"
-  actions: ["read"]
+# Database query tool: restrict tables and redact a column
+- resource: query_sales
+  actions: [call]
   conditions:
-    - type: allowedTables # restrict tables (and optionally columns)
+    - type: allowedTables
       tables: ["sales"]
       columns:
         sales: ["customer_id", "amount", "ts"]
-    - type: redactFields # proxy records the redaction obligation
+    - type: redactFields       # proxy strips this field from the result
       fields: ["sales.customer_email"]
 
-- resource: "smtp://outbound/*"
-  actions: ["execute"]
+# Email tool: allowlist recipient domains
+- resource: send_email
+  actions: [call]
   conditions:
-    - type: recipientDomain # outbound email allowlist
+    - type: recipientDomain
       domains: ["example.com"]
 ```
 
-The full list of shipped condition types is `timeWindow`, `ipRange`,
+The full list of shipped condition types: `timeWindow`, `ipRange`,
 `allowedOperations`, `allowedExtensions`, `allowedTables`, `maxCalls`,
 `recipientDomain`, `redactFields`, `allowedValues`, `policy`,
-and the `custom` escape hatch (which requires the named handler to be
-registered in the `ConditionRegistry`).
+and the `custom` escape hatch (requires the named handler to be
+registered via `RegisterCondition`).
 
-**`allowedValues`** — restricts a named string argument to a set of allowed
+**`allowedValues`** — restricts a named tool argument to a set of allowed
 literal values or glob patterns:
 
 ```yaml
 - resource: read_file
+  actions: [call]
   conditions:
     - type: allowedValues   # restrict the path argument
       argument: path
       values: ["/reports/*", "/public/*"]
 ```
 
-The `argument` field names the tool parameter to check; `values` is a list
-of exact strings or `*`-glob patterns (e.g. `/reports/*` matches
+The `argument` field names the tool parameter to check; `values` is a
+list of exact strings or `*`-glob patterns (e.g. `/reports/*` matches
 `/reports/q3.pdf`).
+
+**`allowedOperations`** — restricts the SQL verb or operation keyword
+extracted from a tool argument named `sql`, `query`, or `statement`:
+
+```yaml
+- resource: query_db
+  actions: [call]
+  conditions:
+    - type: allowedOperations
+      operations: ["SELECT"]   # blocks INSERT, UPDATE, DELETE, DROP, …
+```
 
 **`policy`** — delegates the allow/deny decision to an external policy
 decision point (e.g. OPA, Cedar) registered via `WithPolicyEvaluator`:
 
 ```yaml
 - resource: query_db
+  actions: [call]
   conditions:
     - type: policy
       backend: opa          # name passed to your registered PolicyEvaluator
@@ -243,14 +315,14 @@ When no evaluator is wired (the default), any `policy` condition is
 denied fail-closed. Use this for logic that cannot be expressed with
 the other typed conditions.
 
-> If a condition you need is not in the union, **add a new typed
-> shape to `pkg/capability/condition.go` first**, register its
-> handler in `pkg/enforcement/handlers.go`, and ship a
-> validator with tests under `pkg/capability/validate.go`.
-> Free-form conditions are denied at the proxy, which is the correct
-> behaviour but a policy regression for the manifest author.
+> If a condition type you need does not exist, **add a new typed shape
+> to `pkg/capability/condition.go` first**, register its handler in
+> `pkg/enforcement/handlers.go`, and ship a test.
+> Unknown condition types are denied at the proxy — that is the correct
+> behaviour, but a regression for the manifest author if they forget to
+> register the handler.
 
-## 5. TTL guidance
+## 6. TTL guidance
 
 In JWT mode, token lifetime is controlled by the `exp` claim your IdP
 stamps on the JWT — eunox-mcp validates and rejects expired tokens but
@@ -267,7 +339,7 @@ and available for your tooling to read; the proxy does not enforce it.
 Configure short TTLs in your IdP client settings; request a fresh
 token per task rather than re-using a long-lived one.
 
-## 6. Anti-patterns to avoid
+## 7. Anti-patterns to avoid
 
 These all _work_ (token issued, proxy happy) but each one silently
 degrades the security posture.
@@ -278,7 +350,7 @@ degrades the security posture.
 2. **Over-broad resource globs** "for development". Configure dev
    manifests with realistic scopes from day one — a manifest that is
    too wide in development tends to stay that way in production.
-3. **Adding actions the agent doesn't currently need.** List only what
+3. **Adding tools the agent doesn't currently need.** List only what
    the agent actually calls. Over-broad manifests silently widen the
    blast radius of a prompt-injection or supply-chain compromise.
 4. **One manifest shared across every environment.** Use a separate
@@ -289,7 +361,7 @@ degrades the security posture.
    per task and keep TTLs short; the audit log records `task_id` from
    the JWT so attribution is preserved without needing long-lived tokens.
 
-## 7. Tooling
+## 8. Tooling
 
 | Step                                          | CLI command                                          |
 | --------------------------------------------- | ---------------------------------------------------- |
@@ -304,8 +376,7 @@ degrades the security posture.
 Wire `eunox-mcp validate` into your CI pipeline for every manifest PR
 to catch schema errors and over-broad globs before they reach production.
 
-## 8. Where this guide lives in the rest of the docs
+## 9. Where this guide lives in the rest of the docs
 
-- **Why the proxy is the policy decision point**: [`enforcement.md`](./enforcement.md)
 - **Security properties and threat model**: [`threat-model-mcp.md`](./threat-model-mcp.md)
 - **Performance baseline**: [`benchmarks.md`](./benchmarks.md)
