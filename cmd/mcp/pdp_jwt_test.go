@@ -114,9 +114,9 @@ func TestParseCapabilityClaim(t *testing.T) {
 	}{
 		{"read_file", "read_file", ""},
 		{"read_file:/reports/*", "read_file", "/reports/*"},
-		{"query_db:SELECT", "query_db", "SELECT"},
+		{"query_db:SELECT:sql", "query_db", "SELECT:sql"}, // "VERB:argname" format
 		{"write_file:/tmp/*", "write_file", "/tmp/*"},
-		{"tool:a:b", "tool", "a:b"}, // only first colon splits
+		{"tool:a:b", "tool", "a:b"}, // only first colon splits tool from condition
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -140,7 +140,8 @@ func TestBuildConstraint_NoCondition(t *testing.T) {
 }
 
 func TestBuildConstraint_SQLVerb(t *testing.T) {
-	c := buildConstraint("query_db", "SELECT")
+	// New format: "SELECT:sql" — explicit argument name after the verb.
+	c := buildConstraint("query_db", "SELECT:sql")
 	if len(c.Conditions) != 1 {
 		t.Fatalf("expected 1 condition, got %d", len(c.Conditions))
 	}
@@ -150,6 +151,22 @@ func TestBuildConstraint_SQLVerb(t *testing.T) {
 	}
 	if len(aoc.Operations) != 1 || aoc.Operations[0] != "SELECT" {
 		t.Errorf("operations = %v, want [SELECT]", aoc.Operations)
+	}
+	if aoc.Argument != "sql" {
+		t.Errorf("argument = %q, want %q", aoc.Argument, "sql")
+	}
+}
+
+func TestBuildConstraint_SQLVerb_BareIsNotOperation(t *testing.T) {
+	// A bare SQL verb without ":argname" is no longer a SQL condition —
+	// it falls through to AllowedValuesCondition (path glob shorthand).
+	c := buildConstraint("query_db", "SELECT")
+	if len(c.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(c.Conditions))
+	}
+	_, ok := c.Conditions[0].(capability.AllowedValuesCondition)
+	if !ok {
+		t.Fatalf("expected AllowedValuesCondition for bare verb, got %T", c.Conditions[0])
 	}
 }
 
@@ -456,7 +473,7 @@ func TestJWTPDP_Decide_AllowSQLVerb(t *testing.T) {
 	defer srv.Close()
 
 	pdp := makeJWTPDP(t, srv, "", "", nil)
-	token := makeIDPToken(t, key, []string{"query_db:SELECT"}, "", "", "a1", time.Now().Add(time.Hour))
+	token := makeIDPToken(t, key, []string{"query_db:SELECT:sql"}, "", "", "a1", time.Now().Add(time.Hour))
 	ctx, err := pdp.ValidateToken(context.Background(), "Bearer "+token)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -474,7 +491,7 @@ func TestJWTPDP_Decide_DenySQLVerbMismatch(t *testing.T) {
 	defer srv.Close()
 
 	pdp := makeJWTPDP(t, srv, "", "", nil)
-	token := makeIDPToken(t, key, []string{"query_db:SELECT"}, "", "", "a1", time.Now().Add(time.Hour))
+	token := makeIDPToken(t, key, []string{"query_db:SELECT:sql"}, "", "", "a1", time.Now().Add(time.Hour))
 	ctx, err := pdp.ValidateToken(context.Background(), "Bearer "+token)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -675,7 +692,7 @@ func TestHTTPProxy_JWTMode_401OnExpiredToken(t *testing.T) {
 
 func TestJWTClaimsContext_RoundTrip(t *testing.T) {
 	original := &JWTClaims{
-		Capabilities: []string{"read_file:/reports/*", "query_db:SELECT"},
+		Capabilities: []string{"read_file:/reports/*", "query_db:SELECT:sql"},
 		TaskID:       "task-1",
 		AgentID:      "agent-1",
 		Subject:      "user@example.com",

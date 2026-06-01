@@ -151,7 +151,6 @@ func TestToolInvoker_EnforceRequestPayload(t *testing.T) {
 	assert.Equal(t, "test-session", payload.Request.SessionID)
 	assert.Equal(t, "write_file", payload.Request.ToolName)
 	assert.Equal(t, "10.0.0.1", payload.Request.Context.SourceIP)
-	assert.Equal(t, "write", payload.Request.Context.Operation)
 }
 
 func TestToolInvoker_WithDPoP(t *testing.T) {

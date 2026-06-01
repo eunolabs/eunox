@@ -14,16 +14,17 @@ type EnforceRequest struct {
 }
 
 // EnforceRequestContext carries request attributes used during enforcement.
+// Tool argument values are passed via EnforceRequest.Arguments — condition
+// handlers read the specific parameter they need by name via the condition's
+// Argument field rather than relying on pre-extracted context.
 type EnforceRequestContext struct {
-	SourceIP   string        `json:"sourceIp,omitempty"`
-	Recipients []string      `json:"recipients,omitempty"`
-	Now        string        `json:"now,omitempty"`
-	Operation  string        `json:"operation,omitempty"`
-	FilePath   string        `json:"filePath,omitempty"`
-	Tables     []TableAccess `json:"tables,omitempty"`
+	SourceIP string `json:"sourceIp,omitempty"` // used by ipRange condition
+	Now      string `json:"now,omitempty"`      // reserved for future use
 }
 
 // TableAccess describes the table and columns accessed by a request.
+// Used internally by the enforcement engine when the caller pre-populates
+// table access information.
 type TableAccess struct {
 	Table   string   `json:"table"`
 	Columns []string `json:"columns,omitempty"`

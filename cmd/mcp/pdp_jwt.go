@@ -409,11 +409,15 @@ func parseCapabilityClaim(claim string) (tool, cond string) {
 
 // buildConstraint converts a parsed claim into a capability.Constraint.
 //
-// Shorthand heuristics:
-//   - No condition → plain allow constraint.
-//   - Condition is an all-uppercase SQL verb (SELECT, INSERT, UPDATE, DELETE,
-//     DROP, CREATE, ALTER, TRUNCATE) → AllowedOperationsCondition.
-//   - Otherwise → AllowedValuesCondition with argument="path".
+// Claim condition syntax:
+//
+//   - No condition             → plain allow (no conditions)
+//   - "VERB:argname"           → AllowedOperationsCondition on argument argname
+//     (e.g. "SELECT:query" checks the "query" argument for the SELECT verb)
+//   - "/path/glob"             → AllowedValuesCondition on argument "path"
+//   - "argname=value"          → AllowedValuesCondition on the named argument
+//
+// The argument name is always explicit — there is no heuristic guessing.
 func buildConstraint(toolName, cond string) capability.Constraint {
 	c := capability.Constraint{
 		Resource: toolName,
@@ -422,13 +426,33 @@ func buildConstraint(toolName, cond string) capability.Constraint {
 	if cond == "" {
 		return c
 	}
-	if isSQLVerb(cond) {
+
+	// "VERB:argname" — AllowedOperationsCondition with explicit argument.
+	if idx := strings.IndexByte(cond, ':'); idx > 0 {
+		verb := cond[:idx]
+		arg := cond[idx+1:]
+		if isSQLVerb(verb) && arg != "" {
+			c.Conditions = []capability.Condition{
+				capability.AllowedOperationsCondition{
+					Argument:   arg,
+					Operations: []string{verb},
+				},
+			}
+			return c
+		}
+	}
+
+	// "argname=value" — AllowedValuesCondition on a named argument.
+	if idx := strings.IndexByte(cond, '='); idx > 0 {
+		arg := cond[:idx]
+		val := cond[idx+1:]
 		c.Conditions = []capability.Condition{
-			capability.AllowedOperationsCondition{Operations: []string{cond}},
+			capability.AllowedValuesCondition{Argument: arg, Values: []interface{}{val}},
 		}
 		return c
 	}
-	// Treat as a path/values allowedValues condition.
+
+	// Bare path glob (legacy shorthand): defaults to argument="path".
 	c.Conditions = []capability.Condition{
 		capability.AllowedValuesCondition{Argument: "path", Values: []interface{}{cond}},
 	}
@@ -452,8 +476,25 @@ func evaluateJWTConditions(conditions []capability.Condition, toolName string, a
 	for _, cond := range conditions {
 		switch c := cond.(type) {
 		case capability.AllowedOperationsCondition:
-			op := extractSQLOperation(args)
-			if !containsString(c.Operations, op) {
+			if c.Argument == "" {
+				resp := denyResponse(capability.ErrCodeConditionFailed, capability.ConditionTypeAllowedOperations,
+					"allowedOperations condition requires an explicit 'argument' field")
+				return &resp
+			}
+			var op string
+			if v, ok := args[c.Argument]; ok {
+				if s, ok := v.(string); ok {
+					if parts := strings.Fields(s); len(parts) > 0 {
+						op = strings.ToUpper(parts[0])
+					}
+				}
+			}
+			if op == "" {
+				resp := denyResponse(capability.ErrCodeMissingContext, capability.ConditionTypeAllowedOperations,
+					fmt.Sprintf("tool %q: argument %q is missing or empty", toolName, c.Argument))
+				return &resp
+			}
+			if !containsStringFold(c.Operations, op) {
 				resp := denyResponse("OPERATION_NOT_PERMITTED", capability.ConditionTypeAllowedOperations,
 					fmt.Sprintf("tool %q: operation %q is not in the permitted set %v", toolName, op, c.Operations))
 				return &resp
@@ -489,6 +530,16 @@ func matchesAllowedValues(val string, values []interface{}) bool {
 func containsString(ss []string, s string) bool {
 	for _, v := range ss {
 		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// containsStringFold reports whether ss contains s using case-insensitive comparison.
+func containsStringFold(ss []string, s string) bool {
+	for _, v := range ss {
+		if strings.EqualFold(v, s) {
 			return true
 		}
 	}

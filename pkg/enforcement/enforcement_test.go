@@ -65,11 +65,10 @@ func TestEngine_ValidateAction_AllowExactMatch(t *testing.T) {
 	req := capability.EnforceRequest{
 		SessionID: "sess-1",
 		ToolName:  "email:send",
-		Context:   capability.EnforceRequestContext{Operation: "email:send"},
 	}
 
 	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-		{Resource: "email:send", Actions: []string{"email:send"}},
+		{Resource: "email:send", Actions: []string{"call"}},
 	})
 
 	require.NoError(t, err)
@@ -1026,7 +1025,7 @@ func TestEngine_MultipleConditions_FirstFailureDenies(t *testing.T) {
 		ToolName:  "tool",
 		Context: capability.EnforceRequestContext{
 			SourceIP:  "192.168.1.1", // Not in allowed range
-			Operation: "read",
+	
 		},
 	}
 
@@ -1056,7 +1055,6 @@ func TestEngine_EmptyActions_MatchesAny(t *testing.T) {
 	req := capability.EnforceRequest{
 		SessionID: "sess-1",
 		ToolName:  "tool",
-		Context:   capability.EnforceRequestContext{Operation: "anything"},
 	}
 
 	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
@@ -1425,51 +1423,55 @@ func TestValidateResourcePattern_Invalid(t *testing.T) {
 }
 
 func TestEngine_MostSpecificMatch_NarrowCapabilityWins(t *testing.T) {
+	// Exact resource beats glob: email:send is more specific than email:*
 	engine := enforcement.New()
 	ctx := context.Background()
-	req := capability.EnforceRequest{ToolName: "email:send", Context: capability.EnforceRequestContext{Operation: "send"}}
+	req := capability.EnforceRequest{ToolName: "email:send"}
 
 	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-		{Resource: "email:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
-		{Resource: "email:*", Actions: []string{"send"}},
+		{Resource: "email:*", Actions: []string{"call"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "email:send", Actions: []string{"call"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
 func TestEngine_MostSpecificMatch_ExactResourceBeatsWildcard(t *testing.T) {
+	// Exact resource entry (no conditions) wins over glob with a deny condition.
 	engine := enforcement.New()
 	ctx := context.Background()
-	req := capability.EnforceRequest{ToolName: "email:send", Context: capability.EnforceRequestContext{Operation: "send"}}
+	req := capability.EnforceRequest{ToolName: "email:send"}
 
 	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-		{Resource: "email:*", Actions: []string{"send"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
-		{Resource: "email:send", Actions: []string{"send"}},
+		{Resource: "email:*", Actions: []string{"call"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "email:send", Actions: []string{"call"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
-func TestEngine_MostSpecificMatch_ActionSpecificityWins(t *testing.T) {
+func TestEngine_MostSpecificMatch_LongerPrefixWins(t *testing.T) {
+	// A longer literal prefix in a glob beats a shorter one.
 	engine := enforcement.New()
 	ctx := context.Background()
-	req := capability.EnforceRequest{ToolName: "tool:mail", Context: capability.EnforceRequestContext{Operation: "invoke"}}
+	req := capability.EnforceRequest{ToolName: "tool:mail"}
 
 	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{
-		{Resource: "tool:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
-		{Resource: "tool:*", Actions: []string{"invoke"}},
+		{Resource: "tool:*", Actions: []string{"call"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "tool:mail", Actions: []string{"call"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
 
-func TestEngine_MostSpecificMatch_JWTOrderingDoesNotMatter(t *testing.T) {
+func TestEngine_MostSpecificMatch_OrderingDoesNotMatter(t *testing.T) {
+	// The most-specific constraint wins regardless of its position in the list.
 	engine := enforcement.New()
 	ctx := context.Background()
-	req := capability.EnforceRequest{ToolName: "file:read", Context: capability.EnforceRequestContext{Operation: "read"}}
+	req := capability.EnforceRequest{ToolName: "file:read"}
 	constraints := []capability.Constraint{
-		{Resource: "file:*", Actions: []string{"*"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
-		{Resource: "file:read", Actions: []string{"read"}},
+		{Resource: "file:*", Actions: []string{"call"}, Conditions: []capability.Condition{&capability.TimeWindowCondition{NotBefore: "2999-01-01T00:00:00Z"}}},
+		{Resource: "file:read", Actions: []string{"call"}},
 	}
 
 	respA, err := engine.ValidateAction(ctx, &req, constraints)

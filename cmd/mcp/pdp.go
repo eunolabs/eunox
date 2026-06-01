@@ -43,39 +43,18 @@ func (alwaysAllowPDP) Decide(_ context.Context, _, _ string, _ map[string]interf
 // Matching semantics:
 //   - The manifest is an allowlist: only tools with an explicit capability entry
 //     are permitted.  A tool absent from the manifest is denied by default.
+//   - The actions list must contain "call" or "*" to permit the call.
 //   - If a constraint matches, conditions are evaluated.  A failure denies.
-//   - Actions must include "call", "*", or a semantic category ("read", "write",
-//     "delete", "execute", "admin") that matches the resolved action for the tool.
-//
-// Action resolution (in priority order):
-//  1. Exact match in the configured ActionResolver (custom map or built-in profile).
-//  2. HeuristicResolver — name-prefix inference (e.g. "get_*" → read).
-//  3. Generic fallback — if neither resolver classifies the tool, "call" or "*"
-//     in the constraint's actions list still permits the call.
-//
-// The enforcement engine is used for condition evaluation, but capability
-// matching uses proxy-local resource matching so that Context.Operation can
-// be set to the extracted SQL/operation verb (for allowedOperations) rather
-// than to "call" (which is the MCP action literal).
 type ManifestPDP struct {
 	manifest *LocalManifest
 	engine   *enforcement.Engine
 	ks       killswitch.Manager
-	resolver ActionResolver // optional; enables semantic action matching
 }
 
 // NewManifestPDP creates a PDP backed by the given manifest.
 // engine must have a CallCounter configured to support maxCalls conditions.
 func NewManifestPDP(manifest *LocalManifest, engine *enforcement.Engine, ks killswitch.Manager) *ManifestPDP {
 	return &ManifestPDP{manifest: manifest, engine: engine, ks: ks}
-}
-
-// WithResolver attaches an ActionResolver to the PDP, enabling semantic action
-// matching in manifest constraints (actions: ["read"], actions: ["write"], etc.).
-// Returns p for fluent chaining.
-func (p *ManifestPDP) WithResolver(r ActionResolver) *ManifestPDP {
-	p.resolver = r
-	return p
 }
 
 func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, args map[string]interface{}, sourceIP string) capability.EnforceResponse {
@@ -107,22 +86,13 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 		}
 	}
 
-	// 3. Verify the constraint permits this tool call.
-	// Two modes are supported:
-	//   Generic:   actions includes "call" or "*" → permits any MCP tool call.
-	//   Semantic:  actions includes a resolved category ("read", "write", "delete",
-	//              "execute", "admin") → matched via the ActionResolver chain.
-	if !p.actionPermitted(matched.Actions, toolName) {
-		resolvedCat := p.resolveAction(toolName)
-		catDesc := string(resolvedCat)
-		if catDesc == "" {
-			catDesc = "unknown (not classified by resolver)"
-		}
+	// 3. Check that the constraint's actions list contains "call" or "*".
+	if !containsAction(matched.Actions, "call") && !containsAction(matched.Actions, "*") {
 		return capability.EnforceResponse{
 			Decision: capability.DecisionDeny,
 			Denial: &capability.DenialInfo{
 				Code:    "CAPABILITY_DENIED",
-				Message: fmt.Sprintf("tool %q resolved to action %q which is not permitted by constraint %q (allowed: %s)", toolName, catDesc, matched.Resource, strings.Join(matched.Actions, ", ")),
+				Message: fmt.Sprintf("constraint %q does not permit tool calls (actions must include 'call' or '*'; got: %s)", matched.Resource, strings.Join(matched.Actions, ", ")),
 			},
 		}
 	}
@@ -143,9 +113,7 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 
 	// 5. Condition evaluation via the enforcement engine.
 	//    We pass a synthetic constraint (resource="*", actions=["*"]) so that the
-	//    engine's action-matching logic does not interfere with the MCP "call"
-	//    action.  Context.Operation is set to the extracted SQL/operation verb so
-	//    that allowedOperations conditions work correctly against the tool args.
+	//    engine's action-matching logic does not re-check the actions list.
 	synth := capability.Constraint{
 		Resource:   "*",
 		Actions:    []string{"*"},
@@ -155,13 +123,7 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 		SessionID: sessionID,
 		ToolName:  toolName,
 		Arguments: args,
-		Context: capability.EnforceRequestContext{
-			SourceIP:   sourceIP,
-			Operation:  extractSQLOperation(args),
-			FilePath:   extractFilePath(args),
-			Recipients: extractRecipients(args),
-			Tables:     extractTables(args),
-		},
+		Context:   capability.EnforceRequestContext{SourceIP: sourceIP},
 	}
 
 	resp, err := p.engine.ValidateAction(ctx, req, []capability.Constraint{synth})
@@ -172,40 +134,6 @@ func (p *ManifestPDP) Decide(ctx context.Context, sessionID, toolName string, ar
 		}
 	}
 	return resp
-}
-
-// actionPermitted reports whether the constraint actions list permits a call
-// to toolName.
-//
-// Rules (checked in order):
-//  1. "call" or "*" in actions → always permit (backwards-compatible generic mode).
-//  2. Resolved semantic category (via resolver chain) matches one of the listed
-//     actions → permit.
-//  3. Neither rule satisfied → deny.
-func (p *ManifestPDP) actionPermitted(actions []string, toolName string) bool {
-	// Generic mode: "call" / "*" passthrough — preserves backwards compatibility
-	// for manifests written before ActionResolver support was added.
-	if containsAction(actions, "call") || containsAction(actions, "*") {
-		return true
-	}
-	// Semantic mode: check whether the resolved category is in the actions list.
-	cat := p.resolveAction(toolName)
-	if cat == "" {
-		// No resolver could classify the tool and "call"/"*" is absent → deny.
-		return false
-	}
-	return containsAction(actions, string(cat))
-}
-
-// resolveAction returns the semantic ActionCategory for toolName by querying
-// the configured resolver first, then falling back to the HeuristicResolver.
-func (p *ManifestPDP) resolveAction(toolName string) ActionCategory {
-	if p.resolver != nil {
-		if cat := p.resolver.Resolve(toolName); cat != "" {
-			return cat
-		}
-	}
-	return HeuristicResolver{}.Resolve(toolName)
 }
 
 // findConstraint returns the most specific capability.Constraint whose Resource
@@ -269,105 +197,6 @@ func containsAction(actions []string, act string) bool {
 	return false
 }
 
-// -----------------------------------------------------------------
-// Argument context extraction helpers
-// -----------------------------------------------------------------
-
-func extractSQLOperation(args map[string]interface{}) string {
-	for _, key := range []string{"sql", "query", "statement"} {
-		if v, ok := args[key]; ok {
-			if s, ok := v.(string); ok {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					parts := strings.Fields(s)
-					if len(parts) > 0 {
-						return strings.ToUpper(parts[0])
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func extractFilePath(args map[string]interface{}) string {
-	for _, key := range []string{"filePath", "path", "file", "filename"} {
-		if v, ok := args[key]; ok {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-	return ""
-}
-
-func extractRecipients(args map[string]interface{}) []string {
-	var out []string
-	addField := func(v interface{}) {
-		switch t := v.(type) {
-		case string:
-			if s := strings.TrimSpace(t); s != "" {
-				out = append(out, s)
-			}
-		case []interface{}:
-			for _, item := range t {
-				if s, ok := item.(string); ok {
-					if s = strings.TrimSpace(s); s != "" {
-						out = append(out, s)
-					}
-				}
-			}
-		}
-	}
-	for _, key := range []string{"to", "recipients", "cc", "bcc"} {
-		if v, ok := args[key]; ok {
-			addField(v)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func extractTables(args map[string]interface{}) []capability.TableAccess {
-	if v, ok := args["table"]; ok {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			return []capability.TableAccess{{Table: strings.TrimSpace(s)}}
-		}
-	}
-	if v, ok := args["tables"]; ok {
-		if arr, ok := v.([]interface{}); ok {
-			var out []capability.TableAccess
-			for _, entry := range arr {
-				switch e := entry.(type) {
-				case string:
-					if s := strings.TrimSpace(e); s != "" {
-						out = append(out, capability.TableAccess{Table: s})
-					}
-				case map[string]interface{}:
-					tbl, _ := e["table"].(string)
-					if tbl = strings.TrimSpace(tbl); tbl == "" {
-						continue
-					}
-					ta := capability.TableAccess{Table: tbl}
-					if cols, ok := e["columns"].([]interface{}); ok {
-						for _, c := range cols {
-							if col, ok := c.(string); ok && col != "" {
-								ta.Columns = append(ta.Columns, col)
-							}
-						}
-					}
-					out = append(out, ta)
-				}
-			}
-			if len(out) > 0 {
-				return out
-			}
-		}
-	}
-	return nil
-}
 
 // -----------------------------------------------------------------
 // JSON Schema argument validation (subset: type, pattern, minLength,
