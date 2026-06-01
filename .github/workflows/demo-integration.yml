@@ -137,13 +137,33 @@ jobs:
           docker compose version
           jq --version
 
-      - name: Pre-pull Keycloak image (retry on quay.io transient failures)
+      # Cache the Keycloak image as a tar so quay.io outages do not block CI.
+      # The cache key includes the image tag; bump the suffix (v1→v2) to force
+      # a fresh pull after a Keycloak upgrade.
+      - name: Cache Keycloak image
+        id: cache-keycloak
+        uses: actions/cache@v4
+        with:
+          path: /tmp/keycloak-image
+          key: keycloak-image-26.0-v1
+
+      - name: Restore or pull Keycloak image
         run: |
-          for i in 1 2 3; do
-            docker pull quay.io/keycloak/keycloak:26.0 && break
-            echo "Pull attempt $i failed. Retrying in 20s..."
-            sleep 20
-          done
+          if [ "${{ steps.cache-keycloak.outputs.cache-hit }}" = "true" ]; then
+            echo "Loading Keycloak image from Actions cache..."
+            docker load --input /tmp/keycloak-image/keycloak.tar
+          else
+            echo "Pulling Keycloak from quay.io (up to 6 attempts, 30 s apart)..."
+            for i in $(seq 1 6); do
+              docker pull quay.io/keycloak/keycloak:26.0 && break
+              echo "Attempt $i/6 failed."
+              [ "$i" -eq 6 ] && { echo "All pull attempts exhausted."; exit 1; }
+              sleep 30
+            done
+            mkdir -p /tmp/keycloak-image
+            docker save quay.io/keycloak/keycloak:26.0 \
+              --output /tmp/keycloak-image/keycloak.tar
+          fi
 
       - name: Run JWT-mode integration tests
         run: make -C demo ci-test-jwt
