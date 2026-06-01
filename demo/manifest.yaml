@@ -30,5 +30,6 @@ capabilities:
         count: 5
         windowSeconds: 3600
       - type: allowedOperations
+        argument: query      # the tool argument that carries the SQL string
         operations:
           - SELECT

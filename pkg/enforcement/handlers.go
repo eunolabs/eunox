@@ -215,13 +215,33 @@ func (e *Engine) handleAllowedOperations(_ context.Context, cond capability.Cond
 		}
 	}
 
-	operation := req.Context.Operation
+	if ao.Argument == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedOperations,
+			Message:       "allowedOperations condition requires an explicit 'argument' field naming the tool parameter that carries the operation string",
+		}
+	}
+
+	var operation string
+	if v, ok := req.Arguments[ao.Argument]; ok {
+		if s, ok := v.(string); ok {
+			if parts := strings.Fields(s); len(parts) > 0 {
+				operation = strings.ToUpper(parts[0])
+			}
+		}
+	}
 	if operation == "" {
-		operation = req.ToolName
+		return &ConditionError{
+			Code:          capability.ErrCodeMissingContext,
+			ConditionType: capability.ConditionTypeAllowedOperations,
+			Message:       fmt.Sprintf("argument %q is missing or empty", ao.Argument),
+			Details:       map[string]interface{}{"argument": ao.Argument},
+		}
 	}
 
 	for _, allowed := range ao.Operations {
-		if allowed == operation || allowed == "*" {
+		if strings.EqualFold(allowed, operation) || allowed == "*" {
 			return nil
 		}
 	}
@@ -247,22 +267,26 @@ func (e *Engine) handleAllowedExtensions(_ context.Context, cond capability.Cond
 		}
 	}
 
-	filePath := req.Context.FilePath
-	if filePath == "" {
-		// If no file path in context, check arguments
-		if fp, ok := req.Arguments["filePath"]; ok {
-			if s, ok := fp.(string); ok {
-				filePath = s
-			}
+	if ae.Argument == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedExtensions,
+			Message:       "allowedExtensions condition requires an explicit 'argument' field naming the tool parameter that carries the file path",
 		}
 	}
 
+	var filePath string
+	if v, ok := req.Arguments[ae.Argument]; ok {
+		if s, ok := v.(string); ok {
+			filePath = strings.TrimSpace(s)
+		}
+	}
 	if filePath == "" {
-		// filePath is required: deny rather than silently skipping the check.
 		return &ConditionError{
 			Code:          capability.ErrCodeMissingContext,
 			ConditionType: capability.ConditionTypeAllowedExtensions,
-			Message:       "filePath is required for allowedExtensions condition",
+			Message:       fmt.Sprintf("argument %q is missing or empty", ae.Argument),
+			Details:       map[string]interface{}{"argument": ae.Argument},
 		}
 	}
 
@@ -311,12 +335,29 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 		}
 	}
 
-	if len(req.Context.Tables) == 0 {
-		// tables is required: deny rather than silently skipping the check.
+	if at.Argument == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeAllowedTables,
+			Message:       "allowedTables condition requires an explicit 'argument' field naming the tool parameter that carries the table name(s)",
+		}
+	}
+
+	// Parse the named argument into a []TableAccess.  The argument value may be:
+	//   string                  → single table name, no columns
+	//   []interface{} of string → multiple table names, no columns
+	//   map[string]interface{}  → {table: "name", columns: ["a","b"]} (single)
+	//   []interface{} of maps   → array of the above (multiple with columns)
+	var tables []capability.TableAccess
+	if v, ok := req.Arguments[at.Argument]; ok {
+		tables = parseTableArgument(v)
+	}
+	if len(tables) == 0 {
 		return &ConditionError{
 			Code:          capability.ErrCodeMissingContext,
 			ConditionType: capability.ConditionTypeAllowedTables,
-			Message:       "tables is required for allowedTables condition",
+			Message:       fmt.Sprintf("argument %q is missing or empty", at.Argument),
+			Details:       map[string]interface{}{"argument": at.Argument},
 		}
 	}
 
@@ -325,7 +366,7 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 		allowedTableSet[t] = true
 	}
 
-	for _, access := range req.Context.Tables {
+	for _, access := range tables {
 		if !allowedTableSet[access.Table] {
 			return &ConditionError{
 				Code:          capability.ErrCodeConditionFailed,
@@ -393,12 +434,37 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 		}
 	}
 
-	if len(req.Context.Recipients) == 0 {
-		// recipients is required: deny rather than silently skipping the check.
+	if rd.Argument == "" {
+		return &ConditionError{
+			Code:          capability.ErrCodeConditionFailed,
+			ConditionType: capability.ConditionTypeRecipientDomain,
+			Message:       "recipientDomain condition requires an explicit 'argument' field naming the tool parameter that carries the recipient address(es)",
+		}
+	}
+
+	var recipients []string
+	if v, ok := req.Arguments[rd.Argument]; ok {
+		switch t := v.(type) {
+		case string:
+			if s := strings.TrimSpace(t); s != "" {
+				recipients = []string{s}
+			}
+		case []interface{}:
+			for _, item := range t {
+				if s, ok := item.(string); ok {
+					if s = strings.TrimSpace(s); s != "" {
+						recipients = append(recipients, s)
+					}
+				}
+			}
+		}
+	}
+	if len(recipients) == 0 {
 		return &ConditionError{
 			Code:          capability.ErrCodeMissingContext,
 			ConditionType: capability.ConditionTypeRecipientDomain,
-			Message:       "recipients is required for recipientDomain condition",
+			Message:       fmt.Sprintf("argument %q is missing or empty", rd.Argument),
+			Details:       map[string]interface{}{"argument": rd.Argument},
 		}
 	}
 
@@ -407,7 +473,7 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 		domainSet[strings.ToLower(d)] = true
 	}
 
-	for _, recipient := range req.Context.Recipients {
+	for _, recipient := range recipients {
 		parts := strings.SplitN(recipient, "@", 2)
 		if len(parts) != 2 {
 			return &ConditionError{
@@ -543,6 +609,43 @@ func (e *Engine) handleCustom(_ context.Context, cond capability.Condition, _ *c
 			"name": cc.Name,
 		},
 	}
+}
+
+// parseTableArgument converts a raw tool argument value into a []TableAccess.
+// Accepted shapes:
+//
+//	string                                   → [{Table: s}]
+//	[]interface{} of strings                 → [{Table: s}, ...]
+//	map{"table": s, "columns": [...]}        → [{Table: s, Columns: [...]}]
+//	[]interface{} of the above maps          → [{Table, Columns}, ...]
+func parseTableArgument(v interface{}) []capability.TableAccess {
+	switch t := v.(type) {
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			return []capability.TableAccess{{Table: s}}
+		}
+	case []interface{}:
+		var out []capability.TableAccess
+		for _, item := range t {
+			out = append(out, parseTableArgument(item)...)
+		}
+		return out
+	case map[string]interface{}:
+		tableName, _ := t["table"].(string)
+		if tableName = strings.TrimSpace(tableName); tableName == "" {
+			return nil
+		}
+		ta := capability.TableAccess{Table: tableName}
+		if cols, ok := t["columns"].([]interface{}); ok {
+			for _, c := range cols {
+				if col, ok := c.(string); ok && col != "" {
+					ta.Columns = append(ta.Columns, col)
+				}
+			}
+		}
+		return []capability.TableAccess{ta}
+	}
+	return nil
 }
 
 func asTimeWindow(cond capability.Condition) (*capability.TimeWindowCondition, bool) {

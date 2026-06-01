@@ -1,8 +1,0 @@
-server: fetch
-description: "@modelcontextprotocol/server-fetch — HTTP fetch and web content extraction"
-tools:
-  fetch: read
-  fetch_html: read
-  fetch_markdown: read
-  fetch_text: read
-  fetch_json: read

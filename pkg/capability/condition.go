@@ -35,20 +35,38 @@ type IPRangeCondition struct {
 	CIDRs []string `json:"cidrs"`
 }
 
-// AllowedOperationsCondition limits use to the listed operations.
+// AllowedOperationsCondition limits use to the listed operations (SQL verb,
+// action keyword, etc.).
+//
+// Argument names the tool parameter that carries the operation string (e.g.
+// the SQL query). The proxy extracts the first word of that argument and
+// checks it against Operations. When Argument is empty the proxy falls back
+// to a heuristic scan of well-known argument names ("sql", "query",
+// "statement").
 type AllowedOperationsCondition struct {
+	Argument   string   `json:"argument,omitempty"`
 	Operations []string `json:"operations"`
 }
 
 // AllowedExtensionsCondition limits file access to the listed extensions.
+//
+// Argument names the tool parameter that carries the file path. When
+// Argument is empty the proxy falls back to a heuristic scan of well-known
+// argument names ("filePath", "path", "file", "filename").
 type AllowedExtensionsCondition struct {
+	Argument   string   `json:"argument,omitempty"`
 	Extensions []string `json:"extensions"`
 }
 
 // AllowedTablesCondition limits database access to the listed tables and columns.
+//
+// Argument names the tool parameter that carries the table name (string) or
+// table names (array of strings). When Argument is empty the proxy falls back
+// to a heuristic scan of well-known argument names ("table", "tables").
 type AllowedTablesCondition struct {
-	Tables  []string            `json:"tables"`
-	Columns map[string][]string `json:"columns,omitempty"`
+	Argument string              `json:"argument,omitempty"`
+	Tables   []string            `json:"tables"`
+	Columns  map[string][]string `json:"columns,omitempty"`
 }
 
 // MaxCallsCondition limits the number of calls within a rolling window.
@@ -58,8 +76,13 @@ type MaxCallsCondition struct {
 }
 
 // RecipientDomainCondition limits recipients to the listed email domains.
+//
+// Argument names the tool parameter that carries the recipient address or
+// addresses. When Argument is empty the proxy falls back to a heuristic scan
+// of well-known argument names ("to", "recipients", "cc", "bcc").
 type RecipientDomainCondition struct {
-	Domains []string `json:"domains"`
+	Argument string   `json:"argument,omitempty"`
+	Domains  []string `json:"domains"`
 }
 
 // RedactFieldsCondition requires the listed fields to be redacted.

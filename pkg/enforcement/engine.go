@@ -273,11 +273,10 @@ func (e *Engine) findMatchingCapability(req *capability.EnforceRequest, capabili
 		if !matchesResource(constraint.Resource, req.ToolName) {
 			continue
 		}
-		actionScore, ok := actionMatchScore(constraint.Actions, req)
-		if !ok {
+		if !actionMatchScore(constraint.Actions, req) {
 			continue
 		}
-		score := resourceSpecificity(constraint.Resource, req.ToolName)*resourceScoreWeight + actionScore
+		score := resourceSpecificity(constraint.Resource, req.ToolName) * resourceScoreWeight
 		if score > bestScore {
 			bestIndex = i
 			bestScore = score
@@ -328,50 +327,24 @@ func ValidateResourcePattern(resource string) error {
 	return nil
 }
 
-func actionMatchScore(actions []string, req *capability.EnforceRequest) (int, bool) {
+// actionMatchScore reports whether the actions list permits the call.
+// The only accepted values are "call" (the MCP tool-call verb) and "*"
+// (wildcard). Any other value — in particular the former semantic categories
+// "read", "write", "delete", "execute", "admin" — is not recognised and
+// causes the constraint to be skipped, consistent with the deny-by-default
+// allowlist semantics.
+//
+// Returns (0, true) when the call is permitted, (0, false) otherwise.
+func actionMatchScore(actions []string, _ *capability.EnforceRequest) bool {
 	if len(actions) == 0 {
-		return 0, true
+		return true
 	}
-	// When no specific operation is set, treat toolName as the explicit operation,
-	// consistent with allowedOperations handling.
-	operation := req.Context.Operation
-	if operation == "" {
-		operation = req.ToolName
-	}
-	bestScore := -1
-	hasWildcard := false
 	for _, a := range actions {
-		if a == "*" {
-			hasWildcard = true
-		}
-		score := -1
-		switch a {
-		case operation:
-			score = 2
-		case req.ToolName:
-			score = 1
-		case "*":
-			score = 0
-		}
-		if score > bestScore {
-			bestScore = score
+		if a == "call" || a == "*" {
+			return true
 		}
 	}
-	if bestScore < 0 {
-		return 0, false
-	}
-	// Apply a breadth penalty so that a narrower action set beats a broader one at
-	// the same score level. Scale by 1000 so that levels remain strictly ordered even
-	// after the maximum possible penalty (≤999) is subtracted, preventing a large
-	// action list from flipping a level-2 match below a level-1 match.
-	penalty := len(actions)
-	if hasWildcard {
-		penalty += 10
-	}
-	if penalty > 999 {
-		penalty = 999
-	}
-	return bestScore*1000 - penalty, true
+	return false
 }
 
 func resourceSpecificity(resource, toolName string) int {

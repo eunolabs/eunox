@@ -1,8 +1,0 @@
-server: brave-search
-description: "@modelcontextprotocol/server-brave-search — web and local search via the Brave Search API"
-tools:
-  brave_web_search: read
-  brave_local_search: read
-  brave_news_search: read
-  brave_image_search: read
-  brave_video_search: read

@@ -1,9 +1,0 @@
-server: everything
-description: "@modelcontextprotocol/server-everything — reference / test server covering all MCP features"
-tools:
-  echo: read
-  add: read
-  longRunningOperation: execute
-  sampleLLM: execute
-  getTinyImage: read
-  printEnv: read
