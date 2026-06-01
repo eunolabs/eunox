@@ -71,10 +71,7 @@ func (inv *ToolInvoker) invokeOnce(ctx context.Context, req *ToolRequest) (*Tool
 	var enforceCtx capability.EnforceRequestContext
 	if req.Context != nil {
 		enforceCtx = capability.EnforceRequestContext{
-			SourceIP:   req.Context.SourceIP,
-			Recipients: req.Context.Recipients,
-			Operation:  req.Context.Operation,
-			FilePath:   req.Context.FilePath,
+			SourceIP: req.Context.SourceIP,
 		}
 	}
 

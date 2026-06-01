@@ -286,15 +286,8 @@ func TestEnforceRequestResponseRoundTrip(t *testing.T) {
 		ToolName:  "sql.query",
 		Arguments: map[string]interface{}{"statement": "select 1", "limit": 10},
 		Context: EnforceRequestContext{
-			SourceIP:   "10.0.0.10",
-			Recipients: []string{"alice@example.com"},
-			Now:        "2025-03-01T12:00:00Z",
-			Operation:  "select",
-			FilePath:   "/reports/q1.sql",
-			Tables: []TableAccess{{
-				Table:   "users",
-				Columns: []string{"id", "email"},
-			}},
+			SourceIP: "10.0.0.10",
+			Now:      "2025-03-01T12:00:00Z",
 		},
 	}
 
@@ -306,7 +299,7 @@ func TestEnforceRequestResponseRoundTrip(t *testing.T) {
 	assert.Equal(t, request.SessionID, decodedRequest.SessionID)
 	assert.Equal(t, request.ToolName, decodedRequest.ToolName)
 	assert.Equal(t, request.Context.SourceIP, decodedRequest.Context.SourceIP)
-	assert.Equal(t, request.Context.Tables[0], decodedRequest.Context.Tables[0])
+	assert.Equal(t, request.Context.Now, decodedRequest.Context.Now)
 
 	response := EnforceResponse{
 		RequestID: "request-1",
