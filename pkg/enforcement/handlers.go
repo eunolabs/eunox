@@ -627,9 +627,7 @@ func parseTableArgument(v interface{}) []capability.TableAccess {
 	case []interface{}:
 		var out []capability.TableAccess
 		for _, item := range t {
-			for _, ta := range parseTableArgument(item) {
-				out = append(out, ta)
-			}
+			out = append(out, parseTableArgument(item)...)
 		}
 		return out
 	case map[string]interface{}:

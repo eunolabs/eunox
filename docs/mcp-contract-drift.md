@@ -96,54 +96,36 @@ than manifest policy.
 
 ## Fixes
 
-### Fix 1 — Startup drift detection (low effort, high value)
+### Fix 1 — Startup drift detection ✅ **Implemented**
 
-The proxy already fetches the live tool list during the `initialize`
-handshake. It can compare that list against the manifest at session
-startup and emit structured warnings for three conditions:
+After the `initialize` handshake the proxy sends `tools/list` to the
+upstream and compares the live tool set against the manifest.  Three
+message types are emitted as structured `key=value` log lines to stderr:
 
-**1a. New tool matches an existing glob (FM-1).**
-
-```
-WARN  upstream tool "delete_all_records" is matched by manifest glob
-      "delete_*" — verify this is intentional before deploying
-```
-
-Implementation: for each tool returned by `tools/list`, run
-`findConstraint(toolName)` and log a warning when a _glob_ entry (one
-containing `*`, `?`, or `[`) is the matching entry. Exact-name matches
-are intentional by definition; glob matches for new tools require
-operator review.
-
-**1b. Manifest entry matches no upstream tool (FM-2).**
+**1a. New tool matches an existing glob (FM-1) — `WARN`**
 
 ```
-WARN  manifest entry "query_db" matches no tool in the upstream server
-      (tool removed or renamed?) — entry is a dead reference
+[eunox-mcp] WARN drift=fm1 tool="delete_all_records" resource="delete_*" — new upstream tool matched by manifest glob; verify this is intentional before deploying
 ```
 
-Implementation: for each manifest `resource` entry, check whether any
-tool in the live list matches it. If not, log a warning.
-
-**1c. Upstream tool matches no manifest entry.**
+**1b. Manifest entry matches no upstream tool (FM-2) — `WARN`**
 
 ```
-INFO  upstream tool "summarise_document" is not covered by the manifest
-      — all calls will be denied (allowlist semantics)
+[eunox-mcp] WARN drift=fm2 resource="query_db" — manifest entry matches no live upstream tool (tool removed or renamed?)
 ```
 
-This is informational, not a warning — deny-by-default is correct
-behaviour. But surfacing uncovered tools helps policy authors know when
-a server has grown new capabilities they should evaluate.
+**1c. Upstream tool not covered by manifest — `INFO`**
 
-The startup check runs in the background; it does not block session
-establishment. All three message types are structured (key=value or
-JSON) so they can be ingested by log aggregators.
+```
+[eunox-mcp] INFO drift=uncovered tool="summarise_document" — not covered by manifest; all calls will be denied
+```
 
-A `--strict-drift` flag promotes the glob-match warning (1a) and
-dead-reference warning (1b) to startup errors, aborting the session.
-Appropriate for production deployments where any policy drift must be
-resolved before traffic is admitted.
+The check runs in a background goroutine in non-strict mode (session
+establishment is not blocked).
+
+**`--strict-drift` flag** promotes FM-1 and FM-2 findings to startup
+errors, aborting session establishment with HTTP 500.  FM-3 findings
+and uncovered-tool infos remain advisory even in strict mode.
 
 ### Fix 2 — `eunox-mcp validate --live` subcommand (medium effort)
 
@@ -202,12 +184,29 @@ a glob or when any manifest entry becomes stale. Policy authors review
 the diff and update the manifest explicitly before the server release
 ships to production.
 
-### Fix 3 — Argument schema pinning via `argumentSchema` (low effort)
+### Fix 3 — Argument schema drift detection ✅ **Implemented**
 
-The `argumentSchema` field on a capability constraint already exists
-and is already validated by the proxy (`validateSchema` in
-`cmd/mcp/pdp.go`). Pinning the schema of each tool in the manifest
-converts FM-3 from a silent bypass into an explicit startup failure.
+Startup drift detection (Fix 1) now also checks FM-3: for each manifest
+entry that matches a live tool, the proxy compares each condition's
+explicit `argument` field against the tool's live `inputSchema.properties`.
+If the argument name is absent from the live schema the following warning
+is emitted:
+
+```
+[eunox-mcp] WARN drift=fm3 resource="read_file" tool="read_file" argument="path" — condition argument not in live inputSchema; condition may not enforce if argument was renamed
+```
+
+FM-3 findings are advisory (not fatal even with `--strict-drift`) because
+an absent argument name still causes the condition to fail closed (deny)
+— the risk is a false-deny, not a silent pass-through.  The warning
+prompts the operator to update the manifest `argument` field.
+
+**Strengthening FM-3 with `argumentSchema` pinning:**
+
+The `argumentSchema` field on a capability constraint is validated at
+call time by `validateSchema` in `cmd/mcp/pdp.go`.  Pinning the schema
+converts an argument rename from an FM-3 advisory into a hard
+`ARGUMENT_VALIDATION_FAILED` error:
 
 ```yaml
 - resource: read_file
@@ -223,20 +222,9 @@ converts FM-3 from a silent bypass into an explicit startup failure.
       values: ["/reports/*"]
 ```
 
-When the server renames `path` to `file_path`, the proxy rejects the
-call at schema validation with `ARGUMENT_VALIDATION_FAILED` rather than
-silently skipping the `allowedValues` condition. The operator sees an
-immediate, explicit error rather than a silent policy gap.
-
-The `--live` validation mode (Fix 2) auto-generates the `argumentSchema`
-block from `tools/list` and flags drift between the pinned schema and
-the live schema:
-
-```
-⚠ read_file: argument "path" (pinned) not found in live schema
-             live schema has: file_path (string), encoding (string)
-             → update argumentSchema and allowedValues.argument
-```
+When the server renames `path` to `file_path`, the proxy rejects every
+call at schema validation rather than silently applying the condition
+to a missing argument.
 
 ### Fix 4 — `eunox-mcp init` scaffold (medium effort)
 
@@ -311,12 +299,12 @@ perspective. Mitigations are external:
 
 ## Priority
 
-| Fix | Effort | Addresses | Priority |
+| Fix | Effort | Addresses | Status |
 |---|---|---|---|
-| Fix 1 — Startup drift warnings | Low | FM-1, FM-2 | **Before MVP** |
-| Fix 3 — `argumentSchema` pinning | Low | FM-3 | **Before MVP** (field already exists; document the pattern) |
-| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | **Post-MVP milestone** |
-| Fix 4 — `init` scaffold | Medium | Authoring UX | **Post-MVP milestone** |
+| Fix 1 — Startup drift warnings | Low | FM-1, FM-2 | ✅ **Shipped** (`cmd/mcp/drift.go`) |
+| Fix 3 — Argument schema drift | Low | FM-3 | ✅ **Shipped** (Fix 1 extended; `argumentSchema` pinning documented) |
+| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | Post-MVP milestone |
+| Fix 4 — `init` scaffold | Medium | Authoring UX | Post-MVP milestone |
 | FM-4 — Behavior drift | Not solvable at proxy | — | Supply-chain / deployment controls |
 
 ---

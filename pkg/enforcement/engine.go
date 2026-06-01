@@ -273,11 +273,10 @@ func (e *Engine) findMatchingCapability(req *capability.EnforceRequest, capabili
 		if !matchesResource(constraint.Resource, req.ToolName) {
 			continue
 		}
-		actionScore, ok := actionMatchScore(constraint.Actions, req)
-		if !ok {
+		if !actionMatchScore(constraint.Actions, req) {
 			continue
 		}
-		score := resourceSpecificity(constraint.Resource, req.ToolName)*resourceScoreWeight + actionScore
+		score := resourceSpecificity(constraint.Resource, req.ToolName) * resourceScoreWeight
 		if score > bestScore {
 			bestIndex = i
 			bestScore = score
@@ -334,18 +333,16 @@ func ValidateResourcePattern(resource string) error {
 // "read", "write", "delete", "execute", "admin" — is not recognised and
 // causes the constraint to be skipped, consistent with the deny-by-default
 // allowlist semantics.
-//
-// Returns (0, true) when the call is permitted, (0, false) otherwise.
-func actionMatchScore(actions []string, _ *capability.EnforceRequest) (int, bool) {
+func actionMatchScore(actions []string, _ *capability.EnforceRequest) bool {
 	if len(actions) == 0 {
-		return 0, true
+		return true
 	}
 	for _, a := range actions {
 		if a == "call" || a == "*" {
-			return 0, true
+			return true
 		}
 	}
-	return 0, false
+	return false
 }
 
 func resourceSpecificity(resource, toolName string) int {

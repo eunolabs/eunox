@@ -77,7 +77,9 @@ type HTTPProxy struct {
 	upstreamAuthHeader    string
 	upstreamTLSSkipVerify bool
 
-	dryRun bool // evaluate policies but never block tool calls
+	dryRun      bool // evaluate policies but never block tool calls
+	manifest    *LocalManifest
+	strictDrift bool
 
 	mu       sync.Mutex
 	sessions map[string]*httpSession
@@ -105,6 +107,10 @@ type HTTPProxyOptions struct {
 	UpstreamTLSSkipVerify bool   // skip TLS verification (dev only; logs a loud warning)
 
 	DryRun bool // evaluate policies but never block tool calls
+
+	// Drift detection options. Manifest is required for drift checks to run.
+	Manifest    *LocalManifest // capability manifest used for drift detection
+	StrictDrift bool           // abort session if FM-1 or FM-2 drift is detected
 }
 
 // NewHTTPProxy creates an HTTPProxy ready to call Serve.
@@ -141,6 +147,8 @@ func NewHTTPProxy(opts HTTPProxyOptions) *HTTPProxy { //nolint:gocritic // hugeP
 		upstreamAuthHeader:    opts.UpstreamAuthHeader,
 		upstreamTLSSkipVerify: opts.UpstreamTLSSkipVerify,
 		dryRun:                opts.DryRun,
+		manifest:              opts.Manifest,
+		strictDrift:           opts.StrictDrift,
 		sessions:              make(map[string]*httpSession),
 	}
 }
@@ -308,7 +316,7 @@ func (p *HTTPProxy) handleMCPPost(w http.ResponseWriter, r *http.Request) {
 		if p.upstreamURL != "" {
 			sess, err = p.newRemoteSession(r.Context())
 		} else {
-			sess, err = p.newSession()
+			sess, err = p.newSession(r.Context())
 		}
 		if err != nil {
 			http.Error(w, "failed to start upstream: "+err.Error(), http.StatusInternalServerError)
@@ -635,7 +643,7 @@ func (p *HTTPProxy) handleKill(w http.ResponseWriter, r *http.Request) {
 
 // newSession spawns a new upstream subprocess and performs the MCP initialize
 // handshake.  The session is registered in p.sessions before returning.
-func (p *HTTPProxy) newSession() (*httpSession, error) {
+func (p *HTTPProxy) newSession(ctx context.Context) (*httpSession, error) {
 	sess := &httpSession{
 		id:      uuid.New().String(),
 		proxy:   p,
@@ -669,6 +677,23 @@ func (p *HTTPProxy) newSession() (*httpSession, error) {
 	}
 
 	go sess.readUpstream()
+
+	// Drift check runs after readUpstream is started (so callUpstream works).
+	if p.manifest != nil {
+		if p.strictDrift {
+			if err := runHTTPDriftCheck(ctx, sess, p.manifest, true); err != nil {
+				sess.close(p.shutdownMs)
+				return nil, err
+			}
+		} else {
+			driftCtx := context.WithoutCancel(ctx)
+			go func() {
+				if err := runHTTPDriftCheck(driftCtx, sess, p.manifest, false); err != nil {
+					_ = err
+				}
+			}()
+		}
+	}
 
 	// Cleanup goroutine: wait for the upstream to exit, then remove the session.
 	go func() {

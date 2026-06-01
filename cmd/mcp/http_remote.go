@@ -88,6 +88,23 @@ func (p *HTTPProxy) newRemoteSession(ctx context.Context) (*httpSession, error) 
 		return nil, fmt.Errorf("upstream initialize: %w", err)
 	}
 
+	// Drift check (remote mode: callUpstream works directly without a goroutine).
+	if p.manifest != nil {
+		if p.strictDrift {
+			if err := runHTTPDriftCheck(ctx, sess, p.manifest, true); err != nil {
+				close(sess.done)
+				return nil, err
+			}
+		} else {
+			driftCtx := context.WithoutCancel(ctx)
+			go func() {
+				if err := runHTTPDriftCheck(driftCtx, sess, p.manifest, false); err != nil {
+					_ = err
+				}
+			}()
+		}
+	}
+
 	// Cleanup goroutine: remove the session once done is closed.
 	go func() {
 		<-sess.done
