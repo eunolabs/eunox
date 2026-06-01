@@ -202,6 +202,7 @@ func benchJWTPDPContext(b *testing.B, inner PolicyDecisionPoint) (*JWTPDP, conte
 	}
 	payload := idpJWTPayload{
 		MCP: mcpClaimSet{
+			Version:      mcpClaimVersion,
 			Capabilities: []string{"read_file:/reports/*", "query_db:SELECT"},
 			AgentID:      "bench-agent",
 			TaskID:       "bench-task",

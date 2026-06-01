@@ -1,14 +1,12 @@
 # Capability Manifest Guide
 
-> Patterns for writing capability manifests that work the first time,
-> age well, and survive Sentinel scrutiny. This guide is the canonical
-> companion to `eunox init` / `eunox validate` / `eunox plan` in
-> `cmd/`.
+> Patterns for writing capability manifests that work the first time
+> and age well. This guide is the canonical companion to
+> `eunox-mcp validate` in `cmd/mcp/`.
 
-A **capability manifest** is the YAML / JSON document that the
-[`Capability Issuer`](../internal/issuer) consumes to
-produce a signed JWT for an agent session. The token is what the
-`eunox-mcp` proxy verifies on every action.
+A **capability manifest** is the YAML file you pass to the proxy via
+`--policy manifest.yaml`. The proxy loads it at startup and checks
+every `tools/call` against it before forwarding.
 The manifest is therefore the **single source of authority** for what
 an agent can do — get it right and the rest of the system enforces it
 mechanically.
@@ -30,11 +28,9 @@ defaultTtl: 600 # optional
 audience: "eunox" # optional
 ```
 
-Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
-are **not** part of the manifest. They are configured on the
-**Capability Issuer** (`DEFAULT_TOKEN_TTL`, `ISSUER_DID`) and stamped
-onto the JWT at issuance time — see [`schema-versioning.md`](./schema-versioning.md)
-and the issuer environment template in `internal/issuer/`.
+The `defaultTtl` and `audience` fields are parsed and stored but are
+informational in the proxy — JWT expiry is enforced by your IdP, not
+by eunox-mcp. See § 5 for TTL guidance.
 
 ## 2. The capability list — the four golden patterns
 
@@ -104,26 +100,43 @@ capabilities:
   `ConditionRegistry` — no new validator code is needed if the type
   already exists.
 
-### Pattern D — Delegated / attenuated child
+### Pattern D — JWT-scoped agent (manifest + IdP intersection)
 
-> _"A parent agent spins up a child agent for a sub-task with a strictly
-> smaller capability set."_
+> _"A per-task JWT narrows what this invocation can do within the
+> broader manifest."_
 
 ```yaml
-# Body of POST /api/v1/attenuate using the parent token (the
-# request payload uses the same CapabilityConstraint shape, just
-# called requestedCapabilities at the wire layer).
-requestedCapabilities:
-  - resource: "api://crm/customers/12345" # exact ID, not wildcard
-    actions: ["read"]
-ttl: 120 # seconds; must be ≤ parent TTL
+# manifest.yaml — broadest policy the system ever permits
+capabilities:
+  - resource: read_file
+    actions: [call]
+    conditions:
+      - type: allowedValues
+        argument: path
+        values: ["/reports/*"]
+  - resource: query_db
+    actions: [call]
 ```
 
-- Resource must be a **strict subset** of a parent capability (the
-  issuer enforces this; see `internal/issuer`).
-- TTL must be ≤ parent TTL (also enforced).
-- The audit log will carry `parentCapabilityId` automatically; do not
-  invent your own correlation field.
+The IdP then issues a JWT carrying a narrower `mcp.capabilities` claim:
+
+```json
+{
+  "mcp": {
+    "v": "0.1",
+    "capabilities": ["read_file:/reports/q3.pdf"],
+    "agent_id": "summariser-run-42",
+    "task_id": "briefing-2026-05-31"
+  }
+}
+```
+
+The proxy takes the **intersection**: the JWT can only restrict, never
+expand beyond what the manifest permits. `query_db` is denied for this
+invocation even though the manifest allows it.
+
+- Start the proxy in JWT mode: `--jwks-uri <url> --jwt-issuer <iss> --jwt-audience eunox --policy manifest.yaml`
+- The audit log records `agent_id` and `task_id` from the JWT automatically.
 
 ## 3. Resource pattern do's and don'ts
 
@@ -144,8 +157,7 @@ Rules:
   cross-match, even if you use `**`.
 - **A trailing `/*` matches one segment.** A trailing `/**` matches
   one or more segments.
-- **Bare `*` is not allowed.** `eunox     validate` and the issuer both
-  reject it.
+- **Bare `*` is not allowed.** `eunox-mcp validate` rejects it.
 
 ## 4. Conditions cookbook
 
@@ -237,19 +249,20 @@ logic that cannot be expressed with the other typed conditions.
 
 ## 5. TTL guidance
 
-Token TTL is set on the **issuer** (via `DEFAULT_TOKEN_TTL` env var on
-the Capability Issuer), not in the manifest. For attenuated child
-tokens the caller passes `ttl` in the `/api/v1/attenuate` request
-body and the issuer caps it at the parent's remaining TTL.
+In JWT mode, token lifetime is controlled by the `exp` claim your IdP
+stamps on the JWT — eunox-mcp validates and rejects expired tokens but
+does not issue them. The `defaultTtl` manifest field is informational
+and available for your tooling to read; the proxy does not enforce it.
 
-| Scenario                                | Recommended TTL (seconds)                 |
-| --------------------------------------- | ----------------------------------------- |
-| Interactive chat / tool call            | 900 (15 min — the default)                |
-| Long-running batch (ETL, embedding job) | 1800–3600 (use `/renew` if you need more) |
-| Delegated child for one sub-task        | 60–300                                    |
-| Anything that touches money or PII      | 300 with mandatory `/renew` per action    |
+| Scenario                                | Recommended JWT TTL (seconds) |
+| --------------------------------------- | ----------------------------- |
+| Interactive chat / tool call            | 900 (15 min)                  |
+| Long-running batch (ETL, embedding job) | 1800–3600                     |
+| Task-scoped sub-invocation              | 60–300                        |
+| Anything that touches money or PII      | 300                           |
 
-Keep the issuer's `DEFAULT_TOKEN_TTL` ≤ 3600 in the pilot.
+Configure short TTLs in your IdP client settings; request a fresh
+token per task rather than re-using a long-lived one.
 
 ## 6. Anti-patterns we caught during the pilot
 
@@ -259,41 +272,37 @@ the security posture and triggered tuning churn during hypercare.
 1. **Manifest copied between agents** with `name` not changed.
    Audit logs lose attribution clarity. Use a unique manifest `name` per logical
    agent, not per pod / replica.
-2. **`api://*` with `["read", "write"]`** "for development". This
-   passes `validate` only when the strict mode is off. In production
-   the issuer rejects it; configure your dev manifests with realistic
-   scopes and a separate dev manifest identity (`name`/`version`).
-3. **Adding `delete` "for cleanup"**. If the agent doesn't currently
-   delete anything, do not list `delete`. The Sentinel "Write attempt
-   from a read-only session" rule treats delete as write; over-broad
-   manifests defeat the rule.
-4. **Issuing one massive token** that covers every tool the agent
-   _might_ need. Issue task-scoped tokens via `/issue` and chain via
-   `/attenuate`; the token TTL is short for a reason.
-5. **Hand-editing a JWT** to extend expiry during testing. Use
-   `POST /api/v1/renew` — anything else invalidates the signature and
-   is correctly rejected.
+2. **Over-broad resource globs** "for development". Configure dev
+   manifests with realistic scopes from day one — a manifest that is
+   too wide in development tends to stay that way in production.
+3. **Adding actions the agent doesn't currently need.** List only what
+   the agent actually calls. Over-broad manifests silently widen the
+   blast radius of a prompt-injection or supply-chain compromise.
+4. **One manifest shared across every environment.** Use a separate
+   manifest per environment (`dev`, `staging`, `prod`) with
+   progressively tighter conditions — the `name`/`version` fields make
+   this traceable in the audit log.
+5. **Long-lived JWTs re-used across tasks.** Request a fresh token
+   per task and keep TTLs short; the audit log records `task_id` from
+   the JWT so attribution is preserved without needing long-lived tokens.
 
 ## 7. Tooling
 
-| Step                                                        | CLI command                                              |
-| ----------------------------------------------------------- | -------------------------------------------------------- |
-| Scaffold a new manifest                                     | `eunox init --agent <name> --output ./manifest.yaml`     |
-| Add a framework scaffold to it                              | `eunox init --framework langchain` (or `maf` / `crewai`) |
-| Add a cloud-deployment scaffold                             | `eunox init --cloud aws` (or `azure` / `gcp`)            |
-| Validate the file                                           | `eunox validate ./manifest.yaml`                         |
-| Show the current and supported schema versions on an issuer | `eunox schema-version check --issuer <url>`              |
-| Plan a schema-version migration                             | `eunox schema-version plan <from> <to>`                  |
-| Inspect a token's `schemaVersion` claim                     | `eunox schema-version validate-token <jwt>`              |
-| Show CLI configuration / env                                | `eunox config`                                           |
-| Request a token (documentation helper)                      | `eunox request --agent <id> --token $AAD_ACCESS_TOKEN`   |
+| Step                                          | CLI command                                          |
+| --------------------------------------------- | ---------------------------------------------------- |
+| Validate a manifest file                      | `eunox-mcp validate ./manifest.yaml`                 |
+| Validate multiple manifests at once           | `eunox-mcp validate ./a.yaml ./b.yaml`               |
+| Browse built-in server profiles               | `eunox-mcp profiles`                                 |
+| Show tools for a specific profile             | `eunox-mcp profiles <name>`                          |
+| Start the proxy (manifest-only mode)          | `eunox-mcp proxy --policy manifest.yaml --transport http --upstream-url <url>` |
+| Start the proxy (JWT + manifest intersection) | add `--jwks-uri <url> --jwt-issuer <iss> --jwt-audience eunox` |
+| Verify HMAC signatures in the audit log       | `eunox-mcp validate-token --audit-log audit.jsonl --audit-key-path audit.key` |
 
-Wire `eunox validate` into your CI for every manifest PR; combine with
-`eunox schema-version check` against your staging issuer if you want to
-fail builds on schema-version drift before they reach production.
+Wire `eunox-mcp validate` into your CI pipeline for every manifest PR
+to catch schema errors and over-broad globs before they reach production.
 
 ## 8. Where this guide lives in the rest of the docs
 
-- **Token format and signing**: [`schema-versioning.md`](./schema-versioning.md)
 - **Why the proxy is the policy decision point**: [`enforcement.md`](./enforcement.md)
-- **Adapter pattern (custom identity / signers)**: [`adapters.md`](./adapters.md)
+- **Security properties and threat model**: [`threat-model-mcp.md`](./threat-model-mcp.md)
+- **Performance baseline**: [`benchmarks.md`](./benchmarks.md)

@@ -2,6 +2,7 @@
 # demo/scripts/get-jwt.sh — obtain a test JWT from the local Keycloak instance.
 #
 # The token carries MCP capability claims injected by the eunox-demo realm:
+#   "mcp.v":            "0.1"
 #   "mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"]
 #   "mcp.task_id":      "demo-task-001"
 #   "mcp.agent_id":     "demo-agent"
