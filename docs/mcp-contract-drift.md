@@ -127,7 +127,7 @@ establishment is not blocked).
 errors, aborting session establishment with HTTP 500.  FM-3 findings
 and uncovered-tool infos remain advisory even in strict mode.
 
-### Fix 2 — `eunox-mcp validate --live` subcommand (medium effort)
+### Fix 2 — `eunox-mcp validate --live` subcommand ✅ **Implemented**
 
 A new `validate` flag that connects to a live upstream, fetches
 `tools/list`, and runs a complete diff against the manifest:
@@ -226,7 +226,7 @@ When the server renames `path` to `file_path`, the proxy rejects every
 call at schema validation rather than silently applying the condition
 to a missing argument.
 
-### Fix 4 — `eunox-mcp init` scaffold (medium effort)
+### Fix 4 — `eunox-mcp init` scaffold ✅ **Implemented**
 
 A new `init` subcommand connects to a live upstream and generates a
 starter manifest with one deny-all entry per tool:
@@ -303,20 +303,34 @@ perspective. Mitigations are external:
 |---|---|---|---|
 | Fix 1 — Startup drift warnings | Low | FM-1, FM-2 | ✅ **Shipped** (`cmd/mcp/drift.go`) |
 | Fix 3 — Argument schema drift | Low | FM-3 | ✅ **Shipped** (Fix 1 extended; `argumentSchema` pinning documented) |
-| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | Post-MVP milestone |
-| Fix 4 — `init` scaffold | Medium | Authoring UX | Post-MVP milestone |
+| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | ✅ **Shipped** (`cmd/mcp/validate_live.go`; `--live` flag on `validate`) |
+| Fix 4 — `init` scaffold | Medium | Authoring UX | ✅ **Shipped** (`cmd/mcp/init_manifest.go`; `init` subcommand) |
 | FM-4 — Behavior drift | Not solvable at proxy | — | Supply-chain / deployment controls |
 
 ---
 
 ## Impact on the MVP release checklist
 
-The release checklist should include a **Stage 4** documentation item:
+The release checklist should include a **Stage 4** CI step:
 
-> Confirm that the upstream MCP server version deployed in the demo
-> matches the version used when the manifest was authored. If the
-> server has been updated since the manifest was last reviewed, run
-> `eunox-mcp validate` and inspect the tool list manually.
+```yaml
+# .github/workflows/manifest-drift.yml
+- name: Check manifest drift
+  run: |
+    eunox-mcp validate manifest.yaml \
+      --live \
+      --upstream-url ${{ vars.MCP_STAGING_URL }}
+```
 
-Until Fix 1 (startup warnings) ships, operators must verify manifest
-currency manually on every server update.
+Exit code 1 (glob matches or stale entries detected) fails the pipeline;
+policy authors review the diff and update the manifest before the server
+release ships to production.
+
+To bootstrap a manifest for a new server, run:
+
+```
+eunox-mcp init --upstream-url https://mcp.example.com --output manifest.yaml
+```
+
+Every tool starts commented out.  Uncomment and add conditions only for
+tools the agent genuinely needs, then commit the result.

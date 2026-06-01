@@ -9,7 +9,8 @@
 // Subcommands:
 //
 //	proxy          Start the proxy (stdio or HTTP transport).
-//	validate       Validate one or more manifest files and exit.
+//	validate       Validate manifest file(s); with --live, diff against a running upstream.
+//	init           Generate a deny-all starter manifest from a live upstream's tool list.
 //	kill           Send a kill-switch signal to a running HTTP proxy.
 //	validate-token Verify HMAC signatures in the audit log.
 //	stats          Print a denial histogram from the audit log.
@@ -60,6 +61,8 @@ func main() {
 		cmdProxy()
 	case "validate":
 		cmdValidate()
+	case "init":
+		cmdInit()
 	case "kill":
 		cmdKill()
 	case "validate-token":
@@ -85,9 +88,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `eunox-mcp — MCP policy-enforcement proxy (%s)
 
 Usage:
-  eunox-mcp proxy   [flags] -- <command> [args...]        local subprocess upstream
-  eunox-mcp proxy   --transport http --upstream-url <url> remote MCP server
+  eunox-mcp proxy   [flags] -- <command> [args...]         local subprocess upstream
+  eunox-mcp proxy   --transport http --upstream-url <url>  remote MCP server
   eunox-mcp validate <manifest.yaml> [...]
+  eunox-mcp validate <manifest.yaml> --live --upstream-url <url>
+  eunox-mcp init    --upstream-url <url> [--output manifest.yaml]
   eunox-mcp kill    [--port N] [--host H] <session-id|all>
   eunox-mcp validate-token [flags]
   eunox-mcp stats   [flags]
@@ -96,6 +101,8 @@ Usage:
 Subcommands:
   proxy           Start the proxy (default: stdio transport).
   validate        Validate manifest file(s) and exit 0 on success.
+                  With --live: connect to a running upstream and report contract drift.
+  init            Generate a deny-all starter manifest from a live upstream's tool list.
   kill            Activate the kill switch on a running HTTP proxy.
   validate-token  Verify HMAC signatures in the local audit log.
   stats           Print a denial count histogram from the audit log.
@@ -412,8 +419,27 @@ Flags:
 func cmdValidate() {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, "Usage: eunox-mcp validate <manifest.yaml> [...]\n\nValidate manifest file(s) and exit 0 on success.\n")
+		fmt.Fprint(os.Stderr, `Usage: eunox-mcp validate <manifest.yaml> [...] [--live flags]
+
+Validate manifest file(s).  Without --live, checks file syntax and exits.
+With --live, also connects to a running upstream MCP server and reports
+contract drift between the manifest and the live tool set.
+
+Exit codes with --live:
+  0  All manifest entries match live tools; no glob-matched tools detected.
+  1  Warnings or stale entries present (operator review required).
+  2  Connection or parse error.
+
+Flags:
+`)
+		fs.PrintDefaults()
 	}
+
+	live := fs.Bool("live", false, "Connect to a running upstream and report drift against the live tool set.")
+	upstreamURL := fs.String("upstream-url", "", "Base URL of the MCP HTTP server (required with --live).")
+	authHeader := fs.String("upstream-auth-header", "", `Header forwarded to the upstream in "Name: Value" format.`)
+	tlsSkipVerify := fs.Bool("upstream-tls-skip-verify", false, "Skip TLS certificate verification for the upstream (development only).")
+
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		os.Exit(1)
 	}
@@ -424,7 +450,9 @@ func cmdValidate() {
 		os.Exit(1)
 	}
 
+	// Syntax check (always runs).
 	ok := true
+	var manifests []*LocalManifest
 	for _, f := range files {
 		m, err := LoadManifest(f)
 		if err != nil {
@@ -432,11 +460,93 @@ func cmdValidate() {
 			ok = false
 		} else {
 			fmt.Printf("OK    %s  (name=%q version=%q capabilities=%d)\n", f, m.Name, m.Version, len(m.Capabilities))
+			manifests = append(manifests, m)
 		}
 	}
 	if !ok {
 		os.Exit(1)
 	}
+
+	if !*live {
+		return
+	}
+
+	// Live drift check.
+	if *upstreamURL == "" {
+		fmt.Fprintf(os.Stderr, "eunox-mcp validate: --upstream-url is required with --live\n")
+		os.Exit(1)
+	}
+
+	merged := MergeManifests(manifests)
+
+	fmt.Printf("\nConnecting to upstream (%s)...", *upstreamURL)
+	tools, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
+	if err != nil {
+		fmt.Printf("  FAILED\n")
+		fmt.Fprintf(os.Stderr, "eunox-mcp validate: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("  ok (%d tool(s))\n\n", len(tools))
+
+	code := runValidateLive(merged, tools, os.Stdout)
+	os.Exit(code)
+}
+
+// -----------------------------------------------------------------
+// init subcommand
+// -----------------------------------------------------------------
+
+func cmdInit() {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `Usage: eunox-mcp init --upstream-url <url> [flags]
+
+Connect to a live MCP HTTP server and generate a deny-all starter manifest.
+Every tool is commented out — uncomment and add conditions only for tools
+the agent genuinely needs.  Re-running init after a server update and
+diffing against the current manifest surfaces additions and removals.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	upstreamURL := fs.String("upstream-url", "", "Base URL of the MCP HTTP server (required).")
+	output := fs.String("output", "", "Path to write the generated manifest YAML (default: stdout).")
+	name := fs.String("name", "generated-manifest", "Value for the manifest name field.")
+	authHeader := fs.String("upstream-auth-header", "", `Header forwarded to the upstream in "Name: Value" format.`)
+	tlsSkipVerify := fs.Bool("upstream-tls-skip-verify", false, "Skip TLS certificate verification for the upstream (development only).")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		os.Exit(1)
+	}
+
+	if *upstreamURL == "" {
+		fmt.Fprintf(os.Stderr, "eunox-mcp init: --upstream-url is required\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Fetching tool list from upstream...")
+	tools, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  FAILED\n")
+		fmt.Fprintf(os.Stderr, "eunox-mcp init: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Fprintf(os.Stderr, "  %d tool(s)\n\n", len(tools))
+
+	manifest := generateInitManifestYAML(tools, *name)
+
+	if *output == "" {
+		fmt.Print(manifest)
+		return
+	}
+
+	if err := os.WriteFile(*output, []byte(manifest), 0o600); err != nil { //nolint:gosec // G306: restrictive permissions are correct for a policy manifest
+		fmt.Fprintf(os.Stderr, "eunox-mcp init: writing %q: %v\n", *output, err)
+		os.Exit(2)
+	}
+	fmt.Fprintf(os.Stderr, "Generated %s\nReview and uncomment the capabilities you want to permit.\n", *output)
 }
 
 // -----------------------------------------------------------------
