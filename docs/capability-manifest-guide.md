@@ -123,6 +123,7 @@ The IdP then issues a JWT carrying a narrower `mcp.capabilities` claim:
 ```json
 {
   "mcp": {
+    "v": "0.1",
     "capabilities": ["read_file:/reports/q3.pdf"],
     "agent_id": "summariser-run-42",
     "task_id": "briefing-2026-05-31"

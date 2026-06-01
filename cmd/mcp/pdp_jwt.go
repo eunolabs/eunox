@@ -12,6 +12,7 @@
 //
 //	{
 //	  "mcp": {
+//	    "v":             "0.1",
 //	    "capabilities": ["read_file:/reports/*", "query_db:SELECT"],
 //	    "task_id":       "task-abc123",
 //	    "agent_id":      "agent-xyz"
@@ -69,14 +70,21 @@ func jwtClaimsFromContext(ctx context.Context) (*JWTClaims, bool) {
 	return c, ok && c != nil
 }
 
+// mcpClaimVersion is the only accepted value for the "v" field in the mcp
+// claim set.  Tokens carrying an unrecognised version are rejected so that
+// future breaking changes to the claim schema are caught early rather than
+// silently misinterpreted.
+const mcpClaimVersion = "0.1"
+
 // mcpClaimSet holds the MCP-specific fields nested under the "mcp" key.
 // Keycloak's oidc-hardcoded-claim-mapper (and most IdPs) treat dots in a
 // claim.name as path separators, so "mcp.capabilities" is emitted as:
 //
-//	{"mcp": {"capabilities": [...], "task_id": "...", "agent_id": "..."}}
+//	{"mcp": {"v": "0.1", "capabilities": [...], "task_id": "...", "agent_id": "..."}}
 //
 // rather than as a flat key with a literal dot.
 type mcpClaimSet struct {
+	Version      string   `json:"v"`
 	Capabilities []string `json:"capabilities"`
 	TaskID       string   `json:"task_id"`
 	AgentID      string   `json:"agent_id"`
@@ -322,6 +330,9 @@ func (p *JWTPDP) ValidateToken(ctx context.Context, authHeader string) (context.
 			return ctx, fmt.Errorf("token issuer %q does not match expected %q", stdClaims.Issuer, p.issuer)
 		}
 
+		if v := payload.MCP.Version; v != "" && v != mcpClaimVersion {
+			return ctx, fmt.Errorf("unsupported mcp claim version %q (want %q)", v, mcpClaimVersion)
+		}
 		claims := &JWTClaims{
 			Capabilities: payload.MCP.Capabilities,
 			TaskID:       payload.MCP.TaskID,
