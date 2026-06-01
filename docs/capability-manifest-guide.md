@@ -8,7 +8,7 @@
 A **capability manifest** is the YAML / JSON document that the
 [`Capability Issuer`](../internal/issuer) consumes to
 produce a signed JWT for an agent session. The token is what the
-[`Tool Gateway`](../internal/gateway) verifies on every action.
+`eunox-mcp` proxy verifies on every action.
 The manifest is therefore the **single source of authority** for what
 an agent can do — get it right and the rest of the system enforces it
 mechanically.
@@ -27,7 +27,7 @@ version: "0.1.0" # agent version (semver)
 capabilities: [] # see § 2 — every entry is a capability.Constraint
 description: "Synthesizes account-research briefings."
 defaultTtl: 600 # optional
-audience: "eunox-gateway" # optional
+audience: "eunox" # optional
 ```
 
 Token-level concerns (TTL, the issuer DID, the JWT `schemaVersion`)
@@ -100,7 +100,7 @@ capabilities:
 - Use `execute` for RPC-style endpoints.
 - Apply typed conditions instead of relying on TTL alone.
 - Each entry is one of the typed condition shapes in
-  `pkg/capability/condition.go`; the gateway enforces them through the
+  `pkg/capability/condition.go`; the proxy enforces them through the
   `ConditionRegistry` — no new validator code is needed if the type
   already exists.
 
@@ -153,7 +153,7 @@ Rules:
 `pkg/capability/condition.go` and `pkg/capability/conditions.go`.
 Every entry has a `type` discriminator and is enforced by the shared
 `ConditionRegistry`. Unknown types are denied at both issuance and at
-the gateway, so spelling matters.
+the proxy, so spelling matters.
 
 ```yaml
 - resource: "api://billing/invoices/*"
@@ -181,7 +181,7 @@ the gateway, so spelling matters.
       tables: ["sales"]
       columns:
         sales: ["customer_id", "amount", "ts"]
-    - type: redactFields # gateway records the redaction obligation
+    - type: redactFields # proxy records the redaction obligation
       fields: ["sales.customer_email"]
 
 - resource: "smtp://outbound/*"
@@ -232,7 +232,7 @@ logic that cannot be expressed with the other typed conditions.
 > shape to `pkg/capability/condition.go` first**, register its
 > handler in `pkg/enforcement/handlers.go`, and ship a
 > validator with tests under `pkg/capability/validate.go`.
-> Free-form conditions are denied at the gateway, which is the correct
+> Free-form conditions are denied at the proxy, which is the correct
 > behaviour but a policy regression for the manifest author.
 
 ## 5. TTL guidance
@@ -253,7 +253,7 @@ Keep the issuer's `DEFAULT_TOKEN_TTL` ≤ 3600 in the pilot.
 
 ## 6. Anti-patterns we caught during the pilot
 
-These all _worked_ (token issued, gateway happy) but each one degrades
+These all _worked_ (token issued, proxy happy) but each one degrades
 the security posture and triggered tuning churn during hypercare.
 
 1. **Manifest copied between agents** with `name` not changed.
@@ -295,5 +295,5 @@ fail builds on schema-version drift before they reach production.
 ## 8. Where this guide lives in the rest of the docs
 
 - **Token format and signing**: [`schema-versioning.md`](./schema-versioning.md)
-- **Why the gateway is the policy decision point**: [`enforcement.md`](./enforcement.md)
+- **Why the proxy is the policy decision point**: [`enforcement.md`](./enforcement.md)
 - **Adapter pattern (custom identity / signers)**: [`adapters.md`](./adapters.md)
