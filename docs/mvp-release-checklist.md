@@ -225,7 +225,7 @@ Paste the printed token into [jwt.io](https://jwt.io) and verify the claims incl
 - `"mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"]`
 - `"aud": "eunox"`
 
-- [ ] JWT decode shows expected `mcp.capabilities` claims
+- [x] JWT decode shows expected `mcp.capabilities` claims
 
 **JWT-authenticated allowed call:**
 
@@ -235,7 +235,7 @@ make -C demo jwt-allow
 
 Expected: `"isError": false`.
 
-- [ ] JWT-allow response contains `"isError": false`
+- [x] JWT-allow response contains `"isError": false`
 
 **JWT-authenticated denied call (`write_file` absent from JWT claims):**
 
@@ -243,9 +243,9 @@ Expected: `"isError": false`.
 make -C demo jwt-deny
 ```
 
-Expected: `"isError": true` and `AUTHORIZATION_FAILED`.
+Expected: `"isError": true` and `CAPABILITY_NOT_GRANTED`.
 
-- [ ] JWT-deny response contains `AUTHORIZATION_FAILED`
+- [x] JWT-deny response contains `CAPABILITY_NOT_GRANTED`
 
 **Full JWT CI test:**
 
@@ -254,7 +254,7 @@ make -C demo down
 make -C demo ci-test-jwt
 ```
 
-- [ ] `ci-test-jwt` exits 0
+- [x] `ci-test-jwt` exits 0
 
 **Tear down:**
 
@@ -266,13 +266,13 @@ make -C demo down
 
 ## Stage 4 — Documentation review
 
-- [ ] `README.md` — quick-start commands match current CLI flags; version references are current
-- [ ] `docs/capability-manifest-guide.md` — all 11 condition types are documented
-- [ ] `docs/threat-model-mcp.md` — Stage 1 gates are consistent with enforcement engine
-- [ ] `docs/benchmarks.md` — numbers are not wildly out of date
-- [ ] `demo/README.md` — step-by-step walkthrough matches what `make -C demo up` actually produces
-- [ ] `NOTICE` — copyright year and attributions are correct
-- [ ] `cmd/mcp/LICENSE` — Apache-2.0, correct year
+- [x] `README.md` — quick-start commands match current CLI flags; version references are current
+- [x] `docs/capability-manifest-guide.md` — all 11 condition types are documented
+- [x] `docs/threat-model-mcp.md` — Stage 1 gates are consistent with enforcement engine
+- [x] `docs/benchmarks.md` — numbers are not wildly out of date
+- [x] `demo/README.md` — step-by-step walkthrough matches what `make -C demo up` actually produces
+- [x] `NOTICE` — copyright year and attributions are correct
+- [x] `cmd/mcp/LICENSE` — Apache-2.0, correct year
 
 ---
 

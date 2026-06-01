@@ -184,7 +184,7 @@ Add this to your `claude_desktop_config.json`:
 
 ## Advanced: JWT / IdP-issued capability claims
 
-When `--jwks-uri` is set, every incoming request must carry a Bearer JWT issued by your IdP. The proxy validates the signature, expiry, issuer, and audience; extracts `eunox.capabilities` claims; and intersects them with the manifest (JWT can only restrict — never expand beyond what the manifest permits).
+When `--jwks-uri` is set, every incoming request must carry a Bearer JWT issued by your IdP. The proxy validates the signature, expiry, issuer, and audience; extracts `mcp.capabilities` claims; and intersects them with the manifest (JWT can only restrict — never expand beyond what the manifest permits).
 
 ```bash
 eunox-mcp proxy \
