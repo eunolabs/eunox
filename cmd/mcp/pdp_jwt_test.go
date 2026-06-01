@@ -157,16 +157,22 @@ func TestBuildConstraint_SQLVerb(t *testing.T) {
 	}
 }
 
-func TestBuildConstraint_SQLVerb_BareIsNotOperation(t *testing.T) {
-	// A bare SQL verb without ":argname" is no longer a SQL condition —
-	// it falls through to AllowedValuesCondition (path glob shorthand).
+func TestBuildConstraint_SQLVerb_BareIsOperation(t *testing.T) {
+	// A bare SQL verb without ":argname" is a scan-all-args AllowedOperationsCondition
+	// (empty Argument signals the evaluator to scan all string arguments).
 	c := buildConstraint("query_db", "SELECT")
 	if len(c.Conditions) != 1 {
 		t.Fatalf("expected 1 condition, got %d", len(c.Conditions))
 	}
-	_, ok := c.Conditions[0].(capability.AllowedValuesCondition)
+	aoc, ok := c.Conditions[0].(capability.AllowedOperationsCondition)
 	if !ok {
-		t.Fatalf("expected AllowedValuesCondition for bare verb, got %T", c.Conditions[0])
+		t.Fatalf("expected AllowedOperationsCondition for bare verb, got %T", c.Conditions[0])
+	}
+	if aoc.Argument != "" {
+		t.Errorf("argument = %q, want empty (scan-all-args mode)", aoc.Argument)
+	}
+	if len(aoc.Operations) != 1 || aoc.Operations[0] != "SELECT" {
+		t.Errorf("operations = %v, want [SELECT]", aoc.Operations)
 	}
 }
 
