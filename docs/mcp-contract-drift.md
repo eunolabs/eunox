@@ -82,15 +82,48 @@ condition to silently pass by never matching. The invariant to protect
 is: a condition that was intended to restrict must not silently become a
 no-op.
 
-### FM-4 — Undetectable behavior drift (out of scope for proxy)
+### FM-4 — Server version mismatch (detectable via version pin)
 
 A tool retains its name and argument schema but its server-side
 implementation changes. For example, `read_file` begins exfiltrating
 file metadata to a telemetry endpoint after a server update. The proxy
-cannot detect this because it inspects the _wire contract_, not the
-_implementation_. This is a supply-chain trust problem addressed by
-deployment controls (pinned container image digests, sandboxing) rather
-than manifest policy.
+cannot detect implementation changes directly, but it **can** detect
+that the server version changed — provided the manifest declares a
+`serverVersion` pin.
+
+**Detected when `serverVersion` is set in the manifest.** The proxy
+compares the version string from the upstream `initialize` response
+against the pinned constraint and emits an FM-4 warning on mismatch.
+
+```yaml
+# manifest.yaml
+name: "my-policy"
+version: "1.0.0"
+serverVersion: "1.2.*"   # allow any patch of 1.2; reject 1.3+
+capabilities:
+  - resource: read_file
+    actions: [call]
+```
+
+Supported constraint forms:
+
+| Constraint | Matches |
+|---|---|
+| `1.2.3` | exactly `1.2.3` |
+| `1.2.*` | `1.2.x` for any patch `x` |
+| `1.*`   | `1.x.y` for any minor and patch |
+| `*`     | any version (effectively no pin) |
+
+**Without `serverVersion` in the manifest:** FM-4 is never emitted —
+existing manifests are unaffected.
+
+**In `--strict-drift` mode:** FM-4 aborts session establishment (like
+FM-1 and FM-2), preventing an agent from connecting to an unexpected
+server version.
+
+**Purely behavioral changes** (same version, changed implementation)
+cannot be detected at the proxy layer and remain a supply-chain concern
+addressed by deployment controls.
 
 ---
 
@@ -127,7 +160,7 @@ establishment is not blocked).
 errors, aborting session establishment with HTTP 500.  FM-3 findings
 and uncovered-tool infos remain advisory even in strict mode.
 
-### Fix 2 — `eunox-mcp validate --live` subcommand (medium effort)
+### Fix 2 — `eunox-mcp validate --live` subcommand ✅ **Implemented**
 
 A new `validate` flag that connects to a live upstream, fetches
 `tools/list`, and runs a complete diff against the manifest:
@@ -226,7 +259,7 @@ When the server renames `path` to `file_path`, the proxy rejects every
 call at schema validation rather than silently applying the condition
 to a missing argument.
 
-### Fix 4 — `eunox-mcp init` scaffold (medium effort)
+### Fix 4 — `eunox-mcp init` scaffold ✅ **Implemented**
 
 A new `init` subcommand connects to a live upstream and generates a
 starter manifest with one deny-all entry per tool:
@@ -303,20 +336,34 @@ perspective. Mitigations are external:
 |---|---|---|---|
 | Fix 1 — Startup drift warnings | Low | FM-1, FM-2 | ✅ **Shipped** (`cmd/mcp/drift.go`) |
 | Fix 3 — Argument schema drift | Low | FM-3 | ✅ **Shipped** (Fix 1 extended; `argumentSchema` pinning documented) |
-| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | Post-MVP milestone |
-| Fix 4 — `init` scaffold | Medium | Authoring UX | Post-MVP milestone |
-| FM-4 — Behavior drift | Not solvable at proxy | — | Supply-chain / deployment controls |
+| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3, FM-4 | ✅ **Shipped** (`cmd/mcp/validate_live.go`; `--live` flag on `validate`) |
+| Fix 4 — `init` scaffold | Medium | Authoring UX | ✅ **Shipped** (`cmd/mcp/init_manifest.go`; `init` subcommand) |
+| FM-4 — Version pin | Low | FM-4 | ✅ **Shipped** (`serverVersion` manifest field; `cmd/mcp/drift.go`) |
 
 ---
 
 ## Impact on the MVP release checklist
 
-The release checklist should include a **Stage 4** documentation item:
+The release checklist should include a **Stage 4** CI step:
 
-> Confirm that the upstream MCP server version deployed in the demo
-> matches the version used when the manifest was authored. If the
-> server has been updated since the manifest was last reviewed, run
-> `eunox-mcp validate` and inspect the tool list manually.
+```yaml
+# .github/workflows/manifest-drift.yml
+- name: Check manifest drift
+  run: |
+    eunox-mcp validate manifest.yaml \
+      --live \
+      --upstream-url ${{ vars.MCP_STAGING_URL }}
+```
 
-Until Fix 1 (startup warnings) ships, operators must verify manifest
-currency manually on every server update.
+Exit code 1 (glob matches or stale entries detected) fails the pipeline;
+policy authors review the diff and update the manifest before the server
+release ships to production.
+
+To bootstrap a manifest for a new server, run:
+
+```
+eunox-mcp init --upstream-url https://mcp.example.com --output manifest.yaml
+```
+
+Every tool starts commented out.  Uncomment and add conditions only for
+tools the agent genuinely needs, then commit the result.

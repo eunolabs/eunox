@@ -148,11 +148,14 @@ func (s *httpSession) initRemoteUpstream(ctx context.Context) error {
 	// Capture the upstream session ID from the response header.
 	s.upstreamSessID = respHdr.Get(sessionHeader)
 
-	// Extract server capabilities.
+	// Extract server capabilities and version.
 	if respMsg.Result != nil {
 		var result mcpInitResult
 		if json.Unmarshal(respMsg.Result, &result) == nil {
 			s.upstreamCaps = result.Capabilities
+			if sv, ok := result.ServerInfo["version"].(string); ok {
+				s.upstreamServerVersion = sv
+			}
 		}
 	}
 

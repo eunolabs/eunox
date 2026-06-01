@@ -173,8 +173,9 @@ type httpSession struct {
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcMsg
 
-	upstreamCaps map[string]interface{}
-	idCounter    int64
+	upstreamCaps          map[string]interface{}
+	upstreamServerVersion string // version from the upstream initialize serverInfo response
+	idCounter             int64
 
 	notifMu   sync.Mutex
 	notifSubs []chan rpcMsg

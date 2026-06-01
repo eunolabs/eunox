@@ -103,7 +103,9 @@ jobs:
 
       - name: Run manifest-only integration tests
         run: make -C demo ci-test
-        # Starts mock-mcp-server + eunox-mcp (Keycloak skipped via --scale 0).
+        # Starts mock-mcp-server + eunox-mcp.
+        # Keycloak is excluded entirely (profiles: ["jwt"]) so its image is
+        # never pulled and quay.io availability cannot affect this job.
         # CI=true is set by GitHub Actions; color output is suppressed.
 
       - name: Dump container logs on failure
@@ -135,9 +137,37 @@ jobs:
           docker compose version
           jq --version
 
+      # Cache the Keycloak image as a tar so quay.io outages do not block CI.
+      # The cache key includes the image tag; bump the suffix (v1→v2) to force
+      # a fresh pull after a Keycloak upgrade.
+      - name: Cache Keycloak image
+        id: cache-keycloak
+        uses: actions/cache@v4
+        with:
+          path: /tmp/keycloak-image
+          key: keycloak-image-26.0-v1
+
+      - name: Restore or pull Keycloak image
+        run: |
+          if [ "${{ steps.cache-keycloak.outputs.cache-hit }}" = "true" ]; then
+            echo "Loading Keycloak image from Actions cache..."
+            docker load --input /tmp/keycloak-image/keycloak.tar
+          else
+            echo "Pulling Keycloak from quay.io (up to 6 attempts, 30 s apart)..."
+            for i in $(seq 1 6); do
+              docker pull quay.io/keycloak/keycloak:26.0 && break
+              echo "Attempt $i/6 failed."
+              [ "$i" -eq 6 ] && { echo "All pull attempts exhausted."; exit 1; }
+              sleep 30
+            done
+            mkdir -p /tmp/keycloak-image
+            docker save quay.io/keycloak/keycloak:26.0 \
+              --output /tmp/keycloak-image/keycloak.tar
+          fi
+
       - name: Run JWT-mode integration tests
         run: make -C demo ci-test-jwt
-        # Starts mock-mcp-server + Keycloak + eunox-mcp (JWT overlay).
+        # Starts mock-mcp-server + Keycloak (--profile jwt) + eunox-mcp (JWT overlay).
         # --wait blocks until Keycloak's healthcheck passes before running tests.
 
       - name: Dump container logs on failure

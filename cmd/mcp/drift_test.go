@@ -18,7 +18,7 @@ import (
 
 func TestCheckManifestDrift_NilManifest(t *testing.T) {
 	tools := []UpstreamTool{{Name: "read_file"}}
-	if got := CheckManifestDrift(nil, tools); got != nil {
+	if got := CheckManifestDrift(nil, tools, ""); got != nil {
 		t.Errorf("nil manifest: want nil, got %v", got)
 	}
 }
@@ -27,7 +27,7 @@ func TestCheckManifestDrift_EmptyTools(t *testing.T) {
 	manifest := manifestWith(
 		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
 	)
-	warnings := CheckManifestDrift(manifest, nil)
+	warnings := CheckManifestDrift(manifest, nil, "")
 	// read_file has no live tool → FM-2
 	if !hasKind(warnings, DriftFM2) {
 		t.Error("expected FM-2 warning for dead manifest entry, got none")
@@ -41,7 +41,7 @@ func TestCheckManifestDrift_FM1_GlobMatch(t *testing.T) {
 		capability.Constraint{Resource: "delete_*", Actions: []string{"call"}},
 	)
 	tools := []UpstreamTool{{Name: "delete_all_records"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 
 	fm1 := findKind(warnings, DriftFM1)
 	if fm1 == nil {
@@ -63,7 +63,7 @@ func TestCheckManifestDrift_FM1_ExactMatchNotFlagged(t *testing.T) {
 		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
 	)
 	tools := []UpstreamTool{{Name: "read_file"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if hasKind(warnings, DriftFM1) {
 		t.Error("exact manifest match must NOT produce FM-1 warning")
 	}
@@ -78,7 +78,7 @@ func TestCheckManifestDrift_FM1_MultipleGlobMatches(t *testing.T) {
 		{Name: "get_invoice"},
 		{Name: "get_report"},
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	fm1s := findAllKind(warnings, DriftFM1)
 	if len(fm1s) != 3 {
 		t.Errorf("expected 3 FM-1 warnings (one per glob-matched tool), got %d", len(fm1s))
@@ -96,7 +96,7 @@ func TestCheckManifestDrift_FM1_ExactOverridesGlob(t *testing.T) {
 		{Name: "get_customer"},
 		{Name: "get_invoice"},
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	fm1s := findAllKind(warnings, DriftFM1)
 	// Only get_invoice should fire; get_customer is exact-matched.
 	if len(fm1s) != 1 {
@@ -125,7 +125,7 @@ func TestCheckManifestDrift_FM1_WildcardPatterns(t *testing.T) {
 				capability.Constraint{Resource: tc.resource, Actions: []string{"call"}},
 			)
 			tools := []UpstreamTool{{Name: tc.tool}}
-			warnings := CheckManifestDrift(manifest, tools)
+			warnings := CheckManifestDrift(manifest, tools, "")
 			got := hasKind(warnings, DriftFM1)
 			if got != tc.wantFM1 {
 				t.Errorf("FM-1 for resource=%q tool=%q: want %v, got %v", tc.resource, tc.tool, tc.wantFM1, got)
@@ -142,7 +142,7 @@ func TestCheckManifestDrift_FM2_DeadEntry(t *testing.T) {
 	)
 	// Upstream has been renamed; query_db no longer exists.
 	tools := []UpstreamTool{{Name: "execute_query"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 
 	fm2 := findKind(warnings, DriftFM2)
 	if fm2 == nil {
@@ -162,7 +162,7 @@ func TestCheckManifestDrift_FM2_GlobWithNoMatches(t *testing.T) {
 	)
 	// No tool starts with "legacy_".
 	tools := []UpstreamTool{{Name: "read_file"}, {Name: "write_file"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if !hasKind(warnings, DriftFM2) {
 		t.Error("expected FM-2 for glob entry with no live matches")
 	}
@@ -173,7 +173,7 @@ func TestCheckManifestDrift_FM2_GlobWithMatchesNoFM2(t *testing.T) {
 		capability.Constraint{Resource: "get_*", Actions: []string{"call"}},
 	)
 	tools := []UpstreamTool{{Name: "get_customer"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if hasKind(warnings, DriftFM2) {
 		t.Error("FM-2 must not fire when the glob has at least one live match")
 	}
@@ -186,7 +186,7 @@ func TestCheckManifestDrift_FM2_MultipleDeadEntries(t *testing.T) {
 		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
 	)
 	tools := []UpstreamTool{{Name: "read_file"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	fm2s := findAllKind(warnings, DriftFM2)
 	if len(fm2s) != 2 {
 		t.Errorf("expected 2 FM-2 warnings (old_read, old_write), got %d", len(fm2s))
@@ -215,7 +215,7 @@ func TestCheckManifestDrift_FM3_ArgumentMissing(t *testing.T) {
 			},
 		},
 	}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 
 	fm3 := findKind(warnings, DriftFM3)
 	if fm3 == nil {
@@ -251,7 +251,7 @@ func TestCheckManifestDrift_FM3_ArgumentPresent(t *testing.T) {
 			},
 		},
 	}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if hasKind(warnings, DriftFM3) {
 		t.Error("FM-3 must not fire when argument exists in live schema")
 	}
@@ -269,7 +269,7 @@ func TestCheckManifestDrift_FM3_NoSchema(t *testing.T) {
 	)
 	// Upstream tool has no inputSchema.
 	tools := []UpstreamTool{{Name: "read_file"}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if hasKind(warnings, DriftFM3) {
 		t.Error("FM-3 must not fire when the live tool has no inputSchema")
 	}
@@ -296,7 +296,7 @@ func TestCheckManifestDrift_FM3_MultipleConditionTypes(t *testing.T) {
 			},
 		},
 	}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	fm3s := findAllKind(warnings, DriftFM3)
 	if len(fm3s) != 2 {
 		t.Errorf("expected 2 FM-3 warnings (sql, db_name), got %d: %v", len(fm3s), fm3s)
@@ -322,7 +322,7 @@ func TestCheckManifestDrift_FM3_DeduplicatesArgNames(t *testing.T) {
 			"properties": map[string]interface{}{"file_path": map[string]interface{}{}},
 		},
 	}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	fm3s := findAllKind(warnings, DriftFM3)
 	if len(fm3s) != 1 {
 		t.Errorf("expected exactly 1 FM-3 for deduplicated argument, got %d", len(fm3s))
@@ -347,7 +347,7 @@ func TestCheckManifestDrift_FM3_EmptyArgumentSkipped(t *testing.T) {
 			"properties": map[string]interface{}{"query": map[string]interface{}{}},
 		},
 	}}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	if hasKind(warnings, DriftFM3) {
 		t.Error("FM-3 must not fire for empty argument (scan-all-args mode)")
 	}
@@ -364,7 +364,7 @@ func TestCheckManifestDrift_Uncovered(t *testing.T) {
 		{Name: "write_file"},
 		{Name: "summarise_text"},
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	uncovered := findAllKind(warnings, DriftUncovered)
 	if len(uncovered) != 2 {
 		t.Errorf("expected 2 uncovered tools, got %d: %v", len(uncovered), uncovered)
@@ -387,7 +387,7 @@ func TestCheckManifestDrift_NoFindings(t *testing.T) {
 		{Name: "read_file"},
 		{Name: "query_db"},
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, "")
 	for _, w := range warnings {
 		if w.IsFatal() {
 			t.Errorf("clean manifest: unexpected fatal warning %+v", w)
@@ -396,6 +396,184 @@ func TestCheckManifestDrift_NoFindings(t *testing.T) {
 	// FM-1 and FM-2 must be absent.
 	if hasKind(warnings, DriftFM1) || hasKind(warnings, DriftFM2) {
 		t.Error("clean manifest: unexpected FM-1 or FM-2 warnings")
+	}
+}
+
+// ── FM-4: server version pin ──────────────────────────────────────────────────
+
+func TestCheckManifestDrift_FM4_VersionMismatch(t *testing.T) {
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	manifest.ServerVersion = "1.2.3"
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	warnings := CheckManifestDrift(manifest, tools, "1.2.4")
+
+	fm4 := findKind(warnings, DriftFM4)
+	if fm4 == nil {
+		t.Fatal("expected FM-4 warning for version mismatch, got none")
+	}
+	if fm4.Resource != "1.2.3" {
+		t.Errorf("FM-4 Resource (constraint): want 1.2.3, got %q", fm4.Resource)
+	}
+	if fm4.VersionActual != "1.2.4" {
+		t.Errorf("FM-4 VersionActual: want 1.2.4, got %q", fm4.VersionActual)
+	}
+	if !fm4.IsFatal() {
+		t.Error("FM-4 must be fatal")
+	}
+}
+
+func TestCheckManifestDrift_FM4_VersionMatch(t *testing.T) {
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	manifest.ServerVersion = "1.2.3"
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	warnings := CheckManifestDrift(manifest, tools, "1.2.3")
+
+	if hasKind(warnings, DriftFM4) {
+		t.Error("FM-4 must not fire when version matches exactly")
+	}
+}
+
+func TestCheckManifestDrift_FM4_WildcardPatch(t *testing.T) {
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	manifest.ServerVersion = "1.2.*"
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	// Any patch of 1.2 should match.
+	for _, actual := range []string{"1.2.0", "1.2.5", "1.2.99"} {
+		t.Run(actual, func(t *testing.T) {
+			warnings := CheckManifestDrift(manifest, tools, actual)
+			if hasKind(warnings, DriftFM4) {
+				t.Errorf("FM-4 must not fire for %q against pin %q", actual, manifest.ServerVersion)
+			}
+		})
+	}
+
+	// Different minor should fire FM-4.
+	warnings := CheckManifestDrift(manifest, tools, "1.3.0")
+	if !hasKind(warnings, DriftFM4) {
+		t.Error("FM-4 must fire for 1.3.0 against pin 1.2.*")
+	}
+}
+
+func TestCheckManifestDrift_FM4_WildcardMinor(t *testing.T) {
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	manifest.ServerVersion = "1.*"
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	for _, actual := range []string{"1.0.0", "1.2.3", "1.99.0"} {
+		t.Run(actual, func(t *testing.T) {
+			warnings := CheckManifestDrift(manifest, tools, actual)
+			if hasKind(warnings, DriftFM4) {
+				t.Errorf("FM-4 must not fire for %q against pin %q", actual, manifest.ServerVersion)
+			}
+		})
+	}
+
+	warnings := CheckManifestDrift(manifest, tools, "2.0.0")
+	if !hasKind(warnings, DriftFM4) {
+		t.Error("FM-4 must fire for 2.0.0 against pin 1.*")
+	}
+}
+
+func TestCheckManifestDrift_FM4_UnknownServerVersion(t *testing.T) {
+	// If the server doesn't report a version, it can't satisfy any pin.
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	manifest.ServerVersion = "1.2.3"
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	warnings := CheckManifestDrift(manifest, tools, "")
+	if !hasKind(warnings, DriftFM4) {
+		t.Error("FM-4 must fire when server version is absent and a pin is configured")
+	}
+	fm4 := findKind(warnings, DriftFM4)
+	if fm4 != nil && fm4.VersionActual != "" {
+		t.Errorf("FM-4 VersionActual should be empty for absent version, got %q", fm4.VersionActual)
+	}
+}
+
+func TestCheckManifestDrift_FM4_NoPinConfigured(t *testing.T) {
+	// No serverVersion in manifest — FM-4 must never fire.
+	manifest := manifestWith(
+		capability.Constraint{Resource: "read_file", Actions: []string{"call"}},
+	)
+	tools := []UpstreamTool{{Name: "read_file"}}
+
+	for _, actual := range []string{"", "1.0.0", "99.0.0"} {
+		warnings := CheckManifestDrift(manifest, tools, actual)
+		if hasKind(warnings, DriftFM4) {
+			t.Errorf("FM-4 must not fire when no serverVersion is configured (actual=%q)", actual)
+		}
+	}
+}
+
+func TestCheckManifestDrift_FM4_LogLine(t *testing.T) {
+	w := DriftWarning{Kind: DriftFM4, Resource: "1.2.*", VersionActual: "1.3.0"}
+	line := w.LogLine()
+	for _, want := range []string{"WARN", "fm4", "1.2.*", "1.3.0"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("FM-4 LogLine missing %q: %s", want, line)
+		}
+	}
+}
+
+func TestCheckManifestDrift_FM4_UnknownActualInLogLine(t *testing.T) {
+	w := DriftWarning{Kind: DriftFM4, Resource: "1.2.3", VersionActual: ""}
+	if !strings.Contains(w.LogLine(), "(unknown)") {
+		t.Error("FM-4 LogLine should say (unknown) when VersionActual is empty")
+	}
+}
+
+// ── matchServerVersion ────────────────────────────────────────────────────────
+
+func TestMatchServerVersion(t *testing.T) {
+	cases := []struct {
+		constraint string
+		actual     string
+		want       bool
+	}{
+		// Exact match
+		{"1.2.3", "1.2.3", true},
+		{"1.2.3", "1.2.4", false},
+		{"1.2.3", "1.2.3.0", false}, // extra component
+		// Patch wildcard
+		{"1.2.*", "1.2.0", true},
+		{"1.2.*", "1.2.99", true},
+		{"1.2.*", "1.3.0", false},
+		{"1.2.*", "2.2.0", false},
+		// Minor+patch wildcard
+		{"1.*", "1.0.0", true},
+		{"1.*", "1.99.42", true},
+		{"1.*", "2.0.0", false},
+		// Any-version wildcard
+		{"*", "1.2.3", true},
+		{"*", "", true},
+		{"*", "99.0.0", true},
+		// Empty constraint — always matches
+		{"", "1.2.3", true},
+		{"", "", true},
+		// Empty actual with non-empty constraint
+		{"1.2.3", "", false},
+		{"1.*", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.constraint+"/"+tc.actual, func(t *testing.T) {
+			got := matchServerVersion(tc.constraint, tc.actual)
+			if got != tc.want {
+				t.Errorf("matchServerVersion(%q, %q) = %v, want %v", tc.constraint, tc.actual, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -43,9 +43,14 @@ services:
   # ── keycloak ───────────────────────────────────────────────────────
   # Keycloak pre-seeded with the eunox-demo realm.  The demo-agent
   # client uses client-credentials flow and carries mcp.capabilities
-  # claims in every access token (JWT mode only; run `make jwt`).
+  # claims in every access token (JWT mode only; run `make up-jwt`).
+  #
+  # profiles: ["jwt"] keeps this service out of the default compose
+  # set so that `make up` (manifest-only) never pulls the image.
+  # Activate with: docker compose --profile jwt up
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
+    profiles: ["jwt"]
     command:
       - start-dev
       - --import-realm

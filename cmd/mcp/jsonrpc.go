@@ -81,7 +81,7 @@ func errorResponse(id *json.RawMessage, code int, message string) rpcMsg {
 }
 
 // notificationMsg builds a JSON-RPC 2.0 notification (no id).
-func notificationMsg(method string, params interface{}) (rpcMsg, error) {
+func notificationMsg(method string, params interface{}) (rpcMsg, error) { //nolint:unparam // method is always "notifications/initialized" today; kept generic for future use
 	var p json.RawMessage
 	if params != nil {
 		var err error

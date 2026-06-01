@@ -21,6 +21,12 @@ type AgentCapabilityManifest struct {
 	Version string `json:"version"`
 	// Description is an optional human-readable description of the agent.
 	Description string `json:"description,omitempty"`
+	// ServerVersion pins the upstream MCP server version the manifest was authored
+	// against.  Supports exact versions ("1.2.3") and trailing wildcards ("1.2.*",
+	// "1.*").  When set, the proxy emits an FM-4 drift warning (and, in
+	// --strict-drift mode, aborts) if the live server version does not match.
+	// Leave empty to disable version pinning.
+	ServerVersion string `json:"serverVersion,omitempty"`
 	// Capabilities lists the capability constraints the agent requires.
 	Capabilities []capability.Constraint `json:"capabilities"`
 	// DefaultTTL is the default token TTL in seconds.
