@@ -193,9 +193,40 @@ the gateway, so spelling matters.
 
 The full list of shipped condition types is `timeWindow`, `ipRange`,
 `allowedOperations`, `allowedExtensions`, `allowedTables`, `maxCalls`,
-`recipientDomain`, `redactFields`, and the `custom` escape hatch
-(which requires the named handler to be registered in the
-`ConditionRegistry`).
+`recipientDomain`, `redactFields`, `allowedValues`, `policy`,
+and the `custom` escape hatch (which requires the named handler to be
+registered in the `ConditionRegistry`).
+
+**`allowedValues`** — restricts a named string argument to a set of allowed
+literal values or glob patterns:
+
+```yaml
+- name: read_file
+  conditions:
+    - type: allowedValues   # restrict the path argument
+      argument: path
+      values: ["/reports/*", "/public/*"]
+```
+
+The `argument` field names the tool parameter to check; `values` is a list
+of exact strings or `*`-glob patterns (e.g. `/reports/*` matches
+`/reports/q3.pdf`).
+
+**`policy`** — delegates the allow/deny decision to an embedded OPA/Rego
+policy string evaluated at call time:
+
+```yaml
+- name: query_db
+  conditions:
+    - type: policy
+      rego: |
+        default allow = false
+        allow { input.arguments.query != "" }
+```
+
+The `rego` field is evaluated with `input.arguments` bound to the
+tool's argument map; the policy must define `allow`.  Use this for
+logic that cannot be expressed with the other typed conditions.
 
 > If a condition you need is not in the union, **add a new typed
 > shape to `pkg/capability/condition.go` first**, register its
