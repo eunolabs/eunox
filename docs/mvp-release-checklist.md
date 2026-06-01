@@ -222,6 +222,7 @@ make -C demo jwt
 
 Paste the printed token into [jwt.io](https://jwt.io) and verify the claims include:
 
+- `"mcp.v": "0.1"`
 - `"mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"]`
 - `"aud": "eunox"`
 

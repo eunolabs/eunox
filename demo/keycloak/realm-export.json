@@ -31,6 +31,20 @@
       },
       "protocolMappers": [
         {
+          "id": "a1b2c3d4-0000-0000-0000-cap-mapper00",
+          "name": "mcp-version",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "mcp.v",
+            "claim.value": "0.1",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "jsonType.label": "String"
+          }
+        },
+        {
           "id": "a1b2c3d4-0000-0000-0001-cap-mapper01",
           "name": "mcp-capabilities",
           "protocol": "openid-connect",

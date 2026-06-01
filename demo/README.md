@@ -216,6 +216,7 @@ only restrict, never expand.
 The Keycloak `demo-agent` client issues tokens with:
 ```json
 {
+  "mcp.v": "0.1",
   "mcp.capabilities": ["read_file:/reports/*", "query_db:SELECT"],
   "mcp.task_id": "demo-task-001",
   "mcp.agent_id": "demo-agent",

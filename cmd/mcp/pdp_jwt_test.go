@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -80,7 +81,7 @@ func makeIDPToken(t *testing.T, key testKey, caps []string, iss, aud, sub string
 		Expiry:   jwt.NewNumericDate(exp),
 	}
 	payload := idpJWTPayload{
-		MCP: mcpClaimSet{Capabilities: caps},
+		MCP: mcpClaimSet{Version: mcpClaimVersion, Capabilities: caps},
 	}
 	token, err := jwt.Signed(sig).Claims(stdClaims).Claims(payload).Serialize()
 	if err != nil {
@@ -209,6 +210,49 @@ func TestJWTPDP_ValidateToken_Valid(t *testing.T) {
 	}
 	if len(claims.Capabilities) != 1 || claims.Capabilities[0] != "read_file" {
 		t.Errorf("capabilities = %v, want [read_file]", claims.Capabilities)
+	}
+}
+
+func TestJWTPDP_ValidateToken_BadClaimVersion(t *testing.T) {
+	key := newTestKey(t, "k1")
+	srv := makeJWKSServer(t, key)
+	defer srv.Close()
+
+	pdp := makeJWTPDP(t, srv, "", "", nil)
+
+	newSig := func() jose.Signer {
+		sig, err := jose.NewSigner(
+			jose.SigningKey{Algorithm: jose.ES256, Key: key.priv},
+			(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", key.kid),
+		)
+		if err != nil {
+			t.Fatalf("new signer: %v", err)
+		}
+		return sig
+	}
+	stdClaims := jwt.Claims{
+		IssuedAt: jwt.NewNumericDate(time.Now()),
+		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	makeToken := func(v string) string {
+		payload := idpJWTPayload{MCP: mcpClaimSet{Version: v, Capabilities: []string{"read_file"}}}
+		tok, err := jwt.Signed(newSig()).Claims(stdClaims).Claims(payload).Serialize()
+		if err != nil {
+			t.Fatalf("sign token: %v", err)
+		}
+		return tok
+	}
+
+	for _, v := range []string{"", "1", "99.0", "0.2"} {
+		t.Run("v="+v, func(t *testing.T) {
+			_, err := pdp.ValidateToken(context.Background(), "Bearer "+makeToken(v))
+			if err == nil {
+				t.Fatalf("expected rejection for mcp.v=%q", v)
+			}
+			if !strings.Contains(err.Error(), "unsupported mcp claim version") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
