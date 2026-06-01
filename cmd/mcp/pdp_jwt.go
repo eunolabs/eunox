@@ -330,8 +330,8 @@ func (p *JWTPDP) ValidateToken(ctx context.Context, authHeader string) (context.
 			return ctx, fmt.Errorf("token issuer %q does not match expected %q", stdClaims.Issuer, p.issuer)
 		}
 
-		if v := payload.MCP.Version; v != "" && v != mcpClaimVersion {
-			return ctx, fmt.Errorf("unsupported mcp claim version %q (want %q)", v, mcpClaimVersion)
+		if payload.MCP.Version != mcpClaimVersion {
+			return ctx, fmt.Errorf("unsupported mcp claim version %q (want %q)", payload.MCP.Version, mcpClaimVersion)
 		}
 		claims := &JWTClaims{
 			Capabilities: payload.MCP.Capabilities,
