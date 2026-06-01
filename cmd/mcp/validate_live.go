@@ -35,18 +35,20 @@ type liveReport struct {
 	exactCovered []coveredEntry // tools covered by exact-match entries
 	fm1Warnings  []DriftWarning // FM-1: glob-matched tools
 	fm3Warnings  []DriftWarning // FM-3: condition argument not in live schema
+	fm4Warnings  []DriftWarning // FM-4: server version does not satisfy manifest pin
 	fm2Stale     []DriftWarning // FM-2: manifest entries with no live tool
 	uncovered    []string       // live tool names not covered by any manifest entry
 }
 
 // buildLiveReport classifies the live tool set against the manifest using
 // CheckManifestDrift and returns a liveReport ready for rendering.
-func buildLiveReport(manifest *LocalManifest, tools []UpstreamTool) liveReport {
-	driftWarnings := CheckManifestDrift(manifest, tools)
+// serverVersion is the version string from the upstream initialize response.
+func buildLiveReport(manifest *LocalManifest, tools []UpstreamTool, serverVersion string) liveReport {
+	driftWarnings := CheckManifestDrift(manifest, tools, serverVersion)
 
 	fm1 := make(map[string]DriftWarning)
 	fm2 := make(map[string]DriftWarning)
-	var fm3 []DriftWarning
+	var fm3, fm4 []DriftWarning
 	uncoveredSet := make(map[string]bool)
 
 	for _, w := range driftWarnings {
@@ -57,6 +59,8 @@ func buildLiveReport(manifest *LocalManifest, tools []UpstreamTool) liveReport {
 			fm2[w.Resource] = w
 		case DriftFM3:
 			fm3 = append(fm3, w)
+		case DriftFM4:
+			fm4 = append(fm4, w)
 		case DriftUncovered:
 			uncoveredSet[w.Tool] = true
 		}
@@ -105,6 +109,7 @@ func buildLiveReport(manifest *LocalManifest, tools []UpstreamTool) liveReport {
 		exactCovered: exactCovered,
 		fm1Warnings:  fm1Slice,
 		fm3Warnings:  fm3,
+		fm4Warnings:  fm4,
 		fm2Stale:     fm2Slice,
 		uncovered:    uncoveredSlice,
 	}
@@ -113,10 +118,10 @@ func buildLiveReport(manifest *LocalManifest, tools []UpstreamTool) liveReport {
 // runValidateLive writes a human-readable drift report to out and returns the
 // appropriate exit code.
 //
-// Returns 0 when the manifest is clean (no FM-1, no FM-2).
+// Returns 0 when the manifest is clean (no FM-1, no FM-2, no FM-4).
 // Returns 1 when warnings or stale entries are present.
-func runValidateLive(manifest *LocalManifest, tools []UpstreamTool, out io.Writer) int {
-	rep := buildLiveReport(manifest, tools)
+func runValidateLive(manifest *LocalManifest, tools []UpstreamTool, serverVersion string, out io.Writer) int {
+	rep := buildLiveReport(manifest, tools, serverVersion)
 
 	// wf and wln are write helpers: errors on terminal output are not actionable
 	// by the caller, so they are intentionally discarded.
@@ -140,9 +145,16 @@ func runValidateLive(manifest *LocalManifest, tools []UpstreamTool, out io.Write
 		}
 	}
 
-	if len(rep.fm1Warnings) > 0 || len(rep.fm3Warnings) > 0 {
+	if len(rep.fm4Warnings) > 0 || len(rep.fm1Warnings) > 0 || len(rep.fm3Warnings) > 0 {
 		gap()
 		wln("WARNINGS")
+		for _, w := range rep.fm4Warnings {
+			actual := w.VersionActual
+			if actual == "" {
+				actual = "(unknown)"
+			}
+			wf("  ⚠ SERVER VERSION MISMATCH  pinned: %-18s actual: %s\n", w.Resource, actual)
+		}
 		for _, w := range rep.fm1Warnings {
 			wf("  ⚠ %-22s resource: %-22s (glob match — confirm this is intended)\n", w.Tool, w.Resource)
 		}
@@ -171,13 +183,17 @@ func runValidateLive(manifest *LocalManifest, tools []UpstreamTool, out io.Write
 
 	fm1Count := len(rep.fm1Warnings)
 	fm2Count := len(rep.fm2Stale)
+	fm4Count := len(rep.fm4Warnings)
 
-	if fm1Count == 0 && fm2Count == 0 {
+	if fm1Count == 0 && fm2Count == 0 && fm4Count == 0 {
 		wln("Result: ok — all manifest entries match live tools; no glob matches detected.")
 		return 0
 	}
 
 	var parts []string
+	if fm4Count > 0 {
+		parts = append(parts, "server version mismatch")
+	}
 	if fm1Count == 1 {
 		parts = append(parts, "1 glob match")
 	} else if fm1Count > 1 {

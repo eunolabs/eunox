@@ -19,10 +19,21 @@ import (
 // generateInitManifestYAML returns a deny-all starter YAML manifest for the
 // given tool list.  Every tool entry is commented out; the capabilities section
 // is valid but empty until the operator uncomments individual entries.
-func generateInitManifestYAML(tools []UpstreamTool, manifestName string) string {
+// serverVersion is the version string from the upstream initialize response; if
+// non-empty it is added as a commented-out serverVersion field so the operator
+// can easily enable version pinning.
+func generateInitManifestYAML(tools []UpstreamTool, manifestName, serverVersion string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "name: %q\n", manifestName)
-	sb.WriteString("version: \"1.0.0\"\n\n")
+	sb.WriteString("version: \"1.0.0\"\n")
+	if serverVersion != "" {
+		// Show both an exact pin and a wildcard suggestion so the operator can
+		// choose how strictly to pin.
+		wildcard := serverVersionWildcard(serverVersion)
+		fmt.Fprintf(&sb, "# serverVersion: %q  # uncomment to pin; use %q to allow patch updates\n",
+			serverVersion, wildcard)
+	}
+	sb.WriteString("\n")
 
 	if len(tools) == 0 {
 		sb.WriteString("capabilities: [] # no tools found on upstream\n")
@@ -97,6 +108,24 @@ func argumentSchemaYAML(schema map[string]interface{}) []string {
 	}
 
 	return lines
+}
+
+// serverVersionWildcard returns a "major.minor.*" suggestion from v, replacing
+// the patch component with a wildcard so operators can allow patch updates while
+// still pinning to a specific major.minor.
+// For single-part versions (e.g. "2") it returns "2.*".
+// For two-part versions (e.g. "1.2") it returns "1.2.*".
+func serverVersionWildcard(v string) string {
+	if v == "" {
+		return "*"
+	}
+	parts := strings.Split(v, ".")
+	switch len(parts) {
+	case 1:
+		return parts[0] + ".*"
+	default:
+		return parts[0] + "." + parts[1] + ".*"
+	}
 }
 
 // sortedMapKeys returns the keys of m in sorted order.

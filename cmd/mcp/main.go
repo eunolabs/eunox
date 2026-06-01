@@ -162,7 +162,7 @@ Flags:
 	dryRun := fs.Bool("dry-run", false, "Evaluate policies but do not block tool calls.\nDenials are logged to the audit trail with dry_run=true but the request is forwarded.\nUse for observation mode before production enforcement.")
 
 	// Drift detection flag.
-	strictDrift := fs.Bool("strict-drift", false, "Abort session startup when FM-1 (new glob-matched tool) or FM-2 (dead manifest entry) drift is detected.\nRequires --policy. Without this flag, drift findings are logged as warnings but sessions proceed.")
+	strictDrift := fs.Bool("strict-drift", false, "Abort session startup when FM-1 (new glob-matched tool), FM-2 (dead manifest entry), or FM-4 (server version mismatch) drift is detected.\nRequires --policy. Without this flag, drift findings are logged as warnings but sessions proceed.")
 
 	// Redis flags (optional — in-memory is used when absent).
 	redisAddr := fs.String("redis-addr", "", "Redis address (host:port) for persistent call-counter and kill-switch state.\nWhen set, state survives proxy restarts and is shared across instances.\nExample: --redis-addr localhost:6379")
@@ -480,15 +480,19 @@ Flags:
 	merged := MergeManifests(manifests)
 
 	fmt.Printf("\nConnecting to upstream (%s)...", *upstreamURL)
-	tools, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
+	info, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
 	if err != nil {
 		fmt.Printf("  FAILED\n")
 		fmt.Fprintf(os.Stderr, "eunox-mcp validate: %v\n", err)
 		os.Exit(2)
 	}
-	fmt.Printf("  ok (%d tool(s))\n\n", len(tools))
+	versionLabel := info.ServerVersion
+	if versionLabel == "" {
+		versionLabel = "unknown"
+	}
+	fmt.Printf("  ok (%d tool(s), server version: %s)\n\n", len(info.Tools), versionLabel)
 
-	code := runValidateLive(merged, tools, os.Stdout)
+	code := runValidateLive(merged, info.Tools, info.ServerVersion, os.Stdout)
 	os.Exit(code)
 }
 
@@ -527,15 +531,15 @@ Flags:
 	}
 
 	fmt.Fprintf(os.Stderr, "Fetching tool list from upstream...")
-	tools, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
+	info, err := fetchLiveTools(context.Background(), *upstreamURL, *authHeader, *tlsSkipVerify)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  FAILED\n")
 		fmt.Fprintf(os.Stderr, "eunox-mcp init: %v\n", err)
 		os.Exit(2)
 	}
-	fmt.Fprintf(os.Stderr, "  %d tool(s)\n\n", len(tools))
+	fmt.Fprintf(os.Stderr, "  %d tool(s)\n\n", len(info.Tools))
 
-	manifest := generateInitManifestYAML(tools, *name)
+	manifest := generateInitManifestYAML(info.Tools, *name, info.ServerVersion)
 
 	if *output == "" {
 		fmt.Print(manifest)

@@ -78,6 +78,8 @@ type StdioProxy struct {
 
 	// upstreamCaps holds the server capabilities from the upstream initialize response.
 	upstreamCaps map[string]interface{}
+	// upstreamServerVersion holds the version string from the upstream serverInfo.
+	upstreamServerVersion string
 
 	// idCounter is used for the proxy→upstream initialize request ID.
 	idCounter int64
@@ -240,10 +242,13 @@ func (p *StdioProxy) initUpstream() error {
 			return fmt.Errorf("reading initialize response: %w", err)
 		}
 		if msg.isResponse() && msgKey(msg.ID) == msgKey(initID) {
-			// Extract server capabilities.
+			// Extract server capabilities and version.
 			var result mcpInitResult
 			if err := json.Unmarshal(msg.Result, &result); err == nil {
 				p.upstreamCaps = result.Capabilities
+				if sv, ok := result.ServerInfo["version"].(string); ok {
+					p.upstreamServerVersion = sv
+				}
 			}
 			break
 		}

@@ -82,15 +82,48 @@ condition to silently pass by never matching. The invariant to protect
 is: a condition that was intended to restrict must not silently become a
 no-op.
 
-### FM-4 — Undetectable behavior drift (out of scope for proxy)
+### FM-4 — Server version mismatch (detectable via version pin)
 
 A tool retains its name and argument schema but its server-side
 implementation changes. For example, `read_file` begins exfiltrating
 file metadata to a telemetry endpoint after a server update. The proxy
-cannot detect this because it inspects the _wire contract_, not the
-_implementation_. This is a supply-chain trust problem addressed by
-deployment controls (pinned container image digests, sandboxing) rather
-than manifest policy.
+cannot detect implementation changes directly, but it **can** detect
+that the server version changed — provided the manifest declares a
+`serverVersion` pin.
+
+**Detected when `serverVersion` is set in the manifest.** The proxy
+compares the version string from the upstream `initialize` response
+against the pinned constraint and emits an FM-4 warning on mismatch.
+
+```yaml
+# manifest.yaml
+name: "my-policy"
+version: "1.0.0"
+serverVersion: "1.2.*"   # allow any patch of 1.2; reject 1.3+
+capabilities:
+  - resource: read_file
+    actions: [call]
+```
+
+Supported constraint forms:
+
+| Constraint | Matches |
+|---|---|
+| `1.2.3` | exactly `1.2.3` |
+| `1.2.*` | `1.2.x` for any patch `x` |
+| `1.*`   | `1.x.y` for any minor and patch |
+| `*`     | any version (effectively no pin) |
+
+**Without `serverVersion` in the manifest:** FM-4 is never emitted —
+existing manifests are unaffected.
+
+**In `--strict-drift` mode:** FM-4 aborts session establishment (like
+FM-1 and FM-2), preventing an agent from connecting to an unexpected
+server version.
+
+**Purely behavioral changes** (same version, changed implementation)
+cannot be detected at the proxy layer and remain a supply-chain concern
+addressed by deployment controls.
 
 ---
 
@@ -303,9 +336,9 @@ perspective. Mitigations are external:
 |---|---|---|---|
 | Fix 1 — Startup drift warnings | Low | FM-1, FM-2 | ✅ **Shipped** (`cmd/mcp/drift.go`) |
 | Fix 3 — Argument schema drift | Low | FM-3 | ✅ **Shipped** (Fix 1 extended; `argumentSchema` pinning documented) |
-| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3 | ✅ **Shipped** (`cmd/mcp/validate_live.go`; `--live` flag on `validate`) |
+| Fix 2 — `validate --live` | Medium | FM-1, FM-2, FM-3, FM-4 | ✅ **Shipped** (`cmd/mcp/validate_live.go`; `--live` flag on `validate`) |
 | Fix 4 — `init` scaffold | Medium | Authoring UX | ✅ **Shipped** (`cmd/mcp/init_manifest.go`; `init` subcommand) |
-| FM-4 — Behavior drift | Not solvable at proxy | — | Supply-chain / deployment controls |
+| FM-4 — Version pin | Low | FM-4 | ✅ **Shipped** (`serverVersion` manifest field; `cmd/mcp/drift.go`) |
 
 ---
 

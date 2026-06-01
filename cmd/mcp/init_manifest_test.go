@@ -11,7 +11,7 @@ import (
 // ─── generateInitManifestYAML ─────────────────────────────────────────────────
 
 func TestGenerateInitManifestYAML_Header(t *testing.T) {
-	yaml := generateInitManifestYAML(nil, "my-policy")
+	yaml := generateInitManifestYAML(nil, "my-policy", "")
 
 	if !strings.Contains(yaml, `name: "my-policy"`) {
 		t.Errorf("header: missing name field, got:\n%s", yaml)
@@ -22,7 +22,7 @@ func TestGenerateInitManifestYAML_Header(t *testing.T) {
 }
 
 func TestGenerateInitManifestYAML_EmptyTools(t *testing.T) {
-	yaml := generateInitManifestYAML(nil, "empty-manifest")
+	yaml := generateInitManifestYAML(nil, "empty-manifest", "")
 
 	if !strings.Contains(yaml, "capabilities:") {
 		t.Error("should contain capabilities:")
@@ -38,7 +38,7 @@ func TestGenerateInitManifestYAML_EmptyTools(t *testing.T) {
 
 func TestGenerateInitManifestYAML_ToolNoSchema(t *testing.T) {
 	tools := []UpstreamTool{{Name: "simple_tool"}}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	if !strings.Contains(yaml, "# - resource: simple_tool") {
 		t.Errorf("should have commented-out resource entry, got:\n%s", yaml)
@@ -64,7 +64,7 @@ func TestGenerateInitManifestYAML_ToolWithSchema(t *testing.T) {
 			"required": []interface{}{"path"},
 		},
 	}}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	for _, want := range []string{
 		"#   argumentSchema:",
@@ -91,7 +91,7 @@ func TestGenerateInitManifestYAML_ToolSchemaUnknownType(t *testing.T) {
 			},
 		},
 	}}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	if !strings.Contains(yaml, "param: { type: string }") {
 		t.Errorf("unknown type should default to string, got:\n%s", yaml)
@@ -104,7 +104,7 @@ func TestGenerateInitManifestYAML_MultipleTools(t *testing.T) {
 		{Name: "tool_b"},
 		{Name: "tool_c"},
 	}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	for _, name := range []string{"tool_a", "tool_b", "tool_c"} {
 		if !strings.Contains(yaml, "resource: "+name) {
@@ -120,7 +120,7 @@ func TestGenerateInitManifestYAML_MultipleTools(t *testing.T) {
 
 func TestGenerateInitManifestYAML_ReviewComment(t *testing.T) {
 	tools := []UpstreamTool{{Name: "some_tool"}}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	if !strings.Contains(yaml, "REVIEW") {
 		t.Error("should contain the REVIEW guidance comment")
@@ -129,7 +129,7 @@ func TestGenerateInitManifestYAML_ReviewComment(t *testing.T) {
 
 func TestGenerateInitManifestYAML_AllEntriesCommentedOut(t *testing.T) {
 	tools := []UpstreamTool{{Name: "tool_a"}, {Name: "tool_b"}}
-	yaml := generateInitManifestYAML(tools, "test")
+	yaml := generateInitManifestYAML(tools, "test", "")
 
 	// Every line in the capabilities block must be a comment or blank.
 	// Scan the lines after "capabilities:".
@@ -267,6 +267,50 @@ func TestArgumentSchemaYAML_NoRequiredField(t *testing.T) {
 	for _, l := range lines {
 		if strings.Contains(l, "required") {
 			t.Errorf("should not emit required line when schema has no required field: %q", l)
+		}
+	}
+}
+
+// ─── server version in generated YAML ────────────────────────────────────────
+
+func TestGenerateInitManifestYAML_ServerVersionComment(t *testing.T) {
+	yaml := generateInitManifestYAML(nil, "test", "1.2.3")
+
+	// Should include a commented-out serverVersion line with the exact version.
+	if !strings.Contains(yaml, `# serverVersion: "1.2.3"`) {
+		t.Errorf("should include commented serverVersion with exact version, got:\n%s", yaml)
+	}
+	// Should also suggest the patch-wildcard form.
+	if !strings.Contains(yaml, "1.2.*") {
+		t.Errorf("should suggest patch wildcard 1.2.*, got:\n%s", yaml)
+	}
+}
+
+func TestGenerateInitManifestYAML_NoServerVersion(t *testing.T) {
+	yaml := generateInitManifestYAML(nil, "test", "")
+
+	if strings.Contains(yaml, "serverVersion") {
+		t.Errorf("should not emit serverVersion when none provided, got:\n%s", yaml)
+	}
+}
+
+// ─── serverVersionWildcard ────────────────────────────────────────────────────
+
+func TestServerVersionWildcard(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"1.2.3", "1.2.*"},
+		{"1.2", "1.2.*"},
+		{"1", "1.*"},
+		{"", "*"},
+		{"1.2.3.4", "1.2.*"}, // only first two parts used
+	}
+	for _, tc := range cases {
+		got := serverVersionWildcard(tc.in)
+		if got != tc.want {
+			t.Errorf("serverVersionWildcard(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

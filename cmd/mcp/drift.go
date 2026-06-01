@@ -43,23 +43,26 @@ const (
 	DriftFM2 DriftKind = "fm2"
 	// DriftFM3 — condition argument not found in live inputSchema (FM-3, silent bypass risk).
 	DriftFM3 DriftKind = "fm3"
+	// DriftFM4 — live server version does not satisfy the manifest's serverVersion pin (FM-4).
+	DriftFM4 DriftKind = "fm4"
 	// DriftUncovered — upstream tool has no manifest entry (informational; denied by default).
 	DriftUncovered DriftKind = "uncovered"
 )
 
 // DriftWarning is one finding produced by CheckManifestDrift.
 type DriftWarning struct {
-	Kind     DriftKind
-	Tool     string // upstream tool name (empty for FM-2)
-	Resource string // manifest resource pattern (empty for uncovered)
-	Argument string // condition argument name (FM-3 only)
+	Kind          DriftKind
+	Tool          string // upstream tool name (empty for FM-2, FM-4)
+	Resource      string // manifest resource pattern (empty for uncovered); version constraint for FM-4
+	Argument      string // condition argument name (FM-3 only)
+	VersionActual string // actual server version reported in initialize (FM-4 only)
 }
 
 // IsFatal reports whether this finding should abort session establishment
-// when --strict-drift is set.  FM-1 and FM-2 are fatal; FM-3 and uncovered
-// are advisory.
+// when --strict-drift is set.  FM-1, FM-2, and FM-4 are fatal; FM-3 and
+// uncovered are advisory.
 func (w DriftWarning) IsFatal() bool {
-	return w.Kind == DriftFM1 || w.Kind == DriftFM2
+	return w.Kind == DriftFM1 || w.Kind == DriftFM2 || w.Kind == DriftFM4
 }
 
 // severity returns the log-level label for this finding.
@@ -88,6 +91,15 @@ func (w DriftWarning) LogLine() string {
 			`[eunox-mcp] %s drift=fm3 resource=%q tool=%q argument=%q — condition argument not in live inputSchema; condition may not enforce if argument was renamed`,
 			w.severity(), w.Resource, w.Tool, w.Argument,
 		)
+	case DriftFM4:
+		actual := w.VersionActual
+		if actual == "" {
+			actual = "(unknown)"
+		}
+		return fmt.Sprintf(
+			`[eunox-mcp] %s drift=fm4 serverVersion=%q actual=%q — server version does not satisfy manifest pin; server may have been updated`,
+			w.severity(), w.Resource, actual,
+		)
 	case DriftUncovered:
 		return fmt.Sprintf(
 			`[eunox-mcp] %s drift=uncovered tool=%q — not covered by manifest; all calls will be denied`,
@@ -99,15 +111,29 @@ func (w DriftWarning) LogLine() string {
 }
 
 // CheckManifestDrift compares the manifest against the live upstream tool list
-// and returns all drift findings.  Returns nil when no issues are found.
+// and server version, and returns all drift findings.  Returns nil when no
+// issues are found.
+//
+// serverVersion is the version string from the upstream initialize response
+// (empty string if the upstream did not report one).
 //
 // This function is pure (no I/O) and safe to call from tests.
-func CheckManifestDrift(manifest *LocalManifest, tools []UpstreamTool) []DriftWarning {
+func CheckManifestDrift(manifest *LocalManifest, tools []UpstreamTool, serverVersion string) []DriftWarning {
 	if manifest == nil {
 		return nil
 	}
 
 	var warnings []DriftWarning
+
+	// ── FM-4: server version pin ──────────────────────────────────────────────
+
+	if manifest.ServerVersion != "" && !matchServerVersion(manifest.ServerVersion, serverVersion) {
+		warnings = append(warnings, DriftWarning{
+			Kind:          DriftFM4,
+			Resource:      manifest.ServerVersion,
+			VersionActual: serverVersion,
+		})
+	}
 
 	// ── FM-1 and uncovered: iterate each live tool against the manifest ────────
 
@@ -371,7 +397,7 @@ func runHTTPDriftCheck(ctx context.Context, sess *httpSession, manifest *LocalMa
 		fmt.Fprintf(os.Stderr, "[eunox-mcp] WARN drift check skipped (tools/list unavailable): %v\n", err)
 		return nil
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, sess.upstreamServerVersion)
 	emitDriftWarnings(warnings)
 	if strict && hasFatalDrift(warnings) {
 		return fmt.Errorf("startup aborted by --strict-drift: manifest drift detected (see warnings above)")
@@ -389,10 +415,39 @@ func runStdioDriftCheck(proxy *StdioProxy, manifest *LocalManifest, strict bool)
 		fmt.Fprintf(os.Stderr, "[eunox-mcp] WARN drift check skipped (tools/list unavailable): %v\n", err)
 		return nil
 	}
-	warnings := CheckManifestDrift(manifest, tools)
+	warnings := CheckManifestDrift(manifest, tools, proxy.upstreamServerVersion)
 	emitDriftWarnings(warnings)
 	if strict && hasFatalDrift(warnings) {
 		return fmt.Errorf("startup aborted by --strict-drift: manifest drift detected (see warnings above)")
 	}
 	return nil
+}
+
+// matchServerVersion reports whether actual satisfies constraint.
+// constraint is a dot-separated version string where any component may be "*"
+// to wildcard that position and everything beyond it:
+//
+//	"1.2.3"  — exact match
+//	"1.2.*"  — major 1, minor 2, any patch
+//	"1.*"    — major 1, any minor and patch
+//	"*"      — any version
+//
+// An empty constraint always matches (no pinning configured).
+func matchServerVersion(constraint, actual string) bool {
+	if constraint == "" {
+		return true
+	}
+	cParts := strings.Split(constraint, ".")
+	aParts := strings.Split(actual, ".")
+	for i, c := range cParts {
+		if c == "*" {
+			return true
+		}
+		if i >= len(aParts) || aParts[i] != c {
+			return false
+		}
+	}
+	// All constraint parts matched; actual must have the same number of parts
+	// so that "1.2.3" does not match "1.2.3.4".
+	return len(aParts) == len(cParts)
 }

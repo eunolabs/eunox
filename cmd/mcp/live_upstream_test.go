@@ -33,10 +33,11 @@ func TestFetchLiveTools_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.StripPrefix("/mcp", fake))
 	t.Cleanup(srv.Close)
 
-	got, err := fetchLiveTools(context.Background(), srv.URL, "", false)
+	info, err := fetchLiveTools(context.Background(), srv.URL, "", false)
 	if err != nil {
 		t.Fatalf("fetchLiveTools: %v", err)
 	}
+	got := info.Tools
 	if len(got) != 2 {
 		t.Fatalf("expected 2 tools, got %d", len(got))
 	}
@@ -51,6 +52,10 @@ func TestFetchLiveTools_HappyPath(t *testing.T) {
 	}
 	if got[1].InputSchema != nil {
 		t.Error("got[1].InputSchema: want nil for tool without schema")
+	}
+	// Server version should be captured from initialize serverInfo.
+	if info.ServerVersion != "0.0.1" {
+		t.Errorf("ServerVersion: want 0.0.1, got %q", info.ServerVersion)
 	}
 
 	// Verify the handshake sequence: initialize → notifications/initialized → tools/list.
@@ -77,12 +82,12 @@ func TestFetchLiveTools_EmptyToolList(t *testing.T) {
 	srv := httptest.NewServer(http.StripPrefix("/mcp", fake))
 	t.Cleanup(srv.Close)
 
-	got, err := fetchLiveTools(context.Background(), srv.URL, "", false)
+	info, err := fetchLiveTools(context.Background(), srv.URL, "", false)
 	if err != nil {
 		t.Fatalf("fetchLiveTools: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("expected 0 tools, got %d", len(got))
+	if len(info.Tools) != 0 {
+		t.Errorf("expected 0 tools, got %d", len(info.Tools))
 	}
 }
 
@@ -185,12 +190,12 @@ func TestFetchLiveTools_TLSSkipVerify(t *testing.T) {
 	}
 
 	// With skip-verify: should succeed despite the self-signed certificate.
-	got, err := fetchLiveTools(context.Background(), tlsSrv.URL, "", true)
+	info, err := fetchLiveTools(context.Background(), tlsSrv.URL, "", true)
 	if err != nil {
 		t.Fatalf("fetchLiveTools with skip-verify: %v", err)
 	}
-	if len(got) != 1 || got[0].Name != "tool_a" {
-		t.Errorf("skip-verify: expected [{tool_a}], got %v", got)
+	if len(info.Tools) != 1 || info.Tools[0].Name != "tool_a" {
+		t.Errorf("skip-verify: expected [{tool_a}], got %v", info.Tools)
 	}
 }
 
@@ -202,12 +207,12 @@ func TestFetchLiveTools_BaseURLTrailingSlash(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// Pass URL with trailing slash.
-	got, err := fetchLiveTools(context.Background(), srv.URL+"/", "", false)
+	info, err := fetchLiveTools(context.Background(), srv.URL+"/", "", false)
 	if err != nil {
 		t.Fatalf("fetchLiveTools with trailing slash: %v", err)
 	}
-	if len(got) != 1 {
-		t.Errorf("expected 1 tool, got %d", len(got))
+	if len(info.Tools) != 1 {
+		t.Errorf("expected 1 tool, got %d", len(info.Tools))
 	}
 }
 

@@ -17,12 +17,20 @@ import (
 	"strings"
 )
 
+// LiveUpstreamInfo holds the tool list and server metadata fetched from a
+// live MCP HTTP server during the validate --live and init handshake.
+type LiveUpstreamInfo struct {
+	Tools         []UpstreamTool
+	ServerVersion string // version field from initialize serverInfo; empty if absent
+}
+
 // fetchLiveTools connects to the remote MCP HTTP server at baseURL, performs
-// the initialize handshake, sends tools/list, and returns the live tool set.
+// the initialize handshake, sends tools/list, and returns the live tool set
+// together with the server version reported in the initialize response.
 //
 // baseURL is the server's base URL (e.g. "https://mcp.example.com"); "/mcp"
 // is appended automatically, matching the proxy convention.
-func fetchLiveTools(ctx context.Context, baseURL, authHeader string, tlsSkipVerify bool) ([]UpstreamTool, error) {
+func fetchLiveTools(ctx context.Context, baseURL, authHeader string, tlsSkipVerify bool) (LiveUpstreamInfo, error) {
 	client := buildUpstreamClient(tlsSkipVerify)
 	endpoint := strings.TrimRight(baseURL, "/") + "/mcp"
 
@@ -41,16 +49,27 @@ func fetchLiveTools(ctx context.Context, baseURL, authHeader string, tlsSkipVeri
 		Params:  initParams,
 	}, "", authHeader)
 	if err != nil {
-		return nil, fmt.Errorf("initialize: %w", err)
+		return LiveUpstreamInfo{}, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
-		return nil, fmt.Errorf("initialize: server error %d: %s", initResp.Error.Code, initResp.Error.Message)
+		return LiveUpstreamInfo{}, fmt.Errorf("initialize: server error %d: %s", initResp.Error.Code, initResp.Error.Message)
 	}
 	sessID := respHdr.Get(sessionHeader)
 
+	// Extract the server version from the initialize result.
+	var serverVersion string
+	if initResp.Result != nil {
+		var initResult mcpInitResult
+		if json.Unmarshal(initResp.Result, &initResult) == nil {
+			if sv, ok := initResult.ServerInfo["version"].(string); ok {
+				serverVersion = sv
+			}
+		}
+	}
+
 	notif, _ := notificationMsg("notifications/initialized", nil)
 	if _, _, err := liveDoHTTP(ctx, client, endpoint, notif, sessID, authHeader); err != nil {
-		return nil, fmt.Errorf("notifications/initialized: %w", err)
+		return LiveUpstreamInfo{}, fmt.Errorf("notifications/initialized: %w", err)
 	}
 
 	listResp, _, err := liveDoHTTP(ctx, client, endpoint, rpcMsg{
@@ -59,12 +78,16 @@ func fetchLiveTools(ctx context.Context, baseURL, authHeader string, tlsSkipVeri
 		Method:  "tools/list",
 	}, sessID, authHeader)
 	if err != nil {
-		return nil, fmt.Errorf("tools/list: %w", err)
+		return LiveUpstreamInfo{}, fmt.Errorf("tools/list: %w", err)
 	}
 	if listResp.Error != nil {
-		return nil, fmt.Errorf("tools/list: server error %d: %s", listResp.Error.Code, listResp.Error.Message)
+		return LiveUpstreamInfo{}, fmt.Errorf("tools/list: server error %d: %s", listResp.Error.Code, listResp.Error.Message)
 	}
-	return parseToolsListResult(listResp.Result)
+	tools, err := parseToolsListResult(listResp.Result)
+	if err != nil {
+		return LiveUpstreamInfo{}, err
+	}
+	return LiveUpstreamInfo{Tools: tools, ServerVersion: serverVersion}, nil
 }
 
 // liveDoHTTP POSTs msg to endpoint, attaching sessID and authHeader as
