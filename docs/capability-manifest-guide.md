@@ -369,14 +369,33 @@ degrades the security posture.
 | --------------------------------------------- | ---------------------------------------------------- |
 | Validate a manifest file                      | `eunox-mcp validate ./manifest.yaml`                 |
 | Validate multiple manifests at once           | `eunox-mcp validate ./a.yaml ./b.yaml`               |
-| Browse built-in server profiles               | `eunox-mcp profiles`                                 |
-| Show tools for a specific profile             | `eunox-mcp profiles <name>`                          |
 | Start the proxy (manifest-only mode)          | `eunox-mcp proxy --policy manifest.yaml --transport http --upstream-url <url>` |
 | Start the proxy (JWT + manifest intersection) | add `--jwks-uri <url> --jwt-issuer <iss> --jwt-audience eunox` |
+| Start the proxy with drift enforcement        | add `--strict-drift` (aborts session on FM-1/FM-2)   |
 | Verify HMAC signatures in the audit log       | `eunox-mcp validate-token --audit-log audit.jsonl --audit-key-path audit.key` |
 
 Wire `eunox-mcp validate` into your CI pipeline for every manifest PR
 to catch schema errors and over-broad globs before they reach production.
+
+### Startup drift detection
+
+Every time a session is established the proxy fetches `tools/list` from
+the upstream and compares the live tool set against the manifest.
+Findings are structured log lines emitted to stderr:
+
+```
+[eunox-mcp] WARN drift=fm1 tool="delete_all_records" resource="delete_*" — new upstream tool matched by manifest glob; verify this is intentional before deploying
+[eunox-mcp] WARN drift=fm2 resource="query_db" — manifest entry matches no live upstream tool (tool removed or renamed?)
+[eunox-mcp] WARN drift=fm3 resource="read_file" tool="read_file" argument="path" — condition argument not in live inputSchema; condition may not enforce if argument was renamed
+[eunox-mcp] INFO drift=uncovered tool="summarise_text" — not covered by manifest; all calls will be denied
+```
+
+Add `--strict-drift` to abort session establishment (HTTP 500) when FM-1
+or FM-2 drift is detected.  Appropriate for production deployments where
+any policy gap must be resolved before traffic is admitted.
+
+See [`mcp-contract-drift.md`](./mcp-contract-drift.md) for a full
+description of each failure mode and recommended remediation.
 
 ## 9. Where this guide lives in the rest of the docs
 
