@@ -32,11 +32,10 @@ The `defaultTtl` and `audience` fields are parsed and stored but are
 informational in the proxy — JWT expiry is enforced by your IdP, not
 by eunox-mcp. See § 5 for TTL guidance.
 
-## 2. The capability list — the four golden patterns
+## 2. The capability list — the four common patterns
 
-The pilot revealed that 90 % of real manifests fall into one of four
-shapes. Use the closest one and resist the urge to invent new shapes
-unless none of these fits.
+Most manifests fall into one of four shapes. Start from the closest
+one and resist the urge to invent new shapes unless none of these fits.
 
 ### Pattern A — Single-purpose read agent
 
@@ -143,20 +142,21 @@ invocation even though the manifest allows it.
 The wildcard semantics are **segment-aware** (`pkg/enforcement/engine.go::matchesResource`).
 Internalize the table below.
 
-| Pattern                  | Matches                                        | Does **not** match                         |
-| ------------------------ | ---------------------------------------------- | ------------------------------------------ |
-| `api://crm/customers`    | `api://crm/customers` only                     | `api://crm/customers/123`                  |
-| `api://crm/customers/*`  | `api://crm/customers/123`, `.../abc`           | `api://crm/customers`, `.../123/notes`     |
-| `api://crm/customers/**` | `api://crm/customers/123`, `.../123/notes/xyz` | `api://crm/customers`, `api://billing/...` |
-| `storage://docs/team/*`  | `storage://docs/team/file.pdf`                 | `storage://docs/file.pdf`                  |
-| `api://*`                | (rejected by `eunox validate` — too broad)     | —                                          |
+| Pattern                 | Matches                              | Does **not** match                     |
+| ----------------------- | ------------------------------------ | -------------------------------------- |
+| `api://crm/customers`   | `api://crm/customers` only           | `api://crm/customers/123`              |
+| `api://crm/customers/*` | `api://crm/customers/123`, `.../abc` | `api://crm/customers`, `.../123/notes` |
+| `storage://docs/team/*` | `storage://docs/team/file.pdf`       | `storage://docs/file.pdf`              |
+| `api://*`               | (rejected by `eunox validate`)       | —                                      |
 
 Rules:
 
 - **Schemes are equality-checked.** `api://` and `storage://` never
-  cross-match, even if you use `**`.
-- **A trailing `/*` matches one segment.** A trailing `/**` matches
-  one or more segments.
+  cross-match.
+- **`*` matches one segment only.** `api://crm/customers/*` matches
+  `api://crm/customers/123` but not `api://crm/customers/123/notes`.
+  Multi-segment wildcards (`**`) are not supported — `path.Match`
+  semantics are used and treat `**` identically to `*`.
 - **Bare `*` is not allowed.** `eunox-mcp validate` rejects it.
 
 ## 4. Conditions cookbook
@@ -213,7 +213,7 @@ registered in the `ConditionRegistry`).
 literal values or glob patterns:
 
 ```yaml
-- name: read_file
+- resource: read_file
   conditions:
     - type: allowedValues   # restrict the path argument
       argument: path
@@ -224,21 +224,24 @@ The `argument` field names the tool parameter to check; `values` is a list
 of exact strings or `*`-glob patterns (e.g. `/reports/*` matches
 `/reports/q3.pdf`).
 
-**`policy`** — delegates the allow/deny decision to an embedded OPA/Rego
-policy string evaluated at call time:
+**`policy`** — delegates the allow/deny decision to an external policy
+decision point (e.g. OPA, Cedar) registered via `WithPolicyEvaluator`:
 
 ```yaml
-- name: query_db
+- resource: query_db
   conditions:
     - type: policy
-      rego: |
-        default allow = false
-        allow { input.arguments.query != "" }
+      backend: opa          # name passed to your registered PolicyEvaluator
+      config:               # optional backend-specific config
+        query: "data.authz.allow"
+      input:                # optional extra input merged with the request
+        env: production
 ```
 
-The `rego` field is evaluated with `input.arguments` bound to the
-tool's argument map; the policy must define `allow`.  Use this for
-logic that cannot be expressed with the other typed conditions.
+The proxy calls `PolicyEvaluator.Evaluate(ctx, backend, config, input, req)`.
+When no evaluator is wired (the default), any `policy` condition is
+denied fail-closed. Use this for logic that cannot be expressed with
+the other typed conditions.
 
 > If a condition you need is not in the union, **add a new typed
 > shape to `pkg/capability/condition.go` first**, register its
@@ -264,10 +267,10 @@ and available for your tooling to read; the proxy does not enforce it.
 Configure short TTLs in your IdP client settings; request a fresh
 token per task rather than re-using a long-lived one.
 
-## 6. Anti-patterns we caught during the pilot
+## 6. Anti-patterns to avoid
 
-These all _worked_ (token issued, proxy happy) but each one degrades
-the security posture and triggered tuning churn during hypercare.
+These all _work_ (token issued, proxy happy) but each one silently
+degrades the security posture.
 
 1. **Manifest copied between agents** with `name` not changed.
    Audit logs lose attribution clarity. Use a unique manifest `name` per logical
