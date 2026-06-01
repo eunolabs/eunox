@@ -215,9 +215,33 @@ func (e *Engine) handleAllowedOperations(_ context.Context, cond capability.Cond
 		}
 	}
 
-	operation := req.Context.Operation
-	if operation == "" {
-		operation = req.ToolName
+	var operation string
+	if ao.Argument != "" {
+		// Named-argument mode: the manifest author told us exactly which
+		// tool parameter carries the operation string. Extract the first
+		// whitespace-separated word as the SQL/operation verb.
+		if v, ok := req.Arguments[ao.Argument]; ok {
+			if s, ok := v.(string); ok {
+				if parts := strings.Fields(s); len(parts) > 0 {
+					operation = strings.ToUpper(parts[0])
+				}
+			}
+		}
+		if operation == "" {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeAllowedOperations,
+				Message:       fmt.Sprintf("argument %q is missing or empty", ao.Argument),
+				Details:       map[string]interface{}{"argument": ao.Argument},
+			}
+		}
+	} else {
+		// Heuristic fallback: use the operation extracted by the PDP from
+		// well-known argument names ("sql", "query", "statement").
+		operation = req.Context.Operation
+		if operation == "" {
+			operation = req.ToolName
+		}
 	}
 
 	for _, allowed := range ao.Operations {
@@ -247,22 +271,39 @@ func (e *Engine) handleAllowedExtensions(_ context.Context, cond capability.Cond
 		}
 	}
 
-	filePath := req.Context.FilePath
-	if filePath == "" {
-		// If no file path in context, check arguments
-		if fp, ok := req.Arguments["filePath"]; ok {
-			if s, ok := fp.(string); ok {
-				filePath = s
+	var filePath string
+	if ae.Argument != "" {
+		// Named-argument mode: read the file path directly from the named argument.
+		if v, ok := req.Arguments[ae.Argument]; ok {
+			if s, ok := v.(string); ok {
+				filePath = strings.TrimSpace(s)
 			}
 		}
-	}
-
-	if filePath == "" {
-		// filePath is required: deny rather than silently skipping the check.
-		return &ConditionError{
-			Code:          capability.ErrCodeMissingContext,
-			ConditionType: capability.ConditionTypeAllowedExtensions,
-			Message:       "filePath is required for allowedExtensions condition",
+		if filePath == "" {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeAllowedExtensions,
+				Message:       fmt.Sprintf("argument %q is missing or empty", ae.Argument),
+				Details:       map[string]interface{}{"argument": ae.Argument},
+			}
+		}
+	} else {
+		// Heuristic fallback: use the file path extracted by the PDP from
+		// well-known argument names ("filePath", "path", "file", "filename").
+		filePath = req.Context.FilePath
+		if filePath == "" {
+			if fp, ok := req.Arguments["filePath"]; ok {
+				if s, ok := fp.(string); ok {
+					filePath = s
+				}
+			}
+		}
+		if filePath == "" {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeAllowedExtensions,
+				Message:       "filePath is required for allowedExtensions condition",
+			}
 		}
 	}
 
@@ -311,12 +352,43 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 		}
 	}
 
-	if len(req.Context.Tables) == 0 {
-		// tables is required: deny rather than silently skipping the check.
-		return &ConditionError{
-			Code:          capability.ErrCodeMissingContext,
-			ConditionType: capability.ConditionTypeAllowedTables,
-			Message:       "tables is required for allowedTables condition",
+	// Resolve the table access list from either the named argument or the
+	// pre-extracted context (heuristic fallback).
+	var tables []capability.TableAccess
+	if at.Argument != "" {
+		// Named-argument mode: read the table name(s) directly from the argument.
+		if v, ok := req.Arguments[at.Argument]; ok {
+			switch t := v.(type) {
+			case string:
+				if s := strings.TrimSpace(t); s != "" {
+					tables = []capability.TableAccess{{Table: s}}
+				}
+			case []interface{}:
+				for _, item := range t {
+					if s, ok := item.(string); ok {
+						if s = strings.TrimSpace(s); s != "" {
+							tables = append(tables, capability.TableAccess{Table: s})
+						}
+					}
+				}
+			}
+		}
+		if len(tables) == 0 {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeAllowedTables,
+				Message:       fmt.Sprintf("argument %q is missing or empty", at.Argument),
+				Details:       map[string]interface{}{"argument": at.Argument},
+			}
+		}
+	} else {
+		tables = req.Context.Tables
+		if len(tables) == 0 {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeAllowedTables,
+				Message:       "tables is required for allowedTables condition",
+			}
 		}
 	}
 
@@ -325,7 +397,7 @@ func (e *Engine) handleAllowedTables(_ context.Context, cond capability.Conditio
 		allowedTableSet[t] = true
 	}
 
-	for _, access := range req.Context.Tables {
+	for _, access := range tables {
 		if !allowedTableSet[access.Table] {
 			return &ConditionError{
 				Code:          capability.ErrCodeConditionFailed,
@@ -393,12 +465,43 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 		}
 	}
 
-	if len(req.Context.Recipients) == 0 {
-		// recipients is required: deny rather than silently skipping the check.
-		return &ConditionError{
-			Code:          capability.ErrCodeMissingContext,
-			ConditionType: capability.ConditionTypeRecipientDomain,
-			Message:       "recipients is required for recipientDomain condition",
+	// Resolve recipients from either the named argument or the pre-extracted
+	// context (heuristic fallback).
+	var recipients []string
+	if rd.Argument != "" {
+		// Named-argument mode: read the recipient(s) directly from the argument.
+		if v, ok := req.Arguments[rd.Argument]; ok {
+			switch t := v.(type) {
+			case string:
+				if s := strings.TrimSpace(t); s != "" {
+					recipients = []string{s}
+				}
+			case []interface{}:
+				for _, item := range t {
+					if s, ok := item.(string); ok {
+						if s = strings.TrimSpace(s); s != "" {
+							recipients = append(recipients, s)
+						}
+					}
+				}
+			}
+		}
+		if len(recipients) == 0 {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeRecipientDomain,
+				Message:       fmt.Sprintf("argument %q is missing or empty", rd.Argument),
+				Details:       map[string]interface{}{"argument": rd.Argument},
+			}
+		}
+	} else {
+		recipients = req.Context.Recipients
+		if len(recipients) == 0 {
+			return &ConditionError{
+				Code:          capability.ErrCodeMissingContext,
+				ConditionType: capability.ConditionTypeRecipientDomain,
+				Message:       "recipients is required for recipientDomain condition",
+			}
 		}
 	}
 
@@ -407,7 +510,7 @@ func (e *Engine) handleRecipientDomain(_ context.Context, cond capability.Condit
 		domainSet[strings.ToLower(d)] = true
 	}
 
-	for _, recipient := range req.Context.Recipients {
+	for _, recipient := range recipients {
 		parts := strings.SplitN(recipient, "@", 2)
 		if len(parts) != 2 {
 			return &ConditionError{
