@@ -59,6 +59,8 @@ type StdioProxy struct {
 	shutdownMs     int
 	upstreamTimeMs int  // 0 = no timeout
 	dryRun         bool // evaluate policies but never block
+	manifest       *LocalManifest
+	strictDrift    bool
 
 	// runtime (set in Start)
 	upCmd    *exec.Cmd
@@ -91,6 +93,10 @@ type StdioProxyOptions struct {
 	ShutdownMs     int
 	UpstreamTimeMs int
 	DryRun         bool // evaluate policies but never block tool calls
+
+	// Drift detection options. Manifest is required for drift checks to run.
+	Manifest    *LocalManifest // capability manifest used for drift detection
+	StrictDrift bool           // abort if FM-1 or FM-2 drift is detected
 }
 
 // NewStdioProxy creates a StdioProxy ready to call Start.
@@ -110,6 +116,8 @@ func NewStdioProxy(opts StdioProxyOptions) *StdioProxy {
 		shutdownMs:     opts.ShutdownMs,
 		upstreamTimeMs: opts.UpstreamTimeMs,
 		dryRun:         opts.DryRun,
+		manifest:       opts.Manifest,
+		strictDrift:    opts.StrictDrift,
 		pending:        make(map[string]chan rpcMsg),
 		hostReader:     newMsgReader(os.Stdin),
 		hostWriter:     newMsgWriter(os.Stdout),
@@ -146,14 +154,22 @@ func (p *StdioProxy) Start(ctx context.Context) error {
 		return fmt.Errorf("upstream initialize: %w", err)
 	}
 
-	// ── 3. Read upstream messages in background ────────────────────────────────
+	// ── 3. Drift check (before readUpstream so we own upReader exclusively) ──────
+	if p.manifest != nil {
+		if err := runStdioDriftCheck(p, p.manifest, p.strictDrift); err != nil {
+			_ = p.upCmd.Process.Kill()
+			return err
+		}
+	}
+
+	// ── 4. Read upstream messages in background ────────────────────────────────
 	upstreamDone := make(chan struct{})
 	go func() {
 		defer close(upstreamDone)
 		p.readUpstream()
 	}()
 
-	// ── 4. Install signal handler → SIGINT/SIGTERM forwarded to upstream ───────
+	// ── 5. Install signal handler → SIGINT/SIGTERM forwarded to upstream ───────
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

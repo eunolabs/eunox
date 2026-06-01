@@ -412,12 +412,12 @@ func parseCapabilityClaim(claim string) (tool, cond string) {
 // Claim condition syntax:
 //
 //   - No condition             → plain allow (no conditions)
-//   - "VERB"                   → AllowedOperationsCondition, scans all string args
-//     (e.g. "SELECT" allows query_db only when a string arg starts with SELECT)
-//   - "VERB:argname"           → AllowedOperationsCondition on the named argument
+//   - "VERB:argname"           → AllowedOperationsCondition on argument argname
 //     (e.g. "SELECT:query" checks the "query" argument for the SELECT verb)
 //   - "/path/glob"             → AllowedValuesCondition on argument "path"
 //   - "argname=value"          → AllowedValuesCondition on the named argument
+//
+// The argument name is always explicit — there is no heuristic guessing.
 func buildConstraint(toolName, cond string) capability.Constraint {
 	c := capability.Constraint{
 		Resource: toolName,
@@ -442,17 +442,6 @@ func buildConstraint(toolName, cond string) capability.Constraint {
 		}
 	}
 
-	// Bare SQL verb — AllowedOperationsCondition with empty argument (scan-all-args mode).
-	if isSQLVerb(cond) {
-		c.Conditions = []capability.Condition{
-			capability.AllowedOperationsCondition{
-				Argument:   "",
-				Operations: []string{cond},
-			},
-		}
-		return c
-	}
-
 	// "argname=value" — AllowedValuesCondition on a named argument.
 	if idx := strings.IndexByte(cond, '='); idx > 0 {
 		arg := cond[:idx]
@@ -463,7 +452,7 @@ func buildConstraint(toolName, cond string) capability.Constraint {
 		return c
 	}
 
-	// Bare path glob (shorthand): defaults to argument="path".
+	// Bare path glob (legacy shorthand): defaults to argument="path".
 	c.Conditions = []capability.Condition{
 		capability.AllowedValuesCondition{Argument: "path", Values: []interface{}{cond}},
 	}
@@ -487,38 +476,23 @@ func evaluateJWTConditions(conditions []capability.Condition, toolName string, a
 	for _, cond := range conditions {
 		switch c := cond.(type) {
 		case capability.AllowedOperationsCondition:
+			if c.Argument == "" {
+				resp := denyResponse(capability.ErrCodeConditionFailed, capability.ConditionTypeAllowedOperations,
+					"allowedOperations condition requires an explicit 'argument' field")
+				return &resp
+			}
 			var op string
-			if c.Argument != "" {
-				if v, ok := args[c.Argument]; ok {
-					if s, ok := v.(string); ok {
-						if parts := strings.Fields(s); len(parts) > 0 {
-							op = strings.ToUpper(parts[0])
-						}
+			if v, ok := args[c.Argument]; ok {
+				if s, ok := v.(string); ok {
+					if parts := strings.Fields(s); len(parts) > 0 {
+						op = strings.ToUpper(parts[0])
 					}
 				}
-				if op == "" {
-					resp := denyResponse(capability.ErrCodeMissingContext, capability.ConditionTypeAllowedOperations,
-						fmt.Sprintf("tool %q: argument %q is missing or empty", toolName, c.Argument))
-					return &resp
-				}
-			} else {
-				// Bare-verb mode (no argument name in claim): scan all string args for a SQL verb.
-				for _, v := range args {
-					if s, ok := v.(string); ok {
-						if parts := strings.Fields(s); len(parts) > 0 {
-							word := strings.ToUpper(parts[0])
-							if isSQLVerb(word) {
-								op = word
-								break
-							}
-						}
-					}
-				}
-				if op == "" {
-					resp := denyResponse(capability.ErrCodeMissingContext, capability.ConditionTypeAllowedOperations,
-						fmt.Sprintf("tool %q: no SQL operation found in arguments", toolName))
-					return &resp
-				}
+			}
+			if op == "" {
+				resp := denyResponse(capability.ErrCodeMissingContext, capability.ConditionTypeAllowedOperations,
+					fmt.Sprintf("tool %q: argument %q is missing or empty", toolName, c.Argument))
+				return &resp
 			}
 			if !containsStringFold(c.Operations, op) {
 				resp := denyResponse("OPERATION_NOT_PERMITTED", capability.ConditionTypeAllowedOperations,
@@ -552,7 +526,6 @@ func matchesAllowedValues(val string, values []interface{}) bool {
 	}
 	return false
 }
-
 
 // containsStringFold reports whether ss contains s using case-insensitive comparison.
 func containsStringFold(ss []string, s string) bool {

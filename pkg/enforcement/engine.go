@@ -333,8 +333,6 @@ func ValidateResourcePattern(resource string) error {
 // "read", "write", "delete", "execute", "admin" — is not recognised and
 // causes the constraint to be skipped, consistent with the deny-by-default
 // allowlist semantics.
-//
-// Returns (0, true) when the call is permitted, (0, false) otherwise.
 func actionMatchScore(actions []string, _ *capability.EnforceRequest) bool {
 	if len(actions) == 0 {
 		return true

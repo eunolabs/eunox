@@ -154,6 +154,9 @@ Flags:
 	// Dry-run flag.
 	dryRun := fs.Bool("dry-run", false, "Evaluate policies but do not block tool calls.\nDenials are logged to the audit trail with dry_run=true but the request is forwarded.\nUse for observation mode before production enforcement.")
 
+	// Drift detection flag.
+	strictDrift := fs.Bool("strict-drift", false, "Abort session startup when FM-1 (new glob-matched tool) or FM-2 (dead manifest entry) drift is detected.\nRequires --policy. Without this flag, drift findings are logged as warnings but sessions proceed.")
+
 	// Redis flags (optional — in-memory is used when absent).
 	redisAddr := fs.String("redis-addr", "", "Redis address (host:port) for persistent call-counter and kill-switch state.\nWhen set, state survives proxy restarts and is shared across instances.\nExample: --redis-addr localhost:6379")
 	redisPassword := fs.String("redis-password", "", "Redis password (AUTH). Leave empty for unauthenticated connections.")
@@ -270,6 +273,7 @@ Flags:
 
 	// Load manifest(s).
 	var pdp PolicyDecisionPoint
+	var mergedManifest *LocalManifest
 	if len(*policyFiles) > 0 {
 		manifests := make([]*LocalManifest, 0, len(*policyFiles))
 		for _, p := range *policyFiles {
@@ -280,10 +284,15 @@ Flags:
 			}
 			manifests = append(manifests, m)
 		}
-		merged := MergeManifests(manifests)
+		mergedManifest = MergeManifests(manifests)
 
 		engine := enforcement.New(enforcement.WithCallCounter(counter))
-		pdp = NewManifestPDP(merged, engine, ks)
+		pdp = NewManifestPDP(mergedManifest, engine, ks)
+	}
+
+	if *strictDrift && mergedManifest == nil {
+		fmt.Fprintf(os.Stderr, "eunox-mcp proxy: --strict-drift requires --policy\n")
+		os.Exit(1)
 	}
 
 	// Open audit sink.
@@ -333,6 +342,8 @@ Flags:
 			ShutdownMs:     *shutdownTimeout,
 			UpstreamTimeMs: *upstreamTimeout,
 			DryRun:         *dryRun,
+			Manifest:       mergedManifest,
+			StrictDrift:    *strictDrift,
 		})
 		if err := proxy.Start(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
@@ -384,6 +395,8 @@ Flags:
 			UpstreamAuthHeader:    *upstreamAuthHeader,
 			UpstreamTLSSkipVerify: *upstreamTLSSkipVerify,
 			DryRun:                *dryRun,
+			Manifest:              mergedManifest,
+			StrictDrift:           *strictDrift,
 		})
 		if err := proxy.Serve(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[eunox-mcp] Fatal: %v\n", err)
