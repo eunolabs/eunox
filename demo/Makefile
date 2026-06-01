@@ -36,6 +36,7 @@ up-jwt:
 	@mkdir -p "$(DEMO_DIR)audit"
 	@chmod 777 "$(DEMO_DIR)audit"
 	docker compose \
+	  --profile jwt \
 	  -f "$(DEMO_DIR)docker-compose.yml" \
 	  -f "$(DEMO_DIR)docker-compose.jwt.yml" \
 	  up --build -d
@@ -122,11 +123,12 @@ logs:
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## ci-test: Run manifest-only integration tests in CI (starts stack, tests, tears down).
+## Keycloak is excluded entirely via the "jwt" profile — its image is never pulled.
 ci-test:
 	@mkdir -p "$(DEMO_DIR)audit" && chmod 777 "$(DEMO_DIR)audit"
-	@echo "==> Starting manifest-only stack for CI tests (Keycloak skipped) ..."
+	@echo "==> Starting manifest-only stack for CI tests (Keycloak excluded by profile) ..."
 	@docker compose -f "$(DEMO_DIR)docker-compose.yml" \
-	  up --build --force-recreate -d --wait --scale keycloak=0 \
+	  up --build --force-recreate -d --wait \
 	  && bash "$(DEMO_DIR)scripts/ci-test.sh"; STATUS=$$?; \
 	  docker compose -f "$(DEMO_DIR)docker-compose.yml" down --remove-orphans; \
 	  exit $$STATUS
@@ -136,11 +138,13 @@ ci-test-jwt:
 	@mkdir -p "$(DEMO_DIR)audit" && chmod 777 "$(DEMO_DIR)audit"
 	@echo "==> Starting JWT-mode stack for CI tests (Keycloak + eunox-mcp) ..."
 	@docker compose \
+	  --profile jwt \
 	  -f "$(DEMO_DIR)docker-compose.yml" \
 	  -f "$(DEMO_DIR)docker-compose.jwt.yml" \
 	  up --build --force-recreate -d --wait \
 	  && bash "$(DEMO_DIR)scripts/ci-test-jwt.sh"; STATUS=$$?; \
 	  docker compose \
+	    --profile jwt \
 	    -f "$(DEMO_DIR)docker-compose.yml" \
 	    -f "$(DEMO_DIR)docker-compose.jwt.yml" \
 	    down --remove-orphans; \

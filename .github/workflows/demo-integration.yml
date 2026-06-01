@@ -103,7 +103,9 @@ jobs:
 
       - name: Run manifest-only integration tests
         run: make -C demo ci-test
-        # Starts mock-mcp-server + eunox-mcp (Keycloak skipped via --scale 0).
+        # Starts mock-mcp-server + eunox-mcp.
+        # Keycloak is excluded entirely (profiles: ["jwt"]) so its image is
+        # never pulled and quay.io availability cannot affect this job.
         # CI=true is set by GitHub Actions; color output is suppressed.
 
       - name: Dump container logs on failure
@@ -135,9 +137,17 @@ jobs:
           docker compose version
           jq --version
 
+      - name: Pre-pull Keycloak image (retry on quay.io transient failures)
+        run: |
+          for i in 1 2 3; do
+            docker pull quay.io/keycloak/keycloak:26.0 && break
+            echo "Pull attempt $i failed. Retrying in 20s..."
+            sleep 20
+          done
+
       - name: Run JWT-mode integration tests
         run: make -C demo ci-test-jwt
-        # Starts mock-mcp-server + Keycloak + eunox-mcp (JWT overlay).
+        # Starts mock-mcp-server + Keycloak (--profile jwt) + eunox-mcp (JWT overlay).
         # --wait blocks until Keycloak's healthcheck passes before running tests.
 
       - name: Dump container logs on failure
