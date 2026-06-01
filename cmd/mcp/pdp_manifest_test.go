@@ -145,6 +145,7 @@ func TestManifestPDP_MultipleCapabilities(t *testing.T) {
 			Actions:  []string{"call"},
 			Conditions: []capability.Condition{
 				&capability.AllowedOperationsCondition{
+					Argument:   "query", // the argument that carries the SQL string
 					Operations: []string{"SELECT"},
 				},
 			},
