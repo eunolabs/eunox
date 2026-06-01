@@ -44,38 +44,40 @@ tool names. `resource: "get_*"` matches any tool whose name starts with
 `get_`; `resource: read_file` matches only the tool named `read_file`
 exactly.
 
-**Actions** — two modes.
+**Actions** — use `[call]`.
 
 Once a matching capability is found, the proxy checks whether the call
-is permitted by the `actions` list. There are two modes:
+is permitted by the `actions` list.
 
-| Mode | `actions` value | How it works |
-|---|---|---|
-| Generic | `[call]` or `[*]` | Permits any `tools/call` for the matched resource. This is the safe default and what the demo uses. |
-| Semantic | `[read]`, `[write]`, `[delete]`, `[execute]`, `[admin]` | The tool name is classified into a category by the resolver chain (see below). The call is permitted only if the resolved category appears in the list. |
+```yaml
+actions: [call]   # ← use this
+```
 
-**Semantic action resolver chain** (evaluated in order):
+`[call]` permits any `tools/call` for the matched resource, regardless
+of tool name. It is explicit, deterministic, and what all the examples
+in this guide use.
 
-1. **Static resolver** — an explicit `tool_name → category` map
-   supplied via a profile (`eunox-mcp profiles`) or a custom action-map
-   file. Exact lookups, O(1).
-2. **HeuristicResolver** — infers the category from the tool name
-   prefix when no static entry exists:
+**Avoid semantic action categories (`[read]`, `[write]`, …).**
 
-   | Category | Matched prefixes |
-   |---|---|
-   | `read` | `get_`, `list_`, `search_`, `read_`, `describe_`, `fetch_`, `show_`, `find_`, `query_`, `view_`, `check_`, `inspect_`, `peek_`, `stat_`, `open_` |
-   | `write` | `create_`, `update_`, `write_`, `set_`, `put_`, `post_`, `send_`, `add_`, `insert_`, `upsert_`, `patch_`, `edit_`, `modify_`, `push_`, `upload_`, `save_`, `append_`, `publish_`, `fork_`, `merge_` |
-   | `delete` | `delete_`, `remove_`, `drop_`, `purge_`, `destroy_`, `archive_`, `close_`, `clear_` |
-   | `execute` | `run_`, `execute_`, `launch_`, `start_`, `stop_`, `restart_`, `invoke_`, `trigger_`, `apply_`, `deploy_`, `install_`, `eval_` |
-   | `admin` | `admin_`, `grant_`, `revoke_`, `promote_`, `demote_`, `approve_`, `reject_` |
+The proxy also supports semantic action categories that are matched by
+classifying the tool name using a prefix heuristic (`get_*` → read,
+`create_*` → write, etc.). This sounds convenient but has the same
+failure mode as over-broad resource globs: a new tool added to the
+server that happens to match a prefix is silently permitted without
+any operator review. For example:
 
-3. **Fallback** — if neither resolver classifies the tool and `actions`
-   does not include `call` or `*`, the call is denied.
+```yaml
+# FRAGILE: any new tool whose name starts with "get_" is permitted,
+# including a future "get_admin_credentials" tool you never reviewed.
+- resource: "get_*"
+  actions: [read]   # ← heuristic; avoid
+```
 
-> **Practical advice:** use `actions: [call]` unless you have a specific
-> reason to restrict by semantic category. It is clear, always works,
-> and does not depend on tool naming conventions.
+If you genuinely need to restrict a group of tools to a specific verb
+category, use a **static action map** (an explicit `tool → category`
+file loaded via `--action-map`) rather than relying on the name-prefix
+heuristic. The heuristic is documented in `cmd/mcp/resolver.go` for
+reference; do not rely on it in production policy.
 
 ## 3. The capability list — four common patterns
 
