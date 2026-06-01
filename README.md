@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <em>eunox is named after <strong>Eunomia</strong> — the Greek goddess of compliance, good order, and lawful governance.</em>
+</p>
+
+<p align="center">
   <a href="https://github.com/eunolabs/eunox/blob/main/cmd/mcp/LICENSE"><img alt="eunox-mcp: Apache-2.0" src="https://img.shields.io/badge/eunox--mcp-Apache--2.0-green.svg"></a>
   <a href="https://go.dev/"><img alt="Go 1.25+" src="https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8"></a>
   <a href="https://spec.modelcontextprotocol.io/"><img alt="MCP" src="https://img.shields.io/badge/MCP-supported-7c3aed"></a>
