@@ -527,14 +527,6 @@ func matchesAllowedValues(val string, values []interface{}) bool {
 	return false
 }
 
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
 
 // containsStringFold reports whether ss contains s using case-insensitive comparison.
 func containsStringFold(ss []string, s string) bool {
