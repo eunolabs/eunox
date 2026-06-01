@@ -1964,3 +1964,281 @@ func TestEngine_Policy_WithEvaluator_Allow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, capability.DecisionAllow, resp.Decision)
 }
+
+// ── Named-argument mode tests ───────────────────────────────────────────────
+//
+// Each condition type that previously relied on hardcoded heuristic argument
+// name extraction now supports an explicit "argument" field.  The tests below
+// verify that specifying the argument name takes precedence over the heuristic
+// and works for non-standard argument names.
+
+func TestEngine_AllowedOperations_NamedArgument_Allow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	// Tool uses "command" instead of "sql"/"query"/"statement".
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "run_db",
+		Arguments: map[string]interface{}{"command": "SELECT * FROM orders"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "run_db",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedOperationsCondition{
+				Argument:   "command",
+				Operations: []string{"SELECT"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedOperations_NamedArgument_Deny(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "run_db",
+		Arguments: map[string]interface{}{"command": "DROP TABLE orders"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "run_db",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedOperationsCondition{
+				Argument:   "command",
+				Operations: []string{"SELECT"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	assert.Equal(t, capability.ConditionTypeAllowedOperations, resp.Denial.ConditionType)
+}
+
+func TestEngine_AllowedOperations_NamedArgument_Missing(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "run_db",
+		Arguments: map[string]interface{}{"other": "value"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "run_db",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedOperationsCondition{
+				Argument:   "command",
+				Operations: []string{"SELECT"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+	assert.Equal(t, capability.ErrCodeMissingContext, resp.Denial.Code)
+}
+
+func TestEngine_AllowedExtensions_NamedArgument_Allow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "upload",
+		Arguments: map[string]interface{}{"filename": "/data/report.csv"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "upload",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedExtensionsCondition{
+				Argument:   "filename",
+				Extensions: []string{".csv", ".json"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedExtensions_NamedArgument_Deny(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "upload",
+		Arguments: map[string]interface{}{"filename": "/data/malware.exe"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "upload",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedExtensionsCondition{
+				Argument:   "filename",
+				Extensions: []string{".csv", ".json"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+func TestEngine_AllowedTables_NamedArgument_Allow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "query",
+		Arguments: map[string]interface{}{"target_table": "orders"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "query",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedTablesCondition{
+				Argument: "target_table",
+				Tables:   []string{"orders", "customers"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_AllowedTables_NamedArgument_Deny(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "query",
+		Arguments: map[string]interface{}{"target_table": "salaries"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "query",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedTablesCondition{
+				Argument: "target_table",
+				Tables:   []string{"orders", "customers"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+func TestEngine_AllowedTables_NamedArgument_ArrayAllow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "query",
+		Arguments: map[string]interface{}{
+			"target_table": []interface{}{"orders", "customers"},
+		},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "query",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.AllowedTablesCondition{
+				Argument: "target_table",
+				Tables:   []string{"orders", "customers", "products"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_RecipientDomain_NamedArgument_Allow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "send_notification",
+		Arguments: map[string]interface{}{"dest_email": "alice@example.com"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "send_notification",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.RecipientDomainCondition{
+				Argument: "dest_email",
+				Domains:  []string{"example.com"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
+
+func TestEngine_RecipientDomain_NamedArgument_Deny(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "send_notification",
+		Arguments: map[string]interface{}{"dest_email": "attacker@evil.com"},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "send_notification",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.RecipientDomainCondition{
+				Argument: "dest_email",
+				Domains:  []string{"example.com"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionDeny, resp.Decision)
+}
+
+func TestEngine_RecipientDomain_NamedArgument_ArrayAllow(t *testing.T) {
+	t.Parallel()
+	engine := enforcement.New()
+	ctx := context.Background()
+
+	req := capability.EnforceRequest{
+		SessionID: "sess",
+		ToolName:  "send_notification",
+		Arguments: map[string]interface{}{
+			"dest_email": []interface{}{"alice@example.com", "bob@example.com"},
+		},
+	}
+	resp, err := engine.ValidateAction(ctx, &req, []capability.Constraint{{
+		Resource: "send_notification",
+		Actions:  []string{"*"},
+		Conditions: []capability.Condition{
+			&capability.RecipientDomainCondition{
+				Argument: "dest_email",
+				Domains:  []string{"example.com"},
+			},
+		},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, capability.DecisionAllow, resp.Decision)
+}
