@@ -43,19 +43,19 @@ MCP host → eunox-mcp proxy → MCP server (subprocess or remote HTTP)
 
 The proxy supports two transports:
 
-| Transport | How the upstream MCP server is reached                                                |
-| --------- | ------------------------------------------------------------------------------------- |
-| `stdio`   | Upstream is a local subprocess; proxy bridges stdin/stdout                            |
+| Transport | How the upstream MCP server is reached                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------ |
+| `stdio`   | Upstream is a local subprocess; proxy bridges stdin/stdout                                                   |
 | `http`    | Upstream is the proxy's HTTP listener; upstream is a subprocess (default) or a remote URL (`--upstream-url`) |
 
 Three policy sources can be combined:
 
-| Mode                         | How it is activated                          | What it enforces                               |
-| ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
-| No policy (pass-through)     | Neither `--policy` nor `--jwks-uri` supplied | All tool calls forwarded without enforcement   |
-| Manifest PDP                 | `--policy manifest.yaml`                     | Constraint file on disk                        |
-| JWT PDP                      | `--jwks-uri` + optional `--jwt-issuer` / `--jwt-audience` | IdP-issued capability claims in bearer token |
-| Manifest + JWT (intersection) | Both flags set                              | JWT can only narrow what the manifest permits  |
+| Mode                          | How it is activated                                       | What it enforces                              |
+| ----------------------------- | --------------------------------------------------------- | --------------------------------------------- |
+| No policy (pass-through)      | Neither `--policy` nor `--jwks-uri` supplied              | All tool calls forwarded without enforcement  |
+| Manifest PDP                  | `--policy manifest.yaml`                                  | Constraint file on disk                       |
+| JWT PDP                       | `--jwks-uri` + optional `--jwt-issuer` / `--jwt-audience` | IdP-issued capability claims in bearer token  |
+| Manifest + JWT (intersection) | Both flags set                                            | JWT can only narrow what the manifest permits |
 
 ---
 
@@ -63,12 +63,12 @@ Three policy sources can be combined:
 
 ### 2.1 What the proxy trusts after verification
 
-| Item                                       | How trust is established                                                                        |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| JWT capability claims (`mcp.capabilities`, `mcp.task_id`, `mcp.agent_id`) | JWT signature verified against the JWKS endpoint; `exp`, `iss`, `aud` validated |
-| Manifest policy file contents              | Loaded at startup from a local path the operator controls; not re-fetched at runtime            |
-| Kill-switch state (in-memory or Redis)     | Checked on every `Decide()` call before capability evaluation                                  |
-| Call counter state (in-memory or Redis)    | Checked on every `Decide()` call; enforces `maxCalls` conditions                               |
+| Item                                                                      | How trust is established                                                             |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| JWT capability claims (`mcp.capabilities`, `mcp.task_id`, `mcp.agent_id`) | JWT signature verified against the JWKS endpoint; `exp`, `iss`, `aud` validated      |
+| Manifest policy file contents                                             | Loaded at startup from a local path the operator controls; not re-fetched at runtime |
+| Kill-switch state (in-memory or Redis)                                    | Checked on every `Decide()` call before capability evaluation                        |
+| Call counter state (in-memory or Redis)                                   | Checked on every `Decide()` call; enforces `maxCalls` conditions                     |
 
 ### 2.2 What the proxy verifies on every request
 
@@ -94,14 +94,14 @@ When both `--jwks-uri` and `--policy` are set, a call must pass **both** checks.
 
 ### 2.3 What the proxy explicitly does not verify
 
-| Item                                  | Why                                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Content of LLM prompts or completions | The proxy operates at the tool-call protocol layer, not the inference layer                      |
-| Reason the agent decided to call a tool | Intent is opaque; the proxy enforces *what* is called, not *why*                               |
-| Integrity of the MCP server's response | The proxy forwards upstream responses verbatim (except `RedactFields` obligations)              |
-| Integrity of the agent process        | Host OS/container responsibility; the proxy cannot attest client-side code                      |
-| Content of tool call arguments (semantically) | The proxy validates argument *shape* (schema) and specific *values* (allowedValues), not meaning |
-| IdP infrastructure security           | The proxy trusts JWTs that pass signature verification; IdP compromise is out of scope          |
+| Item                                          | Why                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Content of LLM prompts or completions         | The proxy operates at the tool-call protocol layer, not the inference layer                      |
+| Reason the agent decided to call a tool       | Intent is opaque; the proxy enforces _what_ is called, not _why_                                 |
+| Integrity of the MCP server's response        | The proxy forwards upstream responses verbatim (except `RedactFields` obligations)               |
+| Integrity of the agent process                | Host OS/container responsibility; the proxy cannot attest client-side code                       |
+| Content of tool call arguments (semantically) | The proxy validates argument _shape_ (schema) and specific _values_ (allowedValues), not meaning |
+| IdP infrastructure security                   | The proxy trusts JWTs that pass signature verification; IdP compromise is out of scope           |
 
 ### 2.4 Trust boundary diagram
 
@@ -166,13 +166,13 @@ Any modification to the JWT payload invalidates the signature, and the modified 
 
 **Mitigation (condition types):** Several built-in condition types enforce argument-level restrictions directly:
 
-| Condition            | What it restricts                                         |
-| -------------------- | --------------------------------------------------------- |
-| `allowedValues`      | Argument value must match one of the allowed strings or globs (e.g., `path` must match `/reports/*`) |
-| `allowedOperations`  | SQL verb in `sql`/`query`/`statement` argument must be in the permitted set (`SELECT`, not `DROP`) |
-| `allowedTables`      | Table names referenced in the call must be in the permitted set |
-| `allowedExtensions`  | File extension of the `path` argument must be in the permitted set |
-| `recipientDomain`    | Email recipients must belong to the permitted domain      |
+| Condition           | What it restricts                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `allowedValues`     | Argument value must match one of the allowed strings or globs (e.g., `path` must match `/reports/*`) |
+| `allowedOperations` | SQL verb in `sql`/`query`/`statement` argument must be in the permitted set (`SELECT`, not `DROP`)   |
+| `allowedTables`     | Table names referenced in the call must be in the permitted set                                      |
+| `allowedExtensions` | File extension of the `path` argument must be in the permitted set                                   |
+| `recipientDomain`   | Email recipients must belong to the permitted domain                                                 |
 
 **Mitigation (JWT condition shorthands):** In JWT PDP mode, capability claim shorthands enforce argument-level restrictions inline: `"read_file:/reports/*"` restricts the `path` argument to the glob `/reports/*`; `"query_db:SELECT"` restricts the SQL operation.
 
@@ -244,7 +244,7 @@ These attack classes are outside the proxy's enforcement boundary. This is not a
 
 **What it is:** Malicious instructions embedded in data the LLM reads (documents, API responses, database records) cause the agent to issue tool calls that the legitimate user did not intend.
 
-**Why it is out of scope:** The proxy enforces *what the agent is permitted to call*, not *why the agent decided to call it*. A prompt-injected call to `read_file("/reports/Q4.pdf")` is indistinguishable from a legitimate one at the JSON-RPC layer, and will be allowed if the capability token permits it.
+**Why it is out of scope:** The proxy enforces _what the agent is permitted to call_, not _why the agent decided to call it_. A prompt-injected call to `read_file("/reports/Q4.pdf")` is indistinguishable from a legitimate one at the JSON-RPC layer, and will be allowed if the capability token permits it.
 
 **What the proxy does reduce (but does not eliminate):** By scoping capabilities to specific resources and argument patterns, the proxy limits the blast radius of a successful injection. An injected agent cannot exfiltrate data from resources outside its `mcp.capabilities` scope, and cannot call tools not listed in its manifest constraints.
 
@@ -318,12 +318,12 @@ The proxy defaults to **fail-closed**: when a dependency required for a security
 
 When Redis is configured, it backs two enforcement functions:
 
-| Function           | Redis unavailable behavior                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Function           | Redis unavailable behavior                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `MaxCalls` counter | The enforcement engine returns an error for `MaxCalls` conditions; the PDP denies the call with `ENFORCEMENT_ERROR` |
-| Kill-switch state  | The proxy falls back to the in-memory kill-switch state at the time Redis became unavailable                 |
+| Kill-switch state  | The proxy falls back to the in-memory kill-switch state at the time Redis became unavailable                        |
 
-**Security implication of kill-switch fallback:** A kill-switch that was activated *before* Redis became unavailable remains active in the in-process state. A kill-switch activated *after* Redis became unavailable will not take effect until Redis recovers. This is a known gap: if you need immediate kill-switch propagation across a Redis outage, deploy a local sidecar proxy per instance with its own in-memory state.
+**Security implication of kill-switch fallback:** A kill-switch that was activated _before_ Redis became unavailable remains active in the in-process state. A kill-switch activated _after_ Redis became unavailable will not take effect until Redis recovers. This is a known gap: if you need immediate kill-switch propagation across a Redis outage, deploy a local sidecar proxy per instance with its own in-memory state.
 
 **Security implication of MaxCalls denial:** When Redis is unavailable, `MaxCalls` conditions fail closed — calls are denied rather than allowed without a counter check. This is conservative and may cause false positives during Redis outages, but it prevents unbounded call rates.
 
@@ -347,7 +347,7 @@ Enforcement continues. The tool call result (allow or deny) is still applied to 
 2. Ship audit records to an external sink (SIEM, object storage) by tailing `~/.eunox/audit.jsonl` with a log shipper.
 3. Set the `--audit-rotate-size` flag to match available disk space (default: 100 MiB auto-rotation).
 
-Use `eunox-mcp validate-token` to detect HMAC verification failures in existing records; it cannot detect *missing* records caused by write failures.
+Use `eunox-mcp validate-token` to detect HMAC verification failures in existing records; it cannot detect _missing_ records caused by write failures.
 
 ---
 
@@ -367,53 +367,53 @@ For in-session failures (upstream dies after initialization), the next tool call
 
 The proxy writes one OCSF-based audit record per `tools/call` decision to `~/.eunox/audit.jsonl` (configurable via `--audit-log`).
 
-| Field             | Type    | Example                              | Notes                                |
-| ----------------- | ------- | ------------------------------------ | ------------------------------------ |
-| `class_uid`       | int     | `6003`                               | OCSF class: API Activity             |
-| `category_uid`    | int     | `6`                                  | OCSF category: Application Activity  |
-| `activity_id`     | int     | `1` (allow) or `2` (deny)           | OCSF activity encoding               |
-| `time`            | string  | `"2026-05-29T14:32:11.421Z"`         | RFC3339Nano, UTC                     |
-| `request_id`      | string  | `"d3b07384-d113-..."`                | UUID v4, unique per record           |
-| `session_id`      | string  | `"a1b2c3d4-..."`                     | Proxy-minted UUID v4                 |
-| `tool_name`       | string  | `"read_file"`                        | Name of the MCP tool called          |
-| `decision`        | string  | `"allow"` or `"deny"`               |                                      |
-| `dry_run`         | bool    | `true`                               | Present only when `--dry-run` is set |
-| `denial_code`     | string  | `"CAPABILITY_NOT_GRANTED"`           | Omitted on allow                     |
-| `condition_type`  | string  | `"allowedValues"`                    | Omitted on allow; which condition triggered the denial |
-| `details`         | object  | `{"error": "..."}`                   | Condition-specific detail; omitted when empty |
-| `obligations`     | array   | `["redactFields"]`                   | Obligations applied to the response; omitted when empty |
-| `_hmac`           | string  | `"sha256:3a7b..."`                   | HMAC-SHA256 over all other fields    |
+| Field            | Type   | Example                      | Notes                                                   |
+| ---------------- | ------ | ---------------------------- | ------------------------------------------------------- |
+| `class_uid`      | int    | `6003`                       | OCSF class: API Activity                                |
+| `category_uid`   | int    | `6`                          | OCSF category: Application Activity                     |
+| `activity_id`    | int    | `1` (allow) or `2` (deny)    | OCSF activity encoding                                  |
+| `time`           | string | `"2026-05-29T14:32:11.421Z"` | RFC3339Nano, UTC                                        |
+| `request_id`     | string | `"d3b07384-d113-..."`        | UUID v4, unique per record                              |
+| `session_id`     | string | `"a1b2c3d4-..."`             | Proxy-minted UUID v4                                    |
+| `tool_name`      | string | `"read_file"`                | Name of the MCP tool called                             |
+| `decision`       | string | `"allow"` or `"deny"`        |                                                         |
+| `dry_run`        | bool   | `true`                       | Present only when `--dry-run` is set                    |
+| `denial_code`    | string | `"CAPABILITY_NOT_GRANTED"`   | Omitted on allow                                        |
+| `condition_type` | string | `"allowedValues"`            | Omitted on allow; which condition triggered the denial  |
+| `details`        | object | `{"error": "..."}`           | Condition-specific detail; omitted when empty           |
+| `obligations`    | array  | `["redactFields"]`           | Obligations applied to the response; omitted when empty |
+| `_hmac`          | string | `"sha256:3a7b..."`           | HMAC-SHA256 over all other fields                       |
 
 ### 6.2 What the proxy never logs
 
-| Data                              | Why                                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------------- |
-| Tool call argument values         | May contain PII, PHI, credentials, or proprietary data; never written to the log     |
-| Bearer JWT content                | Contains identity claims; logging would create a replay window                        |
-| `--auth-token` value              | Operator credential; never echoed in logs                                             |
-| `--upstream-auth-header` value    | Upstream credential; never echoed in logs                                             |
-| `--redis-password` value          | Infrastructure credential; never echoed in logs                                       |
-| Upstream MCP server responses     | May contain sensitive data; forwarded to client, not logged                           |
-| HMAC key (`~/.eunox/audit.key`)   | Never logged; only used in-process for signing                                        |
+| Data                            | Why                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| Tool call argument values       | May contain PII, PHI, credentials, or proprietary data; never written to the log |
+| Bearer JWT content              | Contains identity claims; logging would create a replay window                   |
+| `--auth-token` value            | Operator credential; never echoed in logs                                        |
+| `--upstream-auth-header` value  | Upstream credential; never echoed in logs                                        |
+| `--redis-password` value        | Infrastructure credential; never echoed in logs                                  |
+| Upstream MCP server responses   | May contain sensitive data; forwarded to client, not logged                      |
+| HMAC key (`~/.eunox/audit.key`) | Never logged; only used in-process for signing                                   |
 
 ### 6.3 Argument redaction via `RedactFields`
 
-When a manifest constraint includes a `redactFields` obligation (e.g., `{"type": "redactFields", "fields": ["$.ssn", "$.card_number"]}`), the proxy removes those dot-path fields from the tool call *result* returned to the MCP host before forwarding it. The redaction is applied to JSON text content blocks in the upstream response.
+When a manifest constraint includes a `redactFields` obligation (e.g., `{"type": "redactFields", "fields": ["$.ssn", "$.card_number"]}`), the proxy removes those dot-path fields from the tool call _result_ returned to the MCP host before forwarding it. The redaction is applied to JSON text content blocks in the upstream response.
 
-Redaction affects the data the MCP host sees, not the audit log (which logs obligations applied, but not argument values). This allows operators to build audit trails that record *that* a tool was called without capturing which specific sensitive fields it returned.
+Redaction affects the data the MCP host sees, not the audit log (which logs obligations applied, but not argument values). This allows operators to build audit trails that record _that_ a tool was called without capturing which specific sensitive fields it returned.
 
 ### 6.4 Data residency in default configuration
 
 In the default configuration, all data stays on the machine running the proxy:
 
-| Data                        | Location                              |
-| --------------------------- | ------------------------------------- |
-| Audit records               | `~/.eunox/audit.jsonl` (local file)   |
-| HMAC signing key            | `~/.eunox/audit.key` (local file)     |
-| Kill-switch state           | In-process memory                     |
-| Call counter state          | In-process memory                     |
-| JWKS cache                  | In-process memory                     |
-| Policy manifest             | Local file path provided by operator  |
+| Data               | Location                             |
+| ------------------ | ------------------------------------ |
+| Audit records      | `~/.eunox/audit.jsonl` (local file)  |
+| HMAC signing key   | `~/.eunox/audit.key` (local file)    |
+| Kill-switch state  | In-process memory                    |
+| Call counter state | In-process memory                    |
+| JWKS cache         | In-process memory                    |
+| Policy manifest    | Local file path provided by operator |
 
 When `--redis-addr` is configured, kill-switch and call-counter state are persisted to the Redis instance at that address. When a remote `--upstream-url` is configured, tool call requests are forwarded to that URL (with the `--upstream-auth-header` if provided). No other data is transmitted externally by the proxy.
 
@@ -423,11 +423,11 @@ When `--redis-addr` is configured, kill-switch and call-counter state are persis
 
 ### 7.1 Audit status
 
-| Engagement                    | Scope                                       | Status              | Expected completion |
-| ----------------------------- | ------------------------------------------- | ------------------- | ------------------- |
-| Internal code review          | `cmd/mcp/` and its `pkg/` dependencies      | Ongoing             | Continuous          |
-| External penetration test     | Black-box JWT bypass, argument injection, audit HMAC | Planned | — |
-| SOC 2 readiness               | N/A for the proxy binary (single-binary OSS tool) | Not applicable | —                  |
+| Engagement                | Scope                                                | Status         | Expected completion |
+| ------------------------- | ---------------------------------------------------- | -------------- | ------------------- |
+| Internal code review      | `cmd/mcp/` and its `pkg/` dependencies               | Ongoing        | Continuous          |
+| External penetration test | Black-box JWT bypass, argument injection, audit HMAC | Planned        | —                   |
+| SOC 2 readiness           | N/A for the proxy binary (single-binary OSS tool)    | Not applicable | —                   |
 
 No external security audit of the `eunox-mcp` proxy has been completed. This document is the primary public security reference for the proxy until an external assessment is published at `docs/security-review.md`.
 
@@ -435,20 +435,20 @@ Security teams evaluating the proxy for production deployment before the externa
 
 ### 7.2 Known limitations and open items
 
-| ID  | Area                  | Description                                                                                                  | Severity   | Status |
-| --- | --------------------- | ------------------------------------------------------------------------------------------------------------ | ---------- | ------ |
-| L-1 | Session binding       | No cryptographic binding between bearer JWT and session ID (§3.3). Mitigated by `--auth-token` for HTTP transport. | Low | Open |
-| L-2 | Kill-switch gap       | Kill switches activated during a Redis outage do not propagate until Redis recovers (§5.3).                  | Low        | Open   |
-| L-3 | Audit completeness    | Write failures produce a gap in the audit trail without blocking enforcement (§5.4). Mitigated by external log shipping. | Info | Accepted — documented tradeoff |
-| L-4 | SSE notifications     | SSE notifications from a remote `--upstream-url` are not forwarded to the client (documented in `http_remote.go`). | Info | Open |
-| L-5 | X-Forwarded-For trust | When `--trust-forwarded-for` is enabled without a trusted-proxy CIDR restriction, clients can spoof source IP for `IPRange` conditions. | Medium | Open — only enable `--trust-forwarded-for` when the proxy is behind a trusted reverse proxy that strips and rewrites the header |
+| ID  | Area                  | Description                                                                                                                             | Severity | Status                                                                                                                          |
+| --- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| L-1 | Session binding       | No cryptographic binding between bearer JWT and session ID (§3.3). Mitigated by `--auth-token` for HTTP transport.                      | Low      | Open                                                                                                                            |
+| L-2 | Kill-switch gap       | Kill switches activated during a Redis outage do not propagate until Redis recovers (§5.3).                                             | Low      | Open                                                                                                                            |
+| L-3 | Audit completeness    | Write failures produce a gap in the audit trail without blocking enforcement (§5.4). Mitigated by external log shipping.                | Info     | Accepted — documented tradeoff                                                                                                  |
+| L-4 | SSE notifications     | SSE notifications from a remote `--upstream-url` are not forwarded to the client (documented in `http_remote.go`).                      | Info     | Open                                                                                                                            |
+| L-5 | X-Forwarded-For trust | When `--trust-forwarded-for` is enabled without a trusted-proxy CIDR restriction, clients can spoof source IP for `IPRange` conditions. | Medium   | Open — only enable `--trust-forwarded-for` when the proxy is behind a trusted reverse proxy that strips and rewrites the header |
 
 ### 7.3 Reporting security issues
 
 To report a security issue:
 
 - **GitHub private security advisory:** preferred for vulnerability reports (creates a private discussion before public disclosure).
-- **Email:** security@eunolabs.com — for issues where a GitHub advisory is not appropriate.
+- **Email:** security@eunolabs.ai — for issues where a GitHub advisory is not appropriate.
 
 We aim to acknowledge security reports within 48 hours and to provide an initial assessment within 7 business days.
 
@@ -456,10 +456,10 @@ We aim to acknowledge security reports within 48 hours and to provide an initial
 
 ## 8. Change Log
 
-| Version | Date       | Author                  | Changes             |
-| ------- | ---------- | ----------------------- | ------------------- |
+| Version | Date       | Author                     | Changes             |
+| ------- | ---------- | -------------------------- | ------------------- |
 | 1.0     | 2026-05-29 | Eunolabs Platform Security | Initial publication |
 
 ---
 
-_Questions or corrections: open a GitHub issue tagged `security`, or email security@eunolabs.com._
+_Questions or corrections: open a GitHub issue tagged `security`, or email security@eunolabs.ai._
