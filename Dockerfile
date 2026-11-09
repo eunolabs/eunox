@@ -10,7 +10,7 @@
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 .
 
-FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS build
+FROM --platform=$BUILDPLATFORM rust:1.98-bookworm AS build
 ARG TARGETARCH
 # The Rust target for TARGETARCH, and a C cross-compiler when it isn't the
 # build machine's own architecture (aws-lc-sys, under rustls, compiles C).
