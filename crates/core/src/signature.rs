@@ -671,7 +671,7 @@ fn hex(b: u8) -> Option<u8> {
 
 /// Lowercase and drop the scheme's default port (RFC 9421 §2.2.3, RFC 9110
 /// §4.2.3).
-fn normalize_authority(scheme: &str, authority: &str) -> String {
+pub(crate) fn normalize_authority(scheme: &str, authority: &str) -> String {
     let lower = authority.trim().to_ascii_lowercase();
     let default_port = match scheme {
         "https" => ":443",

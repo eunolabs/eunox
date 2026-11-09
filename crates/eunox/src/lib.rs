@@ -5,6 +5,9 @@
 //! The `eunox` binary wires `eunox-directory` (keys, IP ranges, reverse DNS),
 //! `eunox-ingest` (log receivers and classification) and `eunox-stats`
 //! (counters) to a small HTTP server for the report and `/metrics`.
+//!
+//! `eunox sign` is the other direction: it makes the deployer a Web Bot Auth
+//! operator, with its own key and key directory (see [`sign`]).
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -15,6 +18,7 @@ pub mod demo;
 pub mod otlp_export;
 pub mod render;
 pub mod server;
+pub mod sign;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

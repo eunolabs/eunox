@@ -4,7 +4,7 @@ Tells a site which AI agents are hitting it and which of them are who they claim
 
 Observe-only: nothing sits in the request path, so it adds no latency and can't break your traffic, and no data leaves your environment.
 
-Status: v0. nginx, Envoy and Kong are supported, and `docker compose up` runs the whole thing as a demo. See the "v0 status" section of [docs/design.md](docs/design.md).
+Status: v0. nginx, Envoy and Kong are supported, and `docker compose up` runs the whole thing as a demo. The operator side, `eunox sign`, is partly built. See the "v0 status" section of [docs/design.md](docs/design.md).
 
 ## Quickstart: the demo
 
@@ -50,6 +50,34 @@ Then point your gateway at it and reload:
 The report is at `http://<host>:8040/`, and `./target/release/eunox report` prints it in the terminal.
 
 [docs/testing.md](docs/testing.md) walks through replaying a sample log and running against a local nginx, Envoy or Kong.
+
+## Sign as an operator (early)
+
+The other direction: if you run agents of your own, `eunox sign` makes you a Web Bot Auth operator with your own key and key directory.
+
+```bash
+eunox sign init --origin https://agent.example
+```
+
+This writes an Ed25519 key to `eunox-sign/keys/` (mode 0600, never printed) and `eunox-sign/sign.toml`. Then publish the directory at `https://agent.example/.well-known/http-message-signatures-directory`, either served:
+
+```bash
+eunox sign serve
+```
+
+behind your TLS terminator (port 8050; it signs each response, and only for `agent.example`), or as static files for a CDN, re-run before the printed expiry:
+
+```bash
+eunox sign export --out site
+```
+
+and sign a test request:
+
+```bash
+eunox sign request https://example.com/ --send
+```
+
+Built so far: the key, signed requests and the signed directory, following `draft-ietf-webbotauth-httpsig-protocol-01`. Not built yet: rotation, a key id per agent, and the sidecar and Playwright hook that sign on an agent's egress path so the agent process never holds the key. Until those exist, `eunox sign request` is for testing and registration. `eunox sign help` lists the options; the design is under "Operator side" in [docs/design.md](docs/design.md).
 
 ## Alerts
 

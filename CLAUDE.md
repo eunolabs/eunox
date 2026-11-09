@@ -1,7 +1,7 @@
 # eunox — agent identity at the gateway, both directions
 
 ## What this is
-An open-source tool for Web Bot Auth agent identity, in both directions from one core. Inbound (built, v0): it tells a site which AI agents are hitting it and which of them are who they claim to be. Outbound (planned): the operator side, `eunox sign`, so an organisation running its own agents can publish a key directory and sign their requests without the agent process holding the key, plus a public signature checker (design: "Operator side" in `docs/design.md`).
+An open-source tool for Web Bot Auth agent identity, in both directions from one core. Inbound (built, v0): it tells a site which AI agents are hitting it and which of them are who they claim to be. Outbound (partly built): the operator side, `eunox sign`, so an organisation running its own agents can publish a key directory and sign their requests without the agent process holding the key, plus a public signature checker (planned) (design: "Operator side" in `docs/design.md`).
 
 ## Product principles
 - Plain Web Bot Auth signature verification is a commodity (Cloudflare, AWS WAF, Akamai, HUMAN and Vercel already ship it). eunox adds classification across every identity source, and the operator side: custody, the key directory, rotation and per-agent identity for organisations running their own agents.
@@ -28,7 +28,7 @@ Timestamp, method, scheme, the Host header as sent (nginx `$http_host`, which ke
 - `directory`: fetches and caches operator key directories and published IP-range files on a timer. Seed operators: OpenAI, Anthropic, Perplexity, Google, Common Crawl.
 - `ingest`: receivers that normalize every log source into one request record.
 - `stats`: in-memory counters per agent and class, rolling 24h window ending at the newest log timestamp.
-- Operator side (planned): the signer half of `core`, a `sign` subcommand group (init, directory server, sidecar, Playwright hook) and a public signature checker endpoint. Keys never live in the agent process.
+- Operator side (partly built): the signer half of `core` (`core::sign`, built), a `sign` subcommand group (`init`, `request`, `serve` and `export` built; rotation, per-agent key ids, sidecar and Playwright hook planned) and a public signature checker endpoint (planned). Keys never live in the agent process.
 - Packaging: `Dockerfile` builds one image with `eunox` and the demo traffic generator `eunox-demo`, for linux/amd64 and linux/arm64 (the build stage cross-compiles). `.github/workflows/image.yml` publishes it to `ghcr.io/eunolabs/eunox`: `main` from the main branch, versions from `vX.Y.Z` tags. `docker-compose.yml` is the demo; it pulls that image, or builds it if the pull fails, with gateway configs in `deploy/demo/`.
 - `report`: served by the `eunox` binary (`serve`, `replay`, `report`): HTTP page with top agents, verified vs spoofed share, top paths per agent and last-seen times, plus `/report.txt`, `/metrics` and `/healthz`, and OTLP metrics push (`EUNOX_OTLP_METRICS_ENDPOINT`).
 
@@ -37,7 +37,7 @@ Designed, not planned (see "Inline design" in `docs/design.md`):
 - v1b: on the same server, path and method policy and per-agent quotas with state shared across instances. HTTP 402 and per-agent behaviour history come later, when a deployment needs them.
 - v2: in-process modules, only if someone needs to avoid the extra hop.
 
-Roadmap, ordering and schedule aren't kept in this repo. Don't start the planned parts (`eunox sign`, the checker) or the designed-only ones unless the owner asks for them. Full design: `docs/design.md`. How to test, including against real nginx: `docs/testing.md`. v0 status and remaining work: the "v0 status" section of `docs/design.md`.
+Roadmap, ordering and schedule aren't kept in this repo. Don't start the planned parts (the rest of `eunox sign`, the checker) or the designed-only ones unless the owner asks for them. Full design: `docs/design.md`. How to test, including against real nginx: `docs/testing.md`. v0 status and remaining work: the "v0 status" section of `docs/design.md`.
 
 ## Gotchas
 - Client IP: behind a CDN or load balancer, trusted-proxy settings must be right, or IP checks mark real crawlers as spoofed.

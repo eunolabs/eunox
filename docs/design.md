@@ -9,7 +9,7 @@ A growing share of web and API traffic comes from AI agents and crawlers. Sites 
 Agent identity at the gateway, in both directions, from one core.
 
 1. **Verify (built, v0)** — reuse existing Web Bot Auth libraries; normalize each request into a verified identity: operator, agent, and (if asserted) the user it acts on behalf of. Runs out of band on gateway access logs: no plugin, nothing in the request path.
-2. **Sign (planned)** — the other direction, for organisations that run agents of their own: become a Web Bot Auth operator with `eunox sign`. Keys, a key directory, rotation, one key id per agent, and signing on the agent's egress path without the agent process holding the key. See "Operator side".
+2. **Sign (partly built)** — the other direction, for organisations that run agents of their own: become a Web Bot Auth operator with `eunox sign`. Keys, a key directory, rotation, one key id per agent, and signing on the agent's egress path without the agent process holding the key. The key, signed requests and the signed directory are built; the rest is planned. See "Operator side".
 3. **Check (planned)** — a public signature checker: point an agent at it and see exactly what a verifier sees for that request.
 
 Designed, not planned (see "Inline design"):
@@ -36,7 +36,7 @@ Fast, dumb, local data path; smart, asynchronous control path.
 | --- | --- | --- |
 | v0 | Observe-only, from gateway access logs: verification, IP-range and FCrDNS checks, classification, counters, report page, metrics | Built; see "v0 status" |
 | Signature checker | A public endpoint that shows what a verifier sees for one live request | Planned |
-| `eunox sign` | Become an operator: keys, rotation, per-agent key ids, a self-signing directory server, a sidecar signer and a Playwright hook; the signer half of the same core | Planned |
+| `eunox sign` | Become an operator: keys, rotation, per-agent key ids, a self-signing directory server, a sidecar signer and a Playwright hook; the signer half of the same core | Partly built: `init`, signed requests, the directory server and static export. Rotation, per-agent key ids, the sidecar and the Playwright hook are planned |
 | Inline design | The ext\_authz service, policy and in-process modules below | Designed, not planned |
 
 Keep `core` I/O-free: the signer, sidecar and checker embed it, and it keeps the inline design possible.
@@ -198,6 +198,7 @@ plugins:
   - `eunox serve` receives logs and serves the report.
   - `eunox replay [FILE]` classifies a saved log and prints the report.
   - `eunox report` prints a running server's report.
+  - `eunox sign init | request | serve | export` acts as an operator (see "Operator side").
 - Environment (`eunox --help` lists them with defaults): `EUNOX_SYSLOG_UDP` (0.0.0.0:5140), `EUNOX_LINES_TCP` (off), `EUNOX_OTLP_GRPC` (0.0.0.0:4317), `EUNOX_KONG_HTTP` (0.0.0.0:8041), `EUNOX_HTTP` (0.0.0.0:8040), `EUNOX_RDNS` (on), `EUNOX_REFRESH_SECS` (3600), `EUNOX_SEED_SOURCES` (on), `EUNOX_OTLP_METRICS_ENDPOINT` (off) with `EUNOX_OTLP_METRICS_INTERVAL_SECS` (60), and `EUNOX_KEY_DIRECTORIES` / `EUNOX_RANGES` for extra sources as `id=url,...`.
 - `docker compose up` demo: Envoy and nginx in front of a sample upstream, plus a traffic generator sending signed, spoofed and plain requests, so the report fills within seconds. It pulls the published image and builds from the checkout if the pull fails.
 - Copy-paste snippets: Envoy `access_log` block, nginx `log_format` and `access_log syslog:` lines, Kong http-log plugin config.
@@ -212,6 +213,7 @@ plugins:
 - Kong receiver: the bundled `http-log` plugin, single entries and batches. Tested against Kong's documented log serializer format and a live Kong 3.9.4, including a `strip_path` route.
 - Published image: built for linux/amd64 and linux/arm64 and pushed to GHCR from main and version tags; the compose demo pulls it.
 - Alerting: Prometheus rules in `deploy/prometheus/eunox-alerts.yml` for a high spoofed share, a source that stays down, parse errors and no log lines, with promtool unit tests.
+- Operator side, first part: the signer in `core` (requests and the signed directory response, checked byte for byte against the draft's test vectors), and `eunox sign init`, `request`, `serve` and `export`. A request signed by `eunox sign` verifies in eunox's own pipeline with the operator's served directory as its key source. Details under "Operator side".
 - UDP loss: nginx's `access_log syslog:` is UDP only, and a lost datagram leaves no trace. When any line arrived over UDP, the report says so under the totals, and `/metrics` exposes `eunox_ingest_udp_datagrams_total` to compare with the gateway's own request count.
 
 ### Done when
@@ -241,16 +243,22 @@ How to test what exists: [testing.md](testing.md).
 - Operator side: whether the major registries identify an agent by its directory URL or by key id (see "Operator side", item 4).
 
 
-### Operator side (planned)
+### Operator side (partly built)
 
 The verifier only works for agents whose operator publishes a key directory. Today very few do, and an organisation that runs its own agents (browser agents, crawlers, API clients) has no self-hosted way to become one: Cloudflare's libraries produce a signature, but keys, directory hosting, rotation and per-agent identity are left to the deployer. `eunox sign` is the same core used in the other direction.
 
 **Public signature checker.** A URL an agent builder points their agent at. It returns exactly what a verifier sees for that one request: `Signature-Input` and `Signature` parsed, the `Signature-Agent` directory fetched, which key matched, and what failed and why (unknown tag, expired `created`, uncovered component, legacy `Signature-Agent` form, key id not in the directory, directory response not signed or served with the wrong media type). It's the v0 classifier applied to a single live request. Builds on the existing core, and debugs signing against any verifier, not just eunox.
 
-**`eunox sign`.** The pieces:
+**`eunox sign`.** Built against `draft-ietf-webbotauth-httpsig-protocol-01` (October 2026). What that draft says, where it matters here:
 
-1. `eunox sign init`: generate an Ed25519 operator key, write a JWKS, and emit a signed test request the checker accepts. Keys stored on disk or read from a secret manager; never printed.
-2. Directory server: serves `/.well-known/http-message-signatures-directory` with the right media type and cache headers, or exports a static file for a CDN. The directory draft has the server sign its own response (RFC 9421 over the response, `tag="http-message-signatures-directory"`, keyed by the directory's own keys), and registries check it; the static export therefore has to be re-signed on every change and before `expires`, so the export is a command, not a one-off file. Confirm against the current draft before building.
+- Signers must send `Signature-Agent` as a dictionary keyed by signature label (`sig1="https://..."`) and cover that member (`"signature-agent";key="sig1"`). The bare-string form is legacy, accepted by verifiers only; eunox's verifier accepts both.
+- The `Signature-Agent` value is the URL a verifier fetches directly as a JWK Set, and that URL is the agent's identifier. At the well-known path it also names the domain, and each JWK's `kid` must be its thumbprint.
+- Signing the directory response is recommended, not required (Appendix B.1): one signature per key over `"@authority";req` and `content-digest`, with `created`, `expires`, `keyid` and `tag="http-message-signatures-directory"`. Verifiers that use it check `Content-Digest` against the body.
+
+The pieces:
+
+1. `eunox sign init --origin https://agent.example` (built): generates an Ed25519 operator key into a state directory (`keys/<keyid>.pem`, PKCS#8 PEM, mode 0600, never printed) with a `sign.toml` holding the origin and the `Signature-Agent` value, which defaults to the origin's well-known directory URL. It refuses to overwrite an existing operator, and checks that a request it signs verifies with eunox's verifier. A secret manager can supply the key instead, as PEM text in `EUNOX_SIGN_KEY` or a file named by `EUNOX_SIGN_KEY_FILE`. `eunox sign request URL` (built) signs one GET, covering `@authority` and the `Signature-Agent` member with a 60-second lifetime and a random nonce, and prints the headers or sends it (`--send`). Accepted by the public checker once that exists.
+2. Directory server (built): `eunox sign serve` serves `/.well-known/http-message-signatures-directory` over plain HTTP behind the operator's TLS terminator, with the draft's media type, `Cache-Control: max-age` (default an hour, since rotation waits that long per step) and a fresh signature per key on every response, valid for the max-age plus an hour. It signs only for the configured authority and answers any other `Host` with 421: signing whatever authority a client names would let anyone re-serve the key set under their own domain, which is what the signature exists to prevent. `eunox sign export --out DIR` writes the same response for a static host, the body plus a `_headers` file (Cloudflare Pages and Netlify format), signed for a fixed period (default 7 days, which must outlast the max-age); it has to be re-run before then, so the export is a command, not a one-off file.
 3. Rotation in three steps, each one verifier cache lifetime apart: publish the new key alongside the old one; start signing with the new key; remove the old key. Publishing and switching at once breaks every verifier holding a cached directory, which is the failure the done-when rules out. The cache lifetime is the directory's own `Cache-Control` max-age, so the tool knows the wait.
 4. One key id per agent under one operator: `acme.example` signs for `procurement-agent` and `support-bot` with different `kid`s, so a verifier that keys on `kid` (eunox does) can tell them apart and the operator can revoke one without touching the other. A registry that identifies an agent by its directory URL sees one agent; if that's how the major registries work, per-agent identity there needs one directory per agent (a subdomain or path each), and the directory server has to serve several. Not yet confirmed.
 5. Signing on the egress path, with the key held outside the agent process:
@@ -258,6 +266,8 @@ The verifier only works for agents whose operator publishes a key directory. Tod
    - a Playwright/Chromium hook for browser agents (route interception adds the headers before the request leaves). The hook needs the signature without the key, so it calls the sidecar for the headers;
    - a small Rust library for agents that want to sign in-process anyway. The library is the commodity; the service is the point. Python and Node bindings only if asked for.
 6. A registration checklist for the public directories (Cloudflare's, and others as they appear), since publishing a directory is necessary and not sufficient to be treated as verified.
+
+Signing on the egress path (5) is what keeps the key out of the agent process; until it's built, `eunox sign request` is for testing and registration, not for agents.
 
 Not in scope: egress policy (site allowlists, per-agent budgets for HTTP 402 responses) and per-agent audit logs (see "Inline design").
 

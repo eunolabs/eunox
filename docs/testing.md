@@ -206,6 +206,27 @@ docker buildx build --platform linux/amd64,linux/arm64 .
 
 The arm64 half cross-compiles in the build stage, so it needs no emulation. The default builder can build both platforms only with the containerd image store (`docker info` shows `driver-type: io.containerd.snapshotter.v1`). Otherwise, create a builder first with `docker buildx create --use`.
 
+## 6. `eunox sign`, locally
+
+`cargo test -p eunox-core --test sign` checks the signer byte for byte against the test vectors in `draft-ietf-webbotauth-httpsig-protocol-01` (Appendix E.2.1 for a request, E.2.3 for the signed directory response). `cargo test -p eunox --test sign` runs `init`, serves the directory on localhost and replays a request signed by `eunox sign` through eunox with that directory as its only key source; it comes out `verified`.
+
+By hand, with a throwaway state directory:
+
+```bash
+./target/release/eunox sign init --origin https://agent.example --dir /tmp/op
+```
+
+```bash
+./target/release/eunox sign serve --dir /tmp/op --listen 127.0.0.1:8050 &
+```
+
+```bash
+curl -si -H 'Host: agent.example' http://127.0.0.1:8050/.well-known/http-message-signatures-directory
+```
+
+The response carries the media type, `Cache-Control`, `Content-Digest` and one `binding` signature per key. Any other `Host` gets 421. `eunox sign request https://example.com/ --dir /tmp/op` prints the three request headers; add `--send` to send them.
+
 ## Not testable yet
 
+- **`eunox sign` against a third-party verifier:** needs the directory published on a real HTTPS origin and, for Cloudflare, the agent registered in its directory.
 - **A real agent's signature:** the demo verifies its own test key; a real `verified` needs traffic from an operator that publishes a key directory (OpenAI, Google).

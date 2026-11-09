@@ -17,9 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use ed25519_dalek::{Signer as _, SigningKey};
+use eunox_core::{OperatorKey, RequestToSign, SignedHeaders, sign_request};
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -43,23 +41,22 @@ pub const DIRECTORY_PATH: &str = "/.well-known/http-message-signatures-directory
 /// How long each signature is valid.
 const LIFETIME_SECS: i64 = 60;
 
-/// `Signature-Input` and `Signature` values for a request to `authority`
-/// (lowercase, default port omitted, as RFC 9421 §2.2.3 normalizes it)
-/// naming `signature_agent` (a structured-field string, quotes included),
-/// signed at `created`.
-pub fn sign(authority: &str, signature_agent: &str, created: i64, nonce: &str) -> (String, String) {
-    let params = format!(
-        r#"("@authority" "signature-agent");created={created};expires={};keyid="{TEST_KEYID}";alg="ed25519";nonce="{nonce}";tag="web-bot-auth""#,
-        created + LIFETIME_SECS
-    );
-    let base = format!(
-        "\"@authority\": {authority}\n\"signature-agent\": {signature_agent}\n\"@signature-params\": {params}"
-    );
-    let signature = SigningKey::from_bytes(&TEST_PRIVATE).sign(base.as_bytes());
-    (
-        format!("sig1={params}"),
-        format!("sig1=:{}:", BASE64.encode(signature.to_bytes())),
+/// Web Bot Auth headers for a request to `authority` (host and port as in
+/// the URL) naming the key directory at `directory_url`, signed at `created`.
+pub fn sign(authority: &str, directory_url: &str, created: i64, nonce: &str) -> SignedHeaders {
+    sign_request(
+        &OperatorKey::from_seed(&TEST_PRIVATE),
+        &RequestToSign {
+            scheme: "http",
+            authority,
+            signature_agent: directory_url,
+            label: "sig1",
+            created,
+            expires: created + LIFETIME_SECS,
+            nonce: Some(nonce),
+        },
     )
+    .expect("demo inputs are valid")
 }
 
 /// Generator settings, from `DEMO_*` environment variables.
@@ -236,17 +233,16 @@ async fn send(
             )
             .header("signature", "sig2=:AAAA:"),
         Kind::Signed => {
-            let agent = format!("\"{directory_url}\"");
             let created = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-            let (input, signature) = sign(&authority, &agent, created, &format!("demo-{created}-{n}"));
+            let h = sign(&authority, directory_url, created, &format!("demo-{created}-{n}"));
             client
                 .get(&url)
                 .header(header::USER_AGENT, "eunox-demo-agent/1.0 (+signed with Web Bot Auth)")
-                .header("signature-agent", agent)
-                .header("signature-input", input)
-                .header("signature", signature)
+                .header("signature-agent", h.signature_agent)
+                .header("signature-input", h.signature_input)
+                .header("signature", h.signature)
         }
     };
     req.send().await.map(|_| ())
@@ -302,16 +298,17 @@ mod tests {
                 public_key: dir[0].public_key,
             },
         )]);
-        let agent = format!("\"http://traffic:8000{DIRECTORY_PATH}\"");
-        let (input, signature) = sign("nginx:8080", &agent, 1_000, "n1");
+        let agent = format!("http://traffic:8000{DIRECTORY_PATH}");
+        let h = sign("nginx:8080", &agent, 1_000, "n1");
+        assert_eq!(h.signature_agent, format!("sig1=\"{agent}\""));
         let req = Request {
             method: "GET",
             scheme: "http",
             authority: "nginx:8080",
             target: "/pricing",
-            signature: Some(&signature),
-            signature_input: Some(&input),
-            signature_agent: Some(&agent),
+            signature: Some(&h.signature),
+            signature_input: Some(&h.signature_input),
+            signature_agent: Some(&h.signature_agent),
             ..Default::default()
         };
         let opts = VerifyOptions::default();
@@ -319,10 +316,7 @@ mod tests {
             panic!("{:?}", verify(&req, &keys, 1_010, &opts))
         };
         assert_eq!(v.operator, "demo");
-        assert_eq!(
-            v.signature_agent.as_deref(),
-            Some(&agent[1..agent.len() - 1])
-        );
+        assert_eq!(v.signature_agent.as_deref(), Some(agent.as_str()));
         // Signed for one authority, it doesn't verify on another.
         let other = Request {
             authority: "envoy:10000",

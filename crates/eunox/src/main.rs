@@ -8,6 +8,8 @@ usage:
   eunox [serve]              receive access logs and serve the report
   eunox replay [FILE]        classify a saved log (stdin if FILE is - or missing) and print the report
   eunox report [--url URL]   print a running eunox's report (default http://127.0.0.1:8040)
+  eunox sign COMMAND ...     act as a Web Bot Auth operator: init, request, serve, export
+                             (`eunox sign help` for details)
 
 configuration (environment):
   EUNOX_SYSLOG_UDP       UDP syslog address, or off            (default 0.0.0.0:5140)
@@ -38,6 +40,10 @@ async fn main() -> ExitCode {
         ["replay", path] => replay(Some(path)).await,
         ["report"] => report(&format!("http://127.0.0.1:{}", port(DEFAULT_HTTP))).await,
         ["report", "--url", url] => report(url).await,
+        ["sign", rest @ ..] => {
+            let rest: Vec<String> = rest.iter().map(|s| (*s).to_owned()).collect();
+            eunox::sign::main(&rest).await
+        }
         ["help" | "-h" | "--help"] => {
             print!("{USAGE}");
             Ok(())
