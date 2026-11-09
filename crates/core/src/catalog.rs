@@ -130,8 +130,7 @@ impl Catalog {
             #[serde(default)]
             agent: Vec<Agent>,
         }
-        let file: File =
-            toml::from_str(source).map_err(|e| CatalogError::Parse(e.to_string()))?;
+        let file: File = toml::from_str(source).map_err(|e| CatalogError::Parse(e.to_string()))?;
         validate(&file.agent)?;
         Ok(Self::new(file.agent))
     }
@@ -399,7 +398,9 @@ user_agent_tokens = ["Googlebot-Image"]"#;
         let base = "id = \"a\"\nname = \"A\"\noperator = \"o\"\n";
         assert!(one(&format!("{base}user_agent_tokens = [\"A\"]")).is_ok());
         assert!(matches!(
-            one(&format!("{base}user_agent_tokens = [\"A\"]\nip_range = \"typo\"")),
+            one(&format!(
+                "{base}user_agent_tokens = [\"A\"]\nip_range = \"typo\""
+            )),
             Err(CatalogError::Parse(_))
         ));
         assert_eq!(
