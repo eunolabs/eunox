@@ -1,0 +1,118 @@
+# promtool test rules eunox-alerts.test.yml
+rule_files:
+  - eunox-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 30% spoofed at 2 checkable requests a minute: fires.
+  - interval: 1m
+    input_series:
+      - series: 'eunox_requests_total{class="spoofed",agent="openai-gptbot"}'
+        values: '0+6x120'
+      - series: 'eunox_requests_total{class="ip-verified",agent="openai-gptbot"}'
+        values: '0+14x120'
+      - series: 'eunox_requests_total{class="unclassified",agent="other"}'
+        values: '0+500x120'
+      - series: 'eunox_ingest_lines_total'
+        values: '0+520x120'
+      - series: 'eunox_ingest_parse_errors_total'
+        values: '0+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: EunoxSpoofedShareHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "30% of checkable agent traffic is spoofed"
+              description: >-
+                More than 20% of requests claiming a known agent failed every check
+                that agent supports, over the last hour. Look at the spoofed rows
+                and their networks on the eunox report. If a real crawler shows as
+                spoofed, check the gateway's trusted-proxy settings first: behind a
+                CDN or load balancer the logged client IP may be the proxy's.
+      - eval_time: 90m
+        alertname: EunoxParseErrors
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: EunoxNoLogLines
+        exp_alerts: []
+
+  # Same 30% share, but only 20 checkable requests an hour: below the
+  # volume guard, so it doesn't fire.
+  - interval: 1m
+    input_series:
+      - series: 'eunox_requests_total{class="spoofed",agent="openai-gptbot"}'
+        values: '0+0.1x120'
+      - series: 'eunox_requests_total{class="ip-verified",agent="openai-gptbot"}'
+        values: '0+0.233x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: EunoxSpoofedShareHigh
+        exp_alerts: []
+
+  # Lots of unclassified and unknown-bot traffic doesn't dilute the share,
+  # and a low spoofed share doesn't fire.
+  - interval: 1m
+    input_series:
+      - series: 'eunox_requests_total{class="spoofed",agent="openai-gptbot"}'
+        values: '0+1x120'
+      - series: 'eunox_requests_total{class="verified",agent="other"}'
+        values: '0+19x120'
+      - series: 'eunox_requests_total{class="unknown-bot",agent="other"}'
+        values: '0+1000x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: EunoxSpoofedShareHigh
+        exp_alerts: []
+
+  # A source failing for over 3h fires; one that recovered doesn't.
+  - interval: 1m
+    input_series:
+      - series: 'eunox_source_up{source="commoncrawl-ccbot",url="https://index.commoncrawl.org/ccbot.json"}'
+        values: '0x240'
+      - series: 'eunox_source_up{source="openai-gptbot",url="https://openai.com/gptbot.json"}'
+        values: '0x60 1x180'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: EunoxSourceDown
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              source: commoncrawl-ccbot
+              url: https://index.commoncrawl.org/ccbot.json
+            exp_annotations:
+              summary: "eunox source commoncrawl-ccbot has failed to load for 3h"
+              description: >-
+                https://index.commoncrawl.org/ccbot.json hasn't loaded. Its operator's requests show as
+                unknown-bot until it does. The report's warnings list the last error.
+
+  # 5% of lines failing to parse fires; silence fires the no-lines alert.
+  - interval: 1m
+    input_series:
+      - series: 'eunox_ingest_lines_total'
+        values: '0+100x60 6000x120'
+      - series: 'eunox_ingest_parse_errors_total'
+        values: '0+5x60 300x120'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: EunoxParseErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "5% of log lines don't parse"
+              description: >-
+                Check the gateway's eunox log format against docs/design.md. The
+                report's warnings show the last parse error.
+      - eval_time: 50m
+        alertname: EunoxNoLogLines
+        exp_alerts: []
+      - eval_time: 170m
+        alertname: EunoxNoLogLines
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "eunox has received no log lines for over an hour"

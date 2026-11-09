@@ -1,0 +1,71 @@
+# Envoy for the compose demo: proxies :10000 to the sample upstream and sends
+# each request to eunox as an OTLP log over gRPC. The access_log block and the
+# eunox cluster are the whole integration.
+static_resources:
+  listeners:
+  - name: web
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 10000 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: web
+          route_config:
+            virtual_hosts:
+            - name: all
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route: { cluster: upstream }
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          # --- eunox: paste this access_log block into your HTTP connection manager ---
+          access_log:
+          - name: envoy.access_loggers.open_telemetry
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig
+              common_config:
+                log_name: eunox
+                transport_api_version: V3
+                grpc_service:
+                  envoy_grpc: { cluster_name: eunox }
+              attributes:
+                values:
+                - { key: method, value: { string_value: "%REQ(:METHOD)%" } }
+                - { key: scheme, value: { string_value: "%REQ(:SCHEME)%" } }
+                - { key: authority, value: { string_value: "%REQ(:AUTHORITY)%" } }
+                - { key: path, value: { string_value: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%" } }
+                - { key: ip, value: { string_value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%" } }
+                - { key: status, value: { string_value: "%RESPONSE_CODE%" } }
+                - { key: ua, value: { string_value: "%REQ(USER-AGENT)%" } }
+                - { key: sig, value: { string_value: "%REQ(SIGNATURE)%" } }
+                - { key: sig_input, value: { string_value: "%REQ(SIGNATURE-INPUT)%" } }
+                - { key: sig_agent, value: { string_value: "%REQ(SIGNATURE-AGENT)%" } }
+  clusters:
+  - name: upstream
+    type: STRICT_DNS
+    load_assignment:
+      cluster_name: upstream
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address: { address: upstream, port_value: 80 }
+  # --- eunox: and this cluster, pointing at the eunox host's OTLP gRPC port ---
+  - name: eunox
+    type: STRICT_DNS
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config: { http2_protocol_options: {} }
+    load_assignment:
+      cluster_name: eunox
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address: { address: eunox, port_value: 4317 }

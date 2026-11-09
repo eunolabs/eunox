@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>eunox — Know which AI agents are really hitting your site</title>
+    <meta
+      name="description"
+      content="eunox tells your site which AI agents are hitting it and which of them are who they claim to be. Observe-only, from your gateway's access logs. Open source, Apache-2.0."
+    />
+    <link rel="icon" href="eunolabs.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* Static terminal: show every line at once (the old site animated them). */
+      .terminal .t-line { opacity: 1; animation: none; }
+      .terminal-body { min-height: 0; }
+      .t-table { white-space: pre; overflow-x: auto; color: #cbd5e1; }
+      .header-nav .nav-link { white-space: nowrap; }
+      @media (max-width: 900px) { .demo-layout { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-left">
+        <a class="logo" href="/">
+          <img src="eunolabs.png" alt="eunolabs" />
+          <span class="wordmark">eunolabs.ai</span>
+        </a>
+        <span class="stage-badge">Coming Soon</span>
+      </div>
+      <nav class="header-nav" aria-label="Primary">
+        <a href="mailto:hello@eunolabs.ai" class="nav-link">Contact</a>
+      </nav>
+    </header>
+
+    <section class="waitlist">
+      <div class="waitlist-inner">
+        <div class="hero-eyebrow">
+          <span class="dot"></span>Coming soon · open source · Apache-2.0
+        </div>
+        <h1>Know which <em>AI agents</em> are really hitting your site</h1>
+        <p class="waitlist-sub">
+          Anyone can put <strong>GPTBot</strong> in a user agent. eunox reads
+          your gateway's access logs, checks
+          <strong>Web Bot Auth signatures</strong>, published IP ranges and
+          reverse DNS, and tells you which agents are
+          <strong>who they claim to be</strong> and which are spoofing.
+          Observe-only: nothing in the request path, zero added latency, and
+          no data leaves your environment.
+        </p>
+        <form class="waitlist-form" id="waitlist-form" novalidate>
+          <label class="sr-only" for="waitlist-email">Email address</label>
+          <input
+            id="waitlist-email"
+            name="email"
+            type="email"
+            required
+            autocomplete="email"
+            placeholder="you@company.com"
+          />
+          <button type="submit">Notify me at launch</button>
+        </form>
+        <p class="waitlist-note" id="waitlist-status" role="status" aria-live="polite">
+          No spam. One email when it launches.
+        </p>
+      </div>
+    </section>
+
+    <section class="demo-section" id="demo">
+      <div class="demo-inner">
+        <div class="demo-header">
+          <div class="section-label">Sneak peek</div>
+          <h2 class="section-title">A log format and a reload</h2>
+          <p class="section-desc">
+            No plugin to install and no binary added to your gateway. Point
+            nginx's or Envoy's access log, or Kong's bundled http-log plugin,
+            at eunox and every request gets
+            <strong>exactly one</strong> classification.
+          </p>
+        </div>
+        <div class="demo-layout">
+          <div class="code-panel" role="img" aria-label="nginx config: a JSON log_format named eunox that records timestamp, method, scheme, host and Host header, original request URI, client IP, user agent and the Signature, Signature-Input and Signature-Agent headers, sent over syslog to eunox.">
+            <div class="code-bar">
+              <span class="code-icon">📄</span>
+              <span class="code-filename">nginx.conf</span>
+            </div>
+            <div class="code-body">
+              <pre><span class="y-comment"># Log what eunox needs. Nothing else changes.</span>
+<span class="y-key">log_format</span> <span class="y-str">eunox</span> <span class="y-key">escape</span>=<span class="y-str">json</span>
+  <span class="y-str">'{"ts":"$time_iso8601",'</span>
+  <span class="y-str">'"method":"$request_method",'</span>
+  <span class="y-str">'"scheme":"$scheme",'</span>
+  <span class="y-str">'"host":"$host",'</span>
+  <span class="y-str">'"authority":"$http_host",'</span>
+  <span class="y-str">'"path":"$request_uri",'</span>
+  <span class="y-str">'"ip":"$remote_addr",'</span>
+  <span class="y-str">'"ua":"$http_user_agent",'</span>
+  <span class="y-str">'"sig":"$http_signature",'</span>
+  <span class="y-str">'"sig_input":"$http_signature_input",'</span>
+  <span class="y-str">'"sig_agent":"$http_signature_agent"}'</span>;
+
+<span class="y-comment"># Ship it out of band over syslog.</span>
+<span class="y-key">access_log</span> <span class="y-str">syslog:server=127.0.0.1:5140</span> <span class="y-str">eunox</span>;</pre>
+            </div>
+          </div>
+          <div class="terminal" role="img" aria-label="Illustrative eunox report for the last 24 hours: ChatGPT agent verified by signature, ClaudeBot, Googlebot and PerplexityBot verified by IP range, GPTBot traffic from an unpublished range marked spoofed, python-requests marked unknown-bot, the rest unclassified.">
+            <div class="terminal-bar">
+              <div class="terminal-dot red"></div>
+              <div class="terminal-dot amber"></div>
+              <div class="terminal-dot green"></div>
+              <span class="terminal-title">eunox · sample output</span>
+            </div>
+            <div class="terminal-body"><span class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">eunox report</span></span>
+<span class="t-line t-table"><span class="t-dim">agent            class          requests</span>
+<span class="t-dim">(other)</span>          <span class="t-info">unclassified</span>     48,115
+<span class="t-cmd">python-requests</span>  <span class="t-warn">unknown-bot</span>       1,902
+<span class="t-cmd">ChatGPT agent</span>    <span class="t-ok">verified</span>          1,284
+<span class="t-cmd">ClaudeBot</span>        <span class="t-ok">ip-verified</span>         912
+<span class="t-cmd">Googlebot</span>        <span class="t-ok">ip-verified</span>         640
+<span class="t-cmd">GPTBot</span>           <span class="t-err">spoofed</span>             317
+<span class="t-cmd">PerplexityBot</span>    <span class="t-ok">ip-verified</span>         208</span>
+<span class="t-line t-err">✗ GPTBot ×317 from 203.0.113.0/24: no valid signature,
+  fails its published IP checks</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="features-section">
+      <div class="features-header">
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Verify, don't trust the user agent</h2>
+      </div>
+      <div class="pillars">
+        <div class="pillar">
+          <div class="pillar-icon">🔏</div>
+          <h3>Signature first</h3>
+          <p>Web Bot Auth (<code>RFC 9421</code>) signatures are checked against each operator's published key directory, at the timestamp in the log.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">🌐</div>
+          <h3>IP and DNS fallback</h3>
+          <p>Unsigned agents are matched against published IP ranges and forward-confirmed reverse DNS for the operator they claim to be.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">🛡️</div>
+          <h3>Out of your request path</h3>
+          <p>eunox reads logs, not traffic. It can't slow your site down or break it, and your data never leaves your environment.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">✍️</div>
+          <h3>Both directions (planned)</h3>
+          <p>Run agents of your own? <code>eunox sign</code> will let you publish a key directory and sign their requests as an operator, with the key kept out of the agent process.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div class="footer-col footer-brand">
+          <a class="logo" href="/">
+            <img src="eunolabs.png" alt="eunolabs" style="height: 30px" />
+            <span class="wordmark">eunolabs.ai</span>
+          </a>
+          <p>Know which AI agents hit your site, and which are who they claim to be.</p>
+          <span class="footer-license">Apache-2.0</span>
+        </div>
+        <div class="footer-col">
+          <h5>Resources</h5>
+          <ul>
+            <li><a href="https://datatracker.ietf.org/doc/html/rfc9421" target="_blank" rel="noopener noreferrer">RFC 9421</a></li>
+            <li><a href="https://datatracker.ietf.org/wg/webbotauth/about/" target="_blank" rel="noopener noreferrer">Web Bot Auth</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h5>Contact</h5>
+          <ul>
+            <li><a href="mailto:hello@eunolabs.ai">hello@eunolabs.ai</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>&copy; 2026 eunox &middot; An eunolabs.ai project</span>
+        <span>Built on open standards</span>
+      </div>
+    </footer>
+    <script src="main.js"></script>
+  </body>
+</html>

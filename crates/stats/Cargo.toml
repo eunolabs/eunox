@@ -1,0 +1,12 @@
+[package]
+name = "eunox-stats"
+version = "0.0.0"
+description = "In-memory per-agent, per-class request counters over a rolling 24-hour window"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eunox-core.workspace = true
+eunox-ingest.workspace = true

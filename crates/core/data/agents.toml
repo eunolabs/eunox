@@ -1,0 +1,143 @@
+# Known agents: how each one identifies itself and how it can be verified.
+#
+# Embedded into eunox-core at build time as `Catalog::seed()`. It's a starting
+# point, not an authority. User-agent tokens and kinds were seeded from
+# AgentSniff's Apache-2.0 catalog (https://github.com/ThirdKeyAI/agentsniff,
+# agent_clients.json 2.6.0), which cites Cloudflare's bot directory.
+# Verification methods and range sets were checked against each operator's
+# documentation on 2026-11-08; the URL for each range set id is in
+# eunox-directory's seed sources (crates/directory/src/sources.rs).
+#
+# Fields (only `id`, `name` and `operator` are required):
+#   id                 stable eunox id; policy will name these
+#   name               display name
+#   operator           must match `Key::operator` for this operator's keys
+#   user_agent_tokens  matched case-insensitively as whole tokens; when
+#                      several agents match, the longest token wins
+#   signature_agents   `Signature-Agent` origins (https://host)
+#   ip_ranges          id of the published range set; the `directory` crate
+#                      maps ids to the operator's range files
+#   rdns_suffixes      hostname suffixes accepted by forward-confirmed
+#                      reverse DNS
+#
+# Every agent needs at least one user-agent token or signature agent, or
+# nothing could ever match it.
+
+# OpenAI publishes one range file per agent
+# (developers.openai.com/api/docs/bots).
+[[agent]]
+id = "openai-gptbot"
+name = "GPTBot"
+operator = "openai"
+user_agent_tokens = ["GPTBot"]
+ip_ranges = "openai-gptbot"
+
+[[agent]]
+id = "openai-searchbot"
+name = "OAI-SearchBot"
+operator = "openai"
+user_agent_tokens = ["OAI-SearchBot"]
+ip_ranges = "openai-searchbot"
+
+[[agent]]
+id = "openai-chatgpt-user"
+name = "ChatGPT-User"
+operator = "openai"
+user_agent_tokens = ["ChatGPT-User"]
+ip_ranges = "openai-chatgpt-user"
+
+[[agent]]
+id = "openai-adsbot"
+name = "OAI-AdsBot"
+operator = "openai"
+user_agent_tokens = ["OAI-AdsBot"]
+ip_ranges = "openai-adsbot"
+
+# Presents stock Chrome with no agent token; identifiable only by its Web Bot
+# Auth signature (OpenAI help center, via AgentSniff). Its key directory is on
+# chatgpt.com.
+[[agent]]
+id = "openai-chatgpt-agent"
+name = "ChatGPT agent"
+operator = "openai"
+signature_agents = ["https://chatgpt.com"]
+
+# Anthropic: one published list for its crawlers (support.claude.com, "If a
+# crawler has a source IP address on this list, it indicates that the crawler
+# is coming from Anthropic"). Whether it covers Claude-User is not stated.
+[[agent]]
+id = "anthropic-claudebot"
+name = "ClaudeBot"
+operator = "anthropic"
+user_agent_tokens = ["ClaudeBot"]
+ip_ranges = "anthropic"
+
+[[agent]]
+id = "anthropic-claude-searchbot"
+name = "Claude-SearchBot"
+operator = "anthropic"
+user_agent_tokens = ["Claude-SearchBot"]
+ip_ranges = "anthropic"
+
+[[agent]]
+id = "anthropic-claude-user"
+name = "Claude-User"
+operator = "anthropic"
+user_agent_tokens = ["Claude-User"]
+ip_ranges = "anthropic"
+
+# Perplexity: one range file per agent
+# (docs.perplexity.ai/docs/resources/perplexity-crawlers).
+[[agent]]
+id = "perplexity-bot"
+name = "PerplexityBot"
+operator = "perplexity"
+user_agent_tokens = ["PerplexityBot"]
+ip_ranges = "perplexity-bot"
+
+[[agent]]
+id = "perplexity-user"
+name = "Perplexity-User"
+operator = "perplexity"
+user_agent_tokens = ["Perplexity-User"]
+ip_ranges = "perplexity-user"
+
+# Google: range files per crawler category plus forward-confirmed reverse DNS
+# (developers.google.com/crawling/docs/crawlers-fetchers/verify-google-requests).
+# Common crawlers, including Googlebot and Google-CloudVertexBot, resolve under
+# googlebot.com only. Google-Agent uses user-triggered-agents.json and gets no
+# reverse DNS on purpose: user-triggered fetchers can resolve under
+# gae.googleusercontent.com, which any App Engine customer can send from.
+[[agent]]
+id = "google-agent"
+name = "Google-Agent"
+operator = "google"
+user_agent_tokens = ["Google-Agent"]
+signature_agents = ["https://agent.bot.goog"]
+ip_ranges = "google-user-triggered-agents"
+
+[[agent]]
+id = "google-cloudvertexbot"
+name = "Google-CloudVertexBot"
+operator = "google"
+user_agent_tokens = ["Google-CloudVertexBot"]
+ip_ranges = "google-common-crawlers"
+rdns_suffixes = ["googlebot.com"]
+
+[[agent]]
+id = "google-googlebot"
+name = "Googlebot"
+operator = "google"
+user_agent_tokens = ["Googlebot"]
+ip_ranges = "google-common-crawlers"
+rdns_suffixes = ["googlebot.com"]
+
+# Common Crawl: dedicated ranges, and reverse DNS under crawl.commoncrawl.org
+# for IPv4 (commoncrawl.org/ccbot).
+[[agent]]
+id = "commoncrawl-ccbot"
+name = "CCBot"
+operator = "commoncrawl"
+user_agent_tokens = ["CCBot"]
+ip_ranges = "commoncrawl-ccbot"
+rdns_suffixes = ["crawl.commoncrawl.org"]

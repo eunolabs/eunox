@@ -1,0 +1,25 @@
+# A throwaway DB-less Kong for testing eunox locally: proxies 127.0.0.1:8000
+# to eunox's own report server and sends each request to eunox's http-log
+# endpoint on 127.0.0.1:8041. Run from the repository root:
+#   docker run --rm --network host -e KONG_DATABASE=off \
+#     -e KONG_DECLARATIVE_CONFIG=/kong.yaml -e KONG_PROXY_LISTEN=127.0.0.1:8000 \
+#     -e KONG_ADMIN_LISTEN=off -v "$PWD/testdata/kong-local.yaml:/kong.yaml:ro" kong:3.9
+_format_version: "3.0"
+
+services:
+- name: upstream
+  url: http://127.0.0.1:8040
+  routes:
+  - name: everything
+    paths: ["/"]
+
+plugins:
+# --- eunox: enable the bundled http-log plugin, globally or per service ---
+- name: http-log
+  config:
+    http_endpoint: http://127.0.0.1:8041/
+    method: POST
+    content_type: application/json
+    queue:
+      max_batch_size: 100
+      max_coalescing_delay: 1

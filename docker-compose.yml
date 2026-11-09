@@ -1,0 +1,50 @@
+# The eunox demo: nginx and Envoy in front of a sample upstream, a traffic
+# generator sending signed, spoofed and plain requests through both, and
+# eunox classifying them from the gateways' access logs.
+#
+#   docker compose up
+#
+# Then open http://localhost:8040/ for the report.
+#
+# The eunox services pull the published image, and build it from this
+# checkout if the pull fails. `docker compose up --build` builds from the
+# checkout instead, and `docker compose pull` fetches a newer published image.
+# EUNOX_IMAGE picks another image, e.g. a version tag.
+x-eunox-image: &eunox-image
+  image: ${EUNOX_IMAGE:-ghcr.io/eunolabs/eunox:main}
+  build: .
+
+services:
+  # Signs fresh Web Bot Auth requests with the RFC 9421 test key and serves
+  # that key's directory, so its requests come out verified. Starts first so
+  # eunox's first fetch of the directory succeeds.
+  traffic:
+    <<: *eunox-image
+    entrypoint: ["eunox-demo"]
+    environment:
+      DEMO_TARGETS: http://nginx:8080,http://envoy:10000
+      DEMO_DIRECTORY_URL: http://traffic:8000/.well-known/http-message-signatures-directory
+
+  eunox:
+    <<: *eunox-image
+    depends_on: [traffic]
+    environment:
+      # The demo agent's key directory, on top of the built-in operator sources.
+      EUNOX_KEY_DIRECTORIES: demo=http://traffic:8000/.well-known/http-message-signatures-directory
+    ports:
+      - "8040:8040"
+
+  upstream:
+    image: nginx:1.27-alpine
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on: [eunox, upstream]
+    volumes:
+      - ./deploy/demo/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  envoy:
+    image: envoyproxy/envoy:v1.32-latest
+    depends_on: [eunox, upstream]
+    volumes:
+      - ./deploy/demo/envoy.yaml:/etc/envoy/envoy.yaml:ro

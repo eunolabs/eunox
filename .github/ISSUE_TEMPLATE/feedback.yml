@@ -1,0 +1,45 @@
+name: Feedback
+description: Tried eunox? Tell us how it went, including if you stopped.
+title: "Feedback: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying eunox. Please don't paste raw access logs, client IPs or private paths. Class counts and agent names are enough.
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: How did it go?
+      options:
+        - Running it and keeping it on
+        - Tried it and stopped
+        - Couldn't get it working
+        - Only replayed a saved log
+    validations:
+      required: true
+  - type: dropdown
+    id: gateway
+    attributes:
+      label: Gateway
+      options:
+        - nginx
+        - Envoy
+        - Kong
+        - Other
+        - Replay only
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: Roughly how long until you saw a report?
+      placeholder: e.g. 10 minutes
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect the report to show, and what did it show?
+  - type: textarea
+    id: stopped
+    attributes:
+      label: If you stopped, why?

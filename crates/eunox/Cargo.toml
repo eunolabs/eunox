@@ -1,0 +1,30 @@
+[package]
+name = "eunox"
+version = "0.0.0"
+description = "Tells a site which AI agents hit it and which are who they claim to be, from its gateway's access logs"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+eunox-core.workspace = true
+eunox-directory.workspace = true
+eunox-ingest.workspace = true
+eunox-stats.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "io-std", "fs"] }
+hickory-resolver.workspace = true
+reqwest.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tonic.workspace = true
+opentelemetry-proto.workspace = true
+ed25519-dalek.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio-stream.workspace = true
+opentelemetry-proto.workspace = true
+tonic.workspace = true

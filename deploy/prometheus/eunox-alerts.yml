@@ -1,0 +1,76 @@
+# Prometheus alerting rules for eunox. Load with `rule_files:` in
+# prometheus.yml; scrape eunox's /metrics (port 8040). Thresholds are
+# starting points: tune them to your site's normal traffic.
+#
+# Check with: promtool check rules eunox-alerts.yml
+# Test with:  promtool test rules eunox-alerts.test.yml
+groups:
+  - name: eunox
+    rules:
+      # Of the requests that claim a known agent and could be checked
+      # (verified, ip-verified or spoofed), the share that failed every check.
+      # unknown-bot and unclassified are left out: missing data is never
+      # counted as spoofed, and neither should it dilute the share.
+      - alert: EunoxSpoofedShareHigh
+        expr: |
+          (
+              sum(rate(eunox_requests_total{class="spoofed"}[1h]))
+            /
+              sum(rate(eunox_requests_total{class=~"verified|ip-verified|spoofed"}[1h]))
+          ) > 0.2
+          and
+          sum(increase(eunox_requests_total{class=~"verified|ip-verified|spoofed"}[1h])) >= 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of checkable agent traffic is spoofed"
+          description: >-
+            More than 20% of requests claiming a known agent failed every check
+            that agent supports, over the last hour. Look at the spoofed rows
+            and their networks on the eunox report. If a real crawler shows as
+            spoofed, check the gateway's trusted-proxy settings first: behind a
+            CDN or load balancer the logged client IP may be the proxy's.
+
+      # A source that keeps failing turns that operator's real traffic into
+      # unknown-bot instead of verified or ip-verified. Sources refresh hourly
+      # and retry with backoff, so one failed fetch isn't worth an alert.
+      - alert: EunoxSourceDown
+        expr: eunox_source_up == 0
+        for: 3h
+        labels:
+          severity: info
+        annotations:
+          summary: "eunox source {{ $labels.source }} has failed to load for 3h"
+          description: >-
+            {{ $labels.url }} hasn't loaded. Its operator's requests show as
+            unknown-bot until it does. The report's warnings list the last error.
+
+      # Lines arriving that don't parse usually mean the gateway's log format
+      # changed and no longer matches what eunox expects.
+      - alert: EunoxParseErrors
+        expr: |
+          (
+              sum(rate(eunox_ingest_parse_errors_total[30m]))
+            /
+              sum(rate(eunox_ingest_lines_total[30m]))
+          ) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of log lines don't parse"
+          description: >-
+            Check the gateway's eunox log format against docs/design.md. The
+            report's warnings show the last parse error.
+
+      # Nothing arriving at all: the gateway stopped sending, or the log path
+      # broke. Noisy on a site that's genuinely quiet for an hour; raise the
+      # window there.
+      - alert: EunoxNoLogLines
+        expr: sum(rate(eunox_ingest_lines_total[1h])) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "eunox has received no log lines for over an hour"
